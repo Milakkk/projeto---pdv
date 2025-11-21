@@ -197,17 +197,14 @@ export default function MenuGrid({ items, onAddToCart }: MenuGridProps) {
                     <i className="ri-file-list-3-line text-base lg:text-lg"></i>
                   </Button>
 
-                  {/* O botão secundário só aparece se houver observações opcionais E não houver opções obrigatórias ATIVAS */}
-                  {hasOptionalObservations(item) && !hasRequiredModifiers(item) && (
-                    <Button
-                      onClick={() => openSelectionModal(item)}
-                      variant="secondary"
-                      size="sm"
-                      className="w-8 h-8 lg:w-10 lg:h-10 flex items-center justify-center p-0"
-                    >
-                      <i className="ri-add-line text-base lg:text-lg"></i>
-                    </Button>
-                  )}
+                  <Button
+                    onClick={() => openSelectionModal(item)}
+                    variant="secondary"
+                    size="sm"
+                    className="w-8 h-8 lg:w-10 lg:h-10 flex items-center justify-center p-0"
+                  >
+                    <i className="ri-add-line text-base lg:text-lg"></i>
+                  </Button>
                 </div>
               </div>
             </div>

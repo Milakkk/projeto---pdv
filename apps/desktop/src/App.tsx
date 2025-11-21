@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import ToastProvider from './components/feature/ToastProvider';
 import { seedCatalogIfEmpty } from '@/offline/bootstrap/catalog.seed';
 import ErrorBoundary from './components/base/ErrorBoundary'
+import { ensureDeviceProfile, getDeviceProfile } from '@/offline/services/deviceProfileService'
 
 // Componente Wrapper para lidar com o redirecionamento inicial
 function AppWrapper() {
@@ -17,6 +18,54 @@ function AppWrapper() {
       console.error('[boot:error]', (e as any)?.message || e)
     }
   }, []);
+
+  useEffect(() => {
+    let ws: WebSocket | null = null
+    ;(async () => {
+      try {
+        await ensureDeviceProfile({ role: 'pos' })
+        const dp = await getDeviceProfile()
+        const unitId = dp?.unitId || 'default'
+        const deviceId = dp?.deviceId || ''
+        const hubUrl = (import.meta as any)?.env?.VITE_LAN_HUB_URL || 'http://localhost:4000'
+        const secret = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || ''
+        const wsUrl = hubUrl.replace(/^http/, 'ws').replace(/\/$/, '') + `/realtime${secret ? `?token=${encodeURIComponent(secret)}` : ''}`
+        ws = new WebSocket(wsUrl)
+        ws.addEventListener('open', () => {
+          try { ws?.send(JSON.stringify({ unit_id: unitId, device_id: deviceId })) } catch {}
+        })
+        ws.addEventListener('message', (ev) => {
+          try {
+            const msg = JSON.parse(String(ev.data))
+            if (Array.isArray(msg?.events)) {
+              for (const e of msg.events) {
+                const table = String(e.table || '')
+                const row = e.row || null
+                if (table === 'cash_sessions' && row && row.id) {
+                  try {
+                    const cur = JSON.parse(localStorage.getItem('currentCashSession') || 'null')
+                    if (!cur || cur.id === row.id || !cur.closed_at) {
+                      localStorage.setItem('currentCashSession', JSON.stringify(row))
+                    }
+                    const sessions = JSON.parse(localStorage.getItem('cashSessions') || '[]')
+                    const updated = [row, ...sessions.filter((s:any)=> s.id !== row.id)]
+                    localStorage.setItem('cashSessions', JSON.stringify(updated))
+                  } catch {}
+                } else if (table === 'cash_movements' && row && row.id) {
+                  try {
+                    const movs = JSON.parse(localStorage.getItem('cashMovements') || '[]')
+                    movs.push(row)
+                    localStorage.setItem('cashMovements', JSON.stringify(movs))
+                  } catch {}
+                }
+              }
+            }
+          } catch {}
+        })
+      } catch {}
+    })()
+    return () => { try { ws?.close() } catch {} }
+  }, [])
 
   // Removido auto-login em dev para sempre exigir autenticação
   

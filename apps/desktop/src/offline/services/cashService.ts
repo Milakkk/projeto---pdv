@@ -21,6 +21,23 @@ const uuid = () =>
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`
 
+const lanHubUrl: string | undefined = (import.meta as any)?.env?.VITE_LAN_HUB_URL || 'http://localhost:4000'
+const lanSecret: string | undefined = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || undefined
+
+async function pushLanEvents(events: any[]) {
+  try {
+    const unitDefault = 'default'
+    const enriched = (Array.isArray(events) ? events : []).map((e:any)=> ({ ...e, unit_id: e?.unit_id ?? unitDefault }))
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (lanSecret) headers['Authorization'] = `Bearer ${lanSecret}`
+    await fetch(`${lanHubUrl.replace(/\/$/, '')}/push`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ events: enriched }),
+    })
+  } catch {}
+}
+
 export async function openSession(params: { openedBy?: string | null; openingAmountCents?: number }) {
   const id = uuid()
   const now = new Date().toISOString()
@@ -50,6 +67,7 @@ export async function openSession(params: { openedBy?: string | null; openingAmo
       const sessions = JSON.parse(localStorage.getItem('cashSessions') || '[]')
       localStorage.setItem('cashSessions', JSON.stringify([fallback, ...sessions.filter((s:any)=>s.id!==id)]))
       localStorage.setItem('currentCashSession', JSON.stringify(fallback))
+      await pushLanEvents([{ table: 'cash_sessions', row: fallback }])
     } catch {}
   } catch (e) {
     const fallback = {
@@ -66,6 +84,7 @@ export async function openSession(params: { openedBy?: string | null; openingAmo
       sessions.unshift(fallback)
       localStorage.setItem('cashSessions', JSON.stringify(sessions))
       localStorage.setItem('currentCashSession', JSON.stringify(fallback))
+      await pushLanEvents([{ table: 'cash_sessions', row: fallback }])
     } catch {}
   }
   return id
@@ -92,6 +111,7 @@ export async function closeSession(id: UUID, params?: { closedBy?: string | null
         localStorage.setItem('currentCashSession', JSON.stringify(updated))
         const sessions = JSON.parse(localStorage.getItem('cashSessions') || '[]')
         localStorage.setItem('cashSessions', JSON.stringify([updated, ...sessions.filter((s:any)=>s.id!==id)]))
+        await pushLanEvents([{ table: 'cash_sessions', row: updated }])
       }
     } catch {}
   } catch (e) {
@@ -106,6 +126,7 @@ export async function closeSession(id: UUID, params?: { closedBy?: string | null
         localStorage.setItem('currentCashSession', JSON.stringify(cur))
         const sessions = JSON.parse(localStorage.getItem('cashSessions') || '[]')
         localStorage.setItem('cashSessions', JSON.stringify([cur, ...sessions.filter((s:any)=>s.id!==id)]))
+        await pushLanEvents([{ table: 'cash_sessions', row: cur }])
       }
     } catch {}
   }
@@ -134,6 +155,7 @@ export async function addMovement(params: {
         1,
       ],
     )
+    await pushLanEvents([{ table: 'cash_movements', row: { id, session_id: params.sessionId, type: params.type, reason: params.reason ?? null, amount_cents: Math.max(0, Math.round(params.amountCents ?? 0)), created_at: now, updated_at: now } }])
   } catch (e) {
     try {
       const mov = {
@@ -150,6 +172,7 @@ export async function addMovement(params: {
       const movs = JSON.parse(localStorage.getItem('cashMovements') || '[]')
       movs.push(mov)
       localStorage.setItem('cashMovements', JSON.stringify(movs))
+      await pushLanEvents([{ table: 'cash_movements', row: mov }])
     } catch {}
   }
   return id

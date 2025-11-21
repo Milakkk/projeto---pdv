@@ -543,8 +543,10 @@ export default function CaixaPage() {
   // --- Lógica de Busca Rápida ---
   const handleQuickSearch = async (code: string) => {
     try {
-      const rows = await productsService.searchProducts(code);
-      const p = (rows || []).find((r: any) => String(r.sku ?? '').toLowerCase() === code.toLowerCase() && !!r.isActive);
+      const forceOptions = /\+/g.test(code)
+      const pureCode = code.replace(/\+/g, '').trim()
+      const rows = await productsService.searchProducts(pureCode);
+      const p = (rows || []).find((r: any) => String(r.sku ?? '').toLowerCase() === pureCode.toLowerCase() && !!r.isActive);
       const itemFromService: MenuItem | undefined = p
         ? (() => {
             const base: MenuItem = {
@@ -574,11 +576,11 @@ export default function CaixaPage() {
           })()
         : undefined;
 
-      const item = itemFromService ?? menuItems.find(it => it.code?.toLowerCase() === code.toLowerCase() && it.active);
+      const item = itemFromService ?? menuItems.find(it => it.code?.toLowerCase() === pureCode.toLowerCase() && it.active);
 
       if (item) {
         const activeRequiredGroups = (item.requiredModifierGroups || []).filter(group => group.active);
-        if (activeRequiredGroups.length > 0) {
+        if (forceOptions || activeRequiredGroups.length > 0) {
           setSelectedItemForOptions(item);
           setSelectedRequiredModifiers({});
           setSelectedOptionalObservations([]);
@@ -589,7 +591,7 @@ export default function CaixaPage() {
         }
         setQuickSearchCode('');
       } else {
-        showError(`Item com código "${code}" não encontrado ou inativo.`);
+        showError(`Item com código "${pureCode}" não encontrado ou inativo.`);
         setQuickSearchCode('');
       }
     } catch (err) {

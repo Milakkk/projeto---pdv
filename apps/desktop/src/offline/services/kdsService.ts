@@ -52,6 +52,24 @@ export async function setTicketStatus(id: UUID, status: 'queued' | 'prep' | 'rea
       const arr = raw ? JSON.parse(raw) : []
       const updated = arr.map((t:any)=> t.id===id ? { ...t, status, updated_at: now } : t)
       localStorage.setItem('kdsTickets', JSON.stringify(updated))
+
+      const mapToOrderStatus = (s:string)=> s==='ready'?'READY': s==='prep'?'PREPARING': 'NEW'
+      try {
+        const rawOrders = localStorage.getItem('orders')
+        const orders = rawOrders ? JSON.parse(rawOrders) : []
+        const updOrders = (Array.isArray(orders)?orders:[]).map((o:any)=> {
+          if (String(o.id)===String(id)) {
+            const nextStatus = mapToOrderStatus(String(status))
+            const out:any = { ...o, status: nextStatus }
+            if (nextStatus==='PREPARING' && !o.updatedAt) out.updatedAt = now
+            if (nextStatus==='READY') out.readyAt = now
+            if (nextStatus!=='READY') out.readyAt = undefined
+            return out
+          }
+          return o
+        })
+        localStorage.setItem('orders', JSON.stringify(updOrders))
+      } catch {}
     } catch {}
   }
 }
@@ -82,7 +100,29 @@ export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 
           completedAt: undefined,
         })),
       }))
-      enriched.push({ ...t, items })
+      // Merge com estado persistido no navegador (operador, status e checklist)
+      try {
+        const rawState = localStorage.getItem('kdsUnitState')
+        const state = rawState ? JSON.parse(rawState) : {}
+        const mergeUnit = (orderId:string, itemId:string, unit:any) => {
+          const key = `${orderId}:${itemId}:${unit.unitId}`
+          const s = state[key] || null
+          if (!s) return unit
+          const out = { ...unit }
+          if (s.operatorName) out.operatorName = s.operatorName
+          if (s.unitStatus) out.unitStatus = s.unitStatus
+          if (Array.isArray(s.completedObservations)) out.completedObservations = s.completedObservations
+          if (s.unitStatus === 'READY') out.completedAt = out.completedAt || new Date().toISOString()
+          return out
+        }
+        const mergedItems = items.map((it:any)=> ({
+          ...it,
+          productionUnits: it.productionUnits.map((u:any)=> mergeUnit(String(ordId), String(it.id), u))
+        }))
+        enriched.push({ ...t, items: mergedItems })
+      } catch {
+        enriched.push({ ...t, items })
+      }
     }
     return enriched
   } catch {
@@ -96,7 +136,26 @@ export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 
           const ordRaw = localStorage.getItem('orders')
           const orders = ordRaw ? JSON.parse(ordRaw) : []
           const ord = Array.isArray(orders) ? orders.find((o:any)=> String(o.id)===String(t.order_id || t.orderId)) : null
-          const items = Array.isArray(ord?.items) ? ord.items.filter((it:any)=> !(it.skipKitchen || it.menuItem?.skipKitchen)) : []
+          let items = Array.isArray(ord?.items) ? ord.items.filter((it:any)=> !(it.skipKitchen || it.menuItem?.skipKitchen)) : []
+          try {
+            const rawState = localStorage.getItem('kdsUnitState')
+            const state = rawState ? JSON.parse(rawState) : {}
+            const mergeUnit = (orderId:string, itemId:string, unit:any) => {
+              const key = `${orderId}:${itemId}:${unit.unitId}`
+              const s = state[key] || null
+              if (!s) return unit
+              const out = { ...unit }
+              if (s.operatorName) out.operatorName = s.operatorName
+              if (s.unitStatus) out.unitStatus = s.unitStatus
+              if (Array.isArray(s.completedObservations)) out.completedObservations = s.completedObservations
+              if (s.unitStatus === 'READY') out.completedAt = out.completedAt || new Date().toISOString()
+              return out
+            }
+            items = items.map((it:any)=> ({
+              ...it,
+              productionUnits: (Array.isArray(it.productionUnits)? it.productionUnits : []).map((u:any)=> mergeUnit(String(t.order_id || t.orderId), String(it.id), u))
+            }))
+          } catch {}
           res.push({ ...t, items })
         }
         return res
@@ -110,6 +169,31 @@ export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 
       return res
     } catch { return [] }
   }
+}
+
+function persistUnitState(key: string, patch: any) {
+  try {
+    const raw = localStorage.getItem('kdsUnitState')
+    const state = raw ? JSON.parse(raw) : {}
+    const current = state[key] || {}
+    const next = { ...current, ...patch }
+    state[key] = next
+    localStorage.setItem('kdsUnitState', JSON.stringify(state))
+  } catch {}
+}
+
+export async function setUnitOperator(orderId: string, itemId: string, unitId: string, operatorName: string) {
+  const key = `${orderId}:${itemId}:${unitId}`
+  persistUnitState(key, { operatorName })
+}
+
+export async function setUnitStatus(orderId: string, itemId: string, unitId: string, unitStatus: 'PENDING' | 'READY', completedObservations?: string[]) {
+  const key = `${orderId}:${itemId}:${unitId}`
+  const patch: any = { unitStatus }
+  if (Array.isArray(completedObservations)) patch.completedObservations = completedObservations
+  if (unitStatus === 'READY') patch.completedAt = new Date().toISOString()
+  else patch.completedAt = undefined
+  persistUnitState(key, patch)
 }
 
 export async function listTicketsByStation(station: string) {

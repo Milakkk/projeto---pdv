@@ -219,15 +219,8 @@ export default function CozinhaPage() {
         ]);
         const tk = ([] as any[]).concat(tkQueued || [], tkPrep || [], tkReady || []);
         if (!mounted || !Array.isArray(tk)) return;
-        const mappedOrders: Order[] = (tk as any[]).map((t: any) => ({
-          id: String(t.id ?? t.ticketId ?? Math.random().toString(36)),
-          pin: String(t.pin ?? t.orderPin ?? ''),
-          password: String(t.password ?? ''),
-          status: mapStatus(String(t.status ?? 'queued')),
-          createdAt: t.createdAt ? new Date(t.createdAt) : new Date(),
-          readyAt: t.readyAt ? new Date(t.readyAt) : undefined,
-          deliveredAt: t.deliveredAt ? new Date(t.deliveredAt) : undefined,
-          items: Array.isArray(t.items) ? t.items.map((item: any) => ({
+        const mappedOrders: Order[] = (tk as any[]).map((t: any) => {
+          const items = Array.isArray(t.items) ? t.items.map((item: any) => ({
             id: String(item.id ?? Math.random().toString(36)),
             quantity: Number(item.quantity ?? 1),
             skipKitchen: Boolean(item.skipKitchen ?? false),
@@ -235,6 +228,7 @@ export default function CozinhaPage() {
               id: String(item.menuItem?.id ?? ''),
               name: String(item.menuItem?.name ?? 'Item'),
               unitDeliveryCount: Number(item.menuItem?.unitDeliveryCount ?? 1),
+              sla: Number(item.menuItem?.sla ?? 15),
             },
             productionUnits: Array.isArray(item.productionUnits) ? item.productionUnits.map((u: any) => ({
               unitId: String(u.unitId ?? Math.random().toString(36)),
@@ -243,8 +237,24 @@ export default function CozinhaPage() {
               completedObservations: Array.isArray(u.completedObservations) ? u.completedObservations : [],
               completedAt: u.completedAt ? new Date(u.completedAt) : undefined,
             })) : [],
-          })) : [],
-        })) as Order[];
+          })) : []
+          const slaMinutes = items.reduce((sum: number, it: any) => sum + (Number(it.menuItem?.sla ?? 15) * Math.max(1, Number(it.quantity ?? 1))), 0)
+          const ord: Order = {
+            id: String(t.id ?? t.ticketId ?? Math.random().toString(36)),
+            pin: String(t.pin ?? t.orderPin ?? ''),
+            password: String(t.password ?? ''),
+            status: mapStatus(String(t.status ?? 'queued')),
+            createdAt: t.createdAt ? new Date(t.createdAt) : new Date(),
+            readyAt: t.readyAt ? new Date(t.readyAt) : undefined,
+            deliveredAt: t.deliveredAt ? new Date(t.deliveredAt) : undefined,
+            items,
+            slaMinutes,
+            total: 0,
+            paymentMethod: '',
+            createdBy: 'KDS',
+          }
+          return ord
+        }) as Order[];
         const mergedOrders: Order[] = mappedOrders.map(o => {
           const prev = previousOrdersRef.current.find(po => po.id === o.id)
           const prevItems = prev?.items || []
@@ -495,6 +505,7 @@ export default function CozinhaPage() {
         return order;
       }));
     });
+    try { kdsService.setUnitStatus(orderId, itemId, unitId, unitStatus as any, completedObservations) } catch {}
   };
 
   const assignOperatorToUnit = (orderId: string, itemId: string, unitId: string, operatorName: string) => {
@@ -521,6 +532,7 @@ export default function CozinhaPage() {
         })
       );
     });
+    try { kdsService.setUnitOperator(orderId, itemId, unitId, operatorName) } catch {}
   };
 
   const handleAssignOperatorToAll = (orderId: string, operatorName: string) => {
