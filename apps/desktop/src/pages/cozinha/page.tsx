@@ -240,7 +240,7 @@ export default function CozinhaPage() {
           })) : []
           const slaMinutes = items.reduce((sum: number, it: any) => sum + (Number(it.menuItem?.sla ?? 15) * Math.max(1, Number(it.quantity ?? 1))), 0)
           const ord: Order = {
-            id: String(t.id ?? t.ticketId ?? Math.random().toString(36)),
+            id: String(t.order_id ?? t.orderId ?? t.id ?? Math.random().toString(36)),
             pin: String(t.pin ?? t.orderPin ?? ''),
             password: String(t.password ?? ''),
             status: mapStatus(String(t.status ?? 'queued')),
@@ -253,14 +253,16 @@ export default function CozinhaPage() {
             paymentMethod: '',
             createdBy: 'KDS',
           }
+          ;(ord as any).ticketId = String(t.id ?? t.ticketId ?? ord.id)
           return ord
         }) as Order[];
         const mergedOrders: Order[] = mappedOrders.map(o => {
           const prev = previousOrdersRef.current.find(po => po.id === o.id)
           const prevItems = prev?.items || []
+          const createdAt = prev?.createdAt ?? o.createdAt
           const items = (o.items && o.items.length > 0 ? o.items : prevItems)
             .filter(it => !(it.skipKitchen || it.menuItem?.skipKitchen))
-          return { ...o, items }
+          return { ...o, items, createdAt }
         })
         startTransition(() => setOrders(mergedOrders));
       } catch (error) {
@@ -325,7 +327,9 @@ export default function CozinhaPage() {
     (async () => {
       try {
         const mapToKds = (s: Order['status']) => s === 'READY' ? 'ready' : s === 'PREPARING' ? 'prep' : 'queued';
-        await kdsService.setTicketStatus(orderId, mapToKds(status));
+        const ord = orders.find(o => o.id === orderId)
+        const tId = (ord as any)?.ticketId || orderId
+        await kdsService.setTicketStatus(String(tId), mapToKds(status));
       } catch (error) {
         console.warn('cozinha: setTicketStatus', error);
       }
