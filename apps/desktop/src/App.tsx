@@ -57,6 +57,33 @@ function AppWrapper() {
                     movs.push(row)
                     localStorage.setItem('cashMovements', JSON.stringify(movs))
                   } catch {}
+                } else if (table === 'kds_operators' && row) {
+                  try {
+                    const ops = Array.isArray(row?.operators) ? row.operators : []
+                    localStorage.setItem('kitchenOperators', JSON.stringify(ops))
+                  } catch {}
+                } else if (table === 'kds_unit_operator' && row) {
+                  try {
+                    const key = `${row.orderId}:${row.itemId}:${row.unitId}`
+                    const raw = localStorage.getItem('kdsUnitState')
+                    const state = raw ? JSON.parse(raw) : {}
+                    const cur = state[key] || {}
+                    state[key] = { ...cur, operatorName: row.operatorName }
+                    localStorage.setItem('kdsUnitState', JSON.stringify(state))
+                  } catch {}
+                } else if (table === 'kds_unit_status' && row) {
+                  try {
+                    const key = `${row.orderId}:${row.itemId}:${row.unitId}`
+                    const raw = localStorage.getItem('kdsUnitState')
+                    const state = raw ? JSON.parse(raw) : {}
+                    const cur = state[key] || {}
+                    const patch: any = { unitStatus: row.unitStatus }
+                    if (Array.isArray(row.completedObservations)) patch.completedObservations = row.completedObservations
+                    if (row.unitStatus === 'READY') patch.completedAt = new Date().toISOString()
+                    else patch.completedAt = undefined
+                    state[key] = { ...cur, ...patch }
+                    localStorage.setItem('kdsUnitState', JSON.stringify(state))
+                  } catch {}
                 }
               }
             }

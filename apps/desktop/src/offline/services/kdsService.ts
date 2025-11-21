@@ -21,6 +21,23 @@ const uuid = () =>
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`
 
+const lanHubUrl: string | undefined = (import.meta as any)?.env?.VITE_LAN_HUB_URL || 'http://localhost:4000'
+const lanSecret: string | undefined = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || undefined
+
+async function pushLanEvents(events: any[]) {
+  try {
+    const unitDefault = 'default'
+    const enriched = (Array.isArray(events) ? events : []).map((e:any)=> ({ ...e, unit_id: e?.unit_id ?? unitDefault }))
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (lanSecret) headers['Authorization'] = `Bearer ${lanSecret}`
+    await fetch(`${lanHubUrl.replace(/\/$/, '')}/push`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ events: enriched }),
+    })
+  } catch {}
+}
+
 export async function enqueueTicket(params: { orderId: UUID; station?: string | null }) {
   const id = uuid()
   const now = new Date().toISOString()
@@ -185,6 +202,7 @@ function persistUnitState(key: string, patch: any) {
 export async function setUnitOperator(orderId: string, itemId: string, unitId: string, operatorName: string) {
   const key = `${orderId}:${itemId}:${unitId}`
   persistUnitState(key, { operatorName })
+  try { await pushLanEvents([{ table: 'kds_unit_operator', row: { orderId, itemId, unitId, operatorName } }]) } catch {}
 }
 
 export async function setUnitStatus(orderId: string, itemId: string, unitId: string, unitStatus: 'PENDING' | 'READY', completedObservations?: string[]) {
@@ -194,6 +212,13 @@ export async function setUnitStatus(orderId: string, itemId: string, unitId: str
   if (unitStatus === 'READY') patch.completedAt = new Date().toISOString()
   else patch.completedAt = undefined
   persistUnitState(key, patch)
+  try { await pushLanEvents([{ table: 'kds_unit_status', row: { orderId, itemId, unitId, unitStatus, completedObservations } }]) } catch {}
+}
+
+export async function broadcastOperators(operators: any[]) {
+  try {
+    await pushLanEvents([{ table: 'kds_operators', row: { operators } }])
+  } catch {}
 }
 
 export async function listTicketsByStation(station: string) {

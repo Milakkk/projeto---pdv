@@ -42,6 +42,9 @@ export default function CozinhaPage() {
   
   const [orders, setOrders] = useState<Order[]>([]);
   const [operators, setOperators] = useLocalStorage<KitchenOperator[]>('kitchenOperators', []);
+  useEffect(() => {
+    (async () => { try { await kdsService.broadcastOperators(operators) } catch {} })()
+  }, [operators])
   const [categories, setCategories] = useLocalStorage<Category[]>('categories', mockCategories);
   
   const [operationalSession] = useLocalStorage<OperationalSession | null>('currentOperationalSession', null);
@@ -556,6 +559,14 @@ export default function CozinhaPage() {
         })
       );
     });
+    try {
+      const ord = orders.find(o => o.id === orderId)
+      for (const it of ord?.items || []) {
+        for (const u of it.productionUnits || []) {
+          kdsService.setUnitOperator(orderId, it.id, u.unitId, operatorName)
+        }
+      }
+    } catch {}
   };
 
   const cancelOrder = (orderId: string, reason: string) => {
