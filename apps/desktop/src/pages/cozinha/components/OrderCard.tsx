@@ -402,11 +402,11 @@ function OrderCardComponent({
               )}
             </div>
             {(order.status === 'NEW' || order.status === 'PREPARING' || order.status === 'READY') && (
-              <span className={`text-white text-xs font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${
-                isCurrentlyOverdue ? 'bg-red-500' : 'bg-green-500'
+              <span className={`text-white text-xs font-bold px-2.5 py-1 rounded-full flex-shrink-0 ${
+                isCurrentlyOverdue ? 'bg-red-600' : 'bg-green-600'
               }`}>
                 {isCurrentlyOverdue ? 'ATRASADO' : 'NO PRAZO'}
-              </span >
+              </span>
             )}
           </div>
         </div>
@@ -420,9 +420,9 @@ function OrderCardComponent({
                   {operators.map(op => (
                     <Button
                       key={op.id}
-                      size="sm"
+                      size="md"
                       variant={allUnitsOperator === op.name ? 'primary' : 'secondary'}
-                      className={`text-xs px-2 py-1 ${
+                      className={`text-sm px-3 py-1.5 ${
                         allUnitsOperator === op.name 
                           ? '!bg-amber-500 !text-white !font-semibold hover:!bg-amber-600'
                           : ''
@@ -557,15 +557,15 @@ function OrderCardComponent({
                                 </span>
                                 {showUnitReadyButton && (
                                   <Button
-                                    size="sm"
-                                    variant={isUnitReady ? 'success' : 'secondary'}
+                                    size="md"
+                                    variant={isUnitReady ? 'success' : 'primary'}
                                     onClick={(e) => handleUnitReadyToggle(e, item.id, unit.unitId, !isUnitReady)}
-                                    className={`!text-xs !px-2 !py-1 ml-2 flex-shrink-0 ${isUnitReady ? '' : 'bg-green-50 text-green-600 hover:bg-green-100'}`}
+                                    className={`ml-2 flex-shrink-0 ${isUnitReady ? '' : 'bg-green-500 text-white hover:bg-green-600'}`}
                                     title={isUnitReady ? 'Marcar como Pendente' : 'Marcar como Pronto'}
                                     disabled={disableReadyButton}
                                   >
-                                    <i className={`mr-1 ${isUnitReady ? 'ri-check-line' : 'ri-check-line'}`}></i>
-                                    {isUnitReady ? 'Pronto' : 'Pronto'}
+                                    <i className={`mr-1 ${isUnitReady ? 'ri-checkbox-circle-line' : 'ri-check-line'}`}></i>
+                                    {isUnitReady ? 'Pronto' : 'Marcar Pronto'}
                                   </Button>
                                 )}
                               </div>
@@ -701,24 +701,24 @@ function OrderCardComponent({
                 )}
               </div>
             ) : (
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-3">
                 {nextStatusAction && (
                   <Button
                     onClick={handleMainAction}
-                    className="flex-1 min-w-[45%]"
-                    size="sm"
+                    className="flex-1 min-w-[48%] text-base"
+                    size="md"
                     variant={getActionVariant(order.status)}
                     disabled={(order.status === 'NEW' && (operators.length === 0 || !allUnitsAssignedStatus)) || (order.status === 'PREPARING' && !isOrderReadyForNextStepStatus)} 
                   >
-                    {nextStatusAction}
+                    {order.status === 'NEW' ? (<><i className="ri-play-line mr-2"></i>Iniciar Preparo</>) : order.status === 'PREPARING' ? (<><i className="ri-check-line mr-2"></i>Pronto</>) : (<><i className="ri-truck-line mr-2"></i>Entregue</>)}
                   </Button>
                 )}
                 {showPreviousButton && (
                   <Button
                     variant="secondary"
                     onClick={(e) => { e.stopPropagation(); onUpdateStatus(order.id, getPreviousStatus(order.status)!); }}
-                    className="flex-1 min-w-[45%]"
-                    size="sm"
+                    className="flex-1 min-w-[48%] text-base"
+                    size="md"
                   >
                     {getPreviousStatusAction(order.status)}
                   </Button>
@@ -726,10 +726,10 @@ function OrderCardComponent({
                 <Button
                   variant="secondary"
                   onClick={(e) => { e.stopPropagation(); setShowCancelModal(true); }}
-                  className="flex-1 min-w-[45%] bg-red-50 text-red-600 hover:bg-red-100"
-                  size="sm"
+                  className="flex-1 min-w-[48%] text-base bg-red-50 text-red-600 hover:bg-red-100"
+                  size="md"
                 >
-                  Cancelar
+                  <i className="ri-close-circle-line mr-2"></i>Cancelar
                 </Button>
               </div>
             )}

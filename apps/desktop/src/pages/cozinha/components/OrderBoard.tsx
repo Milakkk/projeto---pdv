@@ -93,7 +93,7 @@ export default function OrderBoard({
               
               {/* Área de rolagem dos cards */}
               <div className="flex-1 overflow-hidden min-h-0">
-                <div className="h-full overflow-y-auto space-y-3 pr-2">
+                <div className="h-full overflow-y-auto pr-2 grid grid-cols-1 md:grid-cols-2 gap-3">
                   {columnOrders.map(order => (
                     <MemoizedOrderCard
                       key={order.id}
