@@ -31,6 +31,54 @@ function AppWrapper() {
         const secret = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || ''
         const wsUrl = hubUrl.replace(/^http/, 'ws').replace(/\/$/, '') + `/realtime${secret ? `?token=${encodeURIComponent(secret)}` : ''}`
         ws = new WebSocket(wsUrl)
+        const applyEvent = (e: any) => {
+          const table = String(e.table || '')
+          const row = e.row || null
+          if (table === 'cash_sessions' && row && row.id) {
+            try {
+              const cur = JSON.parse(localStorage.getItem('currentCashSession') || 'null')
+              if (!cur || cur.id === row.id || !cur.closed_at) {
+                localStorage.setItem('currentCashSession', JSON.stringify(row))
+              }
+              const sessions = JSON.parse(localStorage.getItem('cashSessions') || '[]')
+              const updated = [row, ...sessions.filter((s:any)=> s.id !== row.id)]
+              localStorage.setItem('cashSessions', JSON.stringify(updated))
+            } catch {}
+          } else if (table === 'cash_movements' && row && row.id) {
+            try {
+              const movs = JSON.parse(localStorage.getItem('cashMovements') || '[]')
+              movs.push(row)
+              localStorage.setItem('cashMovements', JSON.stringify(movs))
+            } catch {}
+          } else if (table === 'kds_operators' && row) {
+            try {
+              const ops = Array.isArray(row?.operators) ? row.operators : []
+              localStorage.setItem('kitchenOperators', JSON.stringify(ops))
+            } catch {}
+          } else if (table === 'kds_unit_operator' && row) {
+            try {
+              const key = `${row.orderId}:${row.itemId}:${row.unitId}`
+              const raw = localStorage.getItem('kdsUnitState')
+              const state = raw ? JSON.parse(raw) : {}
+              const cur = state[key] || {}
+              state[key] = { ...cur, operatorName: row.operatorName }
+              localStorage.setItem('kdsUnitState', JSON.stringify(state))
+            } catch {}
+          } else if (table === 'kds_unit_status' && row) {
+            try {
+              const key = `${row.orderId}:${row.itemId}:${row.unitId}`
+              const raw = localStorage.getItem('kdsUnitState')
+              const state = raw ? JSON.parse(raw) : {}
+              const cur = state[key] || {}
+              const patch: any = { unitStatus: row.unitStatus }
+              if (Array.isArray(row.completedObservations)) patch.completedObservations = row.completedObservations
+              if (row.unitStatus === 'READY') patch.completedAt = new Date().toISOString()
+              else patch.completedAt = undefined
+              state[key] = { ...cur, ...patch }
+              localStorage.setItem('kdsUnitState', JSON.stringify(state))
+            } catch {}
+          }
+        }
         ws.addEventListener('open', () => {
           try { ws?.send(JSON.stringify({ unit_id: unitId, device_id: deviceId })) } catch {}
         })
@@ -39,56 +87,22 @@ function AppWrapper() {
             const msg = JSON.parse(String(ev.data))
             if (Array.isArray(msg?.events)) {
               for (const e of msg.events) {
-                const table = String(e.table || '')
-                const row = e.row || null
-                if (table === 'cash_sessions' && row && row.id) {
-                  try {
-                    const cur = JSON.parse(localStorage.getItem('currentCashSession') || 'null')
-                    if (!cur || cur.id === row.id || !cur.closed_at) {
-                      localStorage.setItem('currentCashSession', JSON.stringify(row))
-                    }
-                    const sessions = JSON.parse(localStorage.getItem('cashSessions') || '[]')
-                    const updated = [row, ...sessions.filter((s:any)=> s.id !== row.id)]
-                    localStorage.setItem('cashSessions', JSON.stringify(updated))
-                  } catch {}
-                } else if (table === 'cash_movements' && row && row.id) {
-                  try {
-                    const movs = JSON.parse(localStorage.getItem('cashMovements') || '[]')
-                    movs.push(row)
-                    localStorage.setItem('cashMovements', JSON.stringify(movs))
-                  } catch {}
-                } else if (table === 'kds_operators' && row) {
-                  try {
-                    const ops = Array.isArray(row?.operators) ? row.operators : []
-                    localStorage.setItem('kitchenOperators', JSON.stringify(ops))
-                  } catch {}
-                } else if (table === 'kds_unit_operator' && row) {
-                  try {
-                    const key = `${row.orderId}:${row.itemId}:${row.unitId}`
-                    const raw = localStorage.getItem('kdsUnitState')
-                    const state = raw ? JSON.parse(raw) : {}
-                    const cur = state[key] || {}
-                    state[key] = { ...cur, operatorName: row.operatorName }
-                    localStorage.setItem('kdsUnitState', JSON.stringify(state))
-                  } catch {}
-                } else if (table === 'kds_unit_status' && row) {
-                  try {
-                    const key = `${row.orderId}:${row.itemId}:${row.unitId}`
-                    const raw = localStorage.getItem('kdsUnitState')
-                    const state = raw ? JSON.parse(raw) : {}
-                    const cur = state[key] || {}
-                    const patch: any = { unitStatus: row.unitStatus }
-                    if (Array.isArray(row.completedObservations)) patch.completedObservations = row.completedObservations
-                    if (row.unitStatus === 'READY') patch.completedAt = new Date().toISOString()
-                    else patch.completedAt = undefined
-                    state[key] = { ...cur, ...patch }
-                    localStorage.setItem('kdsUnitState', JSON.stringify(state))
-                  } catch {}
-                }
+                applyEvent(e)
               }
             }
           } catch {}
         })
+
+        try {
+          const headers: Record<string,string> = {}
+          if (secret) headers['Authorization'] = `Bearer ${secret}`
+          const url = hubUrl.replace(/\/$/, '') + `/pull?unit_id=${encodeURIComponent(unitId)}`
+          const res = await fetch(url, { headers })
+          const data = await res.json().catch(()=>({}))
+          if (Array.isArray(data?.events)) {
+            for (const e of data.events) applyEvent(e)
+          }
+        } catch {}
       } catch {}
     })()
     return () => { try { ws?.close() } catch {} }
