@@ -1,0 +1,81 @@
+
+PROMPT 3 — RBAC + RLS Multiloja (Supabase) + Guards no App
+
+## Objetivo
+Implementar controle de acesso por loja (unit_id) e por papel (role) usando RLS no Supabase, sem alterar UI.
+
+### Papéis suportados:
+- owner
+- manager
+- cashier
+- cook
+- viewer
+
+## INSTRUÇÕES PARA O TRAE
+
+1) Aplicar o SQL abaixo no Supabase (criar/ajustar tabelas, funções e policies).
+2) Ajustar services no app para sempre enviar `unit_id`.
+3) Tratar erros 401/403.
+4) Não alterar telas, apenas lógica.
+
+---
+
+## SQL PARA SUPABASE (COLAR NO SQL EDITOR)
+
+<COLE AQUI O SQL QUE EU TE ENVIEI> 
+(Use exatamente o conteúdo completo da migration que enviei na etapa anterior.)
+
+---
+
+## AJUSTES NO APP
+
+### 1) Sempre incluir `unit_id` nas queries:
+
+Exemplo ao criar pedido:
+```ts
+await supabase.from('orders').insert({
+  id,
+  unit_id,
+  device_id,
+  status: 'open',
+  total_cents
+});
+```
+
+### 2) Serviços devem ler o `unit_id` do `device_profile`:
+```ts
+const { unit_id } = await deviceProfileService.get();
+```
+
+### 3) Tratar erros de permissão:
+Se `insert/update` retornar 401/403:
+- Mostrar mensagem: "Você não tem permissão para esta ação nesta loja."
+
+### 4) Guards de permissões
+- PDV (caixa): apenas `cashier|manager|owner`
+- KDS: apenas `cook|manager|owner`
+- Catálogo (produtos/categorias): apenas `manager|owner`
+- Configuração Master / Usuários: apenas `owner`
+
+---
+
+## TESTES (APÓS APLICAÇÃO)
+
+1) Criar dois usuários:
+   - Um `owner` na unidade Matriz
+   - Um `cashier` na mesma unidade
+
+2) Logar com `cashier`:
+   - Pode criar pedidos ✅
+   - Não pode editar produtos ❌
+
+3) Logar com `owner`:
+   - Pode tudo ✅
+
+4) Criar segunda unidade:
+   - Usuário da Unidade A não enxerga dados da Unidade B ✅
+
+---
+
+## ACEITE FINAL
+Responder aqui: `RBAC + RLS OK ✅`

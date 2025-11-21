@@ -1,0 +1,30 @@
+{
+  "name": "monorepo",
+  "private": true,
+  "scripts": {
+    "postinstall:electron": "node scripts/electron-install-fix.js || true",
+    "dev:desktop": "pnpm --filter desktop dev:desktop:pdv",
+    "dev:desktop:pdv": "pnpm --filter desktop dev:desktop:pdv",
+    "dev:desktop:kds": "pnpm --filter desktop dev:desktop:kds",
+    "dev:desktop:both": "pnpm --filter desktop dev:desktop:both",
+    "dev:web": "turbo run dev --filter=web-dashboard",
+    "dev:mobile": "turbo run dev --filter=mobile",
+    "dev:hub": "tsx apps/hub/server.ts",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "rebuild:sqlite": "node scripts/rebuild-sqlite.js"
+  },
+  "pnpm": {
+    "allowedBuiltDependencies": [
+      "electron",
+      "better-sqlite3"
+    ]
+  },
+  "devDependencies": {
+    "glob": "^11.0.3",
+    "turbo": "^1.13.4",
+    "tsx": "^4.8.1",
+    "ws": "^8.18.0"
+  }
+}

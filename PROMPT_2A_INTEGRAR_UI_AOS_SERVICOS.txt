@@ -1,0 +1,226 @@
+
+PROMPT 2A — INTEGRAR UI AOS SERVIÇOS OFFLINE (Drizzle/SQLite), SEM MUDAR A TELA
+
+Contexto:
+- PROMPT 2 já criou: schema Drizzle, migrador localStorage→SQLite, services (orders/kds/products/cash/reports), sync com Supabase e rota /sync-status.
+- Agora vamos REDIRECIONAR a UI (que hoje ainda lê useLocalStorage/arrays) para os serviços offline.
+- **Não alterar UI/visual**. Só trocar as fontes de dados. Estados locais continuam, mas alimentados pelos services.
+
+Ordem Recomendada (para evitar regressão):
+1) Catálogo: productsService + categories
+2) Pedidos: ordersService (criar/editar/fechar)
+3) KDS: kdsService (status e tickets)
+4) Caixa: cashService (sessões e movimentos)
+5) Relatórios: reportsService (consultas agregadas)
+
+Padrões Gerais (aplicar em todos os arquivos citados abaixo):
+- IDs: use crypto.randomUUID() quando precisar.
+- Datas: new Date().toISOString() (UTC) para updated_at/opened_at/closed_at.
+- Confiabilidade offline: toda escrita deve ir ao SQLite com { pending_sync: true } (o service já faz) — NÃO chamar Supabase direto.
+- Leitura sempre do SQLite local. Realtime atualiza local via sync.
+- Otimismo: manter o estado da tela (useState) otimizando UX, mas a verdade de dados é o SQLite via service.
+- Erros: capturar e exibir toast/console.warn; NUNCA quebrar a UI.
+- NÃO remover estados/efeitos existentes; apenas substituir as fontes (localStorage/arrays) pelos services.
+
+──────────────────────────────────────────────────────────────────────────────
+1) COZINHA
+──────────────────────────────────────────────────────────────────────────────
+
+Arquivo: apps/desktop/src/pages/cozinha/page.tsx
+Tarefas:
+- Onde hoje há leituras de:
+  - orders (lista de pedidos),
+  - kitchenOperators,
+  - categories,
+  - currentOperationalSession,
+  - currentCashSession,
+  trocar por chamadas aos serviços:
+
+Exemplo (esqueleto):
+import { useEffect, useState } from "react";
+import { productsService } from "../../offline/services/productsService";
+import { ordersService } from "../../offline/services/ordersService";
+import { kdsService } from "../../offline/services/kdsService";
+import { cashService } from "../../offline/services/cashService";
+
+function PageCozinha() {
+  const [operators, setOperators] = useState([]);
+  const [cats, setCats] = useState([]);
+  const [tickets, setTickets] = useState([]);
+  const [cash, setCash] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      const [ops, categories] = await Promise.all([
+        kdsService.listOperators(),                 // mapeie do seu kitchenOperators
+        productsService.listCategories(),          // tabela categories
+      ]);
+      setOperators(ops);
+      setCats(categories);
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const tk = await kdsService.listTicketsByStatus(["queued","prep","ready"]);
+      setTickets(tk);
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const cs = await cashService.getCurrentSession();
+      setCash(cs);
+    })();
+  }, []);
+
+  // resto da UI permanece igual, apenas usando esses estados
+}
+
+Arquivo: apps/desktop/src/pages/cozinha/components/ItemsInProductionModal.tsx
+Tarefas:
+- Trocar leituras internas (operadores/pedidos) para os services:
+  - operators -> kdsService.listOperators()
+  - pedidos por status -> kdsService.listTicketsByStatus([...])
+- Manter agregações/filters EXACTAMENTE como estão, só mude a fonte dos dados.
+
+──────────────────────────────────────────────────────────────────────────────
+2) CAIXA
+──────────────────────────────────────────────────────────────────────────────
+
+Arquivo: apps/desktop/src/pages/caixa/components/Cart.tsx
+Tarefas:
+- Substituir criação de pedidos com Date.now().toString() por ordersService.createOrder(payload)
+- Persistir itens no carrinho com ordersService.addItem(orderId, item)
+- Persistir pagamentos com ordersService.addPayment(orderId, payment)
+
+Exemplo (esqueleto):
+import { ordersService } from "../../offline/services/ordersService";
+
+async function handleCreateOrderFromCart(cart) {
+  const order = await ordersService.createOrder({
+    notes: cart.notes ?? null,
+    deviceId: await getDeviceIdOrNull(),
+    openedAt: new Date().toISOString()
+  });
+  for (const p of cart.items) {
+    await ordersService.addItem(order.id, {
+      productId: p.id,
+      qty: p.qty,
+      unitPriceCents: p.priceCents
+    });
+  }
+  if (cart.payment) {
+    await ordersService.addPayment(order.id, {
+      method: cart.payment.method,
+      amountCents: cart.payment.amountCents,
+      changeCents: cart.payment.changeCents ?? 0,
+      authCode: cart.payment.authCode ?? null,
+    });
+  }
+  // UI continua igual (limpar carrinho, etc.)
+}
+
+Outros pontos no módulo caixa que hoje usam localStorage:
+- currentCashSession → cashService.getCurrentSession()
+- cashSessions → cashService.listSessions()
+- cashMovements → cashService.listMovementsBySession(sessionId)
+- savedCarts → substituir por savedCarts no SQLite se já existir; senão manter por enquanto (iremos migrar depois)
+
+──────────────────────────────────────────────────────────────────────────────
+3) RELATÓRIOS (web-dashboard)
+──────────────────────────────────────────────────────────────────────────────
+
+Arquivo: apps/web-dashboard/app/relatorios/page.tsx
+Tarefas:
+- Substituir processamento de arrays locais por consultas do reportsService:
+
+Exemplo (esqueleto):
+import { reportsService } from "@db/services/reportsService";
+
+export default function RelatoriosPage() {
+  const [kpis, setKpis] = useState({ faturamento: 0, pedidos: 0, ticketMedio: 0 });
+  const [ranking, setRanking] = useState([]);
+
+  useEffect(() => {
+    (async () => {
+      const range = { from: "2025-01-01", to: "2025-12-31" }; // trocar pelo range selecionado na UI
+      const [fat, qtd, tm, top] = await Promise.all([
+        reportsService.totalFaturamento(range),
+        reportsService.quantidadePedidos(range),
+        reportsService.ticketMedio(range),
+        reportsService.itensMaisVendidos(range, { limit: 10 }),
+      ]);
+      setKpis({ faturamento: fat, pedidos: qtd, ticketMedio: tm });
+      setRanking(top);
+    })();
+  }, []);
+
+  // Renderização igual; só muda a origem
+}
+
+──────────────────────────────────────────────────────────────────────────────
+4) PADRONIZAÇÃO DENTRO DOS SERVICES (se necessário)
+──────────────────────────────────────────────────────────────────────────────
+
+As assinaturas devem existir, e podem ser chamadas assim (referência):
+- productsService.listCategories()
+- productsService.listProducts()
+- productsService.getProductById(id)
+- ordersService.createOrder(payload)
+- ordersService.addItem(orderId, item)
+- ordersService.addPayment(orderId, payment)
+- ordersService.closeOrder(orderId)
+- ordersService.cancelOrder(orderId)
+- ordersService.listOrders(filter)
+- kdsService.listOperators()
+- kdsService.enqueueTicket(orderId, station?)
+- kdsService.setTicketStatus(ticketId, status)
+- kdsService.listTicketsByStatus(status[])
+- cashService.getCurrentSession()
+- cashService.openSession(payload)
+- cashService.closeSession(payload)
+- cashService.addMovement(sessionId, movement)
+- cashService.listSessions()
+- cashService.listMovementsBySession(sessionId)
+- reportsService.totalFaturamento(range)
+- reportsService.quantidadePedidos(range)
+- reportsService.ticketMedio(range)
+- reportsService.itensMaisVendidos(range, { limit })
+
+Não modifique nomes e props dos componentes de UI.
+
+──────────────────────────────────────────────────────────────────────────────
+5) TESTES MANUAIS (rápidos)
+──────────────────────────────────────────────────────────────────────────────
+
+1) Cozinha:
+   - Abrir tela → ver operadores e tickets vindo dos services
+   - Mudar filtro de status → resultados coerentes
+2) Caixa:
+   - Criar pedido pelo carrinho → conferir dados no SQLite (via /sync-status ou logs)
+   - Adicionar/remover item → refletir nos serviços sem erro
+   - Pagamento → registrado no SQLite
+3) Relatórios (web):
+   - KPIs carregam sem usar arrays locais
+   - Top 10 itens vindo do reportsService
+
+4) Offline:
+   - Desligar internet → criar pedido + avançar KDS → tudo funciona
+   - Ligar internet → verificar sync concluído no /sync-status
+
+──────────────────────────────────────────────────────────────────────────────
+6) ENTREGÁVEIS
+──────────────────────────────────────────────────────────────────────────────
+
+- Todos os arquivos abaixo com as trocas realizadas, sem mudar a UI:
+  - apps/desktop/src/pages/cozinha/page.tsx
+  - apps/desktop/src/pages/cozinha/components/ItemsInProductionModal.tsx
+  - apps/desktop/src/pages/caixa/components/Cart.tsx
+  - apps/web-dashboard/app/relatorios/page.tsx
+
+- Sem refatorar layout; somente trocar fontes de dados para os services.
+- Logs de erro amigáveis (console.warn) ao invés de exceptions.
+- Nenhuma chamada direta ao Supabase; tudo via SQLite/services.
+
+Ao concluir, responda:  "PROMPT 2A ok ✅"

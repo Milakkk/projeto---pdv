@@ -1,0 +1,57 @@
+import { supabase } from '@/utils/supabase'
+import { db } from '@/offline/db/client'
+import { ALL_TABLES } from '@db/schema'
+
+let channels: Array<ReturnType<typeof (supabase as any).channel>> = []
+
+function upsertLocal(tableKey: keyof typeof ALL_TABLES, payload: any) {
+  // @ts-expect-error dynamic table
+  const table = ALL_TABLES[tableKey]
+  const row = payload?.new ?? payload?.record ?? payload
+  if (!row || !row.id) return
+  db
+    ?.insert(table)
+    .values({ ...row, pendingSync: 0 })
+    .onConflictDoUpdate({ target: [table.id], set: { ...row, pendingSync: 0 } })
+    .run?.()
+}
+
+export function startRealtime() {
+  stopRealtime()
+  if (!supabase) return
+  const tables: (keyof typeof ALL_TABLES)[] = [
+    'categories',
+    'products',
+    'orders',
+    'orderItems',
+    'payments',
+    'kdsTickets',
+    'cashSessions',
+    'cashMovements',
+    'savedCarts',
+    'kitchenOperators',
+    'globalObservations',
+  ]
+
+  for (const key of tables) {
+    const ch = (supabase as any)
+      .channel(`realtime:${String(key)}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: String(key) }, (payload: any) => {
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          upsertLocal(key, payload)
+        }
+      })
+      .subscribe()
+    channels.push(ch)
+  }
+}
+
+export function stopRealtime() {
+  if (supabase) {
+    for (const ch of channels) {
+      (supabase as any).removeChannel(ch)
+    }
+  }
+  channels = []
+}
+

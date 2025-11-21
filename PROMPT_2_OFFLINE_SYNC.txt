@@ -1,0 +1,663 @@
+
+PROMPT 2 — OFFLINE-FIRST (SQLite/Drizzle) + MIGRAÇÃO do localStorage + SYNC com Supabase (push/pull + Realtime)
+===============================================================================================================
+
+Você é um engenheiro full-stack sênior. O monorepo já está criado (PROMPT 1). 
+Agora, implemente **persistência local real** + **sincronização** para os módulos **caixa** e **cozinha** no app **desktop (Tauri + React)**, SEM alterar a UI nem as rotas.
+
+⚠️ NÃO criar novas telas. Apenas infraestrutura.
+
+--------------------------------------------------------------------------------
+VARIÁVEIS (.env)
+--------------------------------------------------------------------------------
+Crie/complete o arquivo `.env` na raiz do monorepo (e carregue nos apps que precisam):
+VITE_SUPABASE_URL=https://ohnqtrhvyqaaenqzqmic.supabase.co
+VITE_SUPABASE_ANON_KEY=<<<COLE_SUA_ANON_KEY_AQUI>>>
+
+Nunca use Service Role no cliente.
+
+--------------------------------------------------------------------------------
+DEPENDÊNCIAS
+--------------------------------------------------------------------------------
+Instale nas workspaces necessárias (desktop e packages/db/sync):
+- runtime:  drizzle-orm  better-sqlite3  @supabase/supabase-js
+- dev:      drizzle-kit  typescript
+
+--------------------------------------------------------------------------------
+ARQUITETURA ALVO (adicionar/atualizar)
+--------------------------------------------------------------------------------
+packages/
+  db/
+    src/
+      schema.ts            <-- (CRIAR – abaixo tem conteúdo COMPLETO)
+      index.ts             <-- exportar db types/helpers
+  sync/
+    src/
+      index.ts             <-- interfaces + SyncEngine
+      supabaseAdapter.ts   <-- adapter de rede
+      worker.ts            <-- loop de sincronização (push/pull + backoff)
+      realtime.ts          <-- assinatura Realtime -> upsert local
+apps/
+  desktop/
+    src/
+      offline/
+        db/
+          client.ts        <-- (CRIAR – Drizzle + better-sqlite3)
+        bootstrap/
+          migrateFromLocalStorage.ts  <-- (CRIAR – conteúdo COMPLETO abaixo)
+        services/
+          ordersService.ts
+          kdsService.ts
+          productsService.ts
+          cashService.ts
+          reportsService.ts
+        ui/
+          SyncStatusDev.tsx          <-- rota /sync-status (somente dev)
+      main.tsx (ou entry do app)     <-- chamar runMigrationOnce() + startSync()
+
+Regras:
+- Os módulos **caixa** e **cozinha** devem continuar chamando as mesmas funções públicas (não quebrar imports). 
+- Apenas redirecione a implementação para os **services** (que agora usam SQLite local via Drizzle).
+
+--------------------------------------------------------------------------------
+1) packages/db/src/schema.ts  (CRIAR – CONTEÚDO COMPLETO)
+--------------------------------------------------------------------------------
+
+import {
+  sqliteTable,
+  text,
+  integer,
+  primaryKey,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+
+export const nowIso = () => new Date().toISOString();
+
+// Catálogo
+export const categories = sqliteTable(
+  "categories",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    version: integer("version").notNull().default(1),
+    pendingSync: integer("pending_sync", { mode: "boolean" }).notNull().default(false),
+  },
+  (t) => ({
+    nameIdx: uniqueIndex("ux_categories_name").on(t.name),
+  }),
+);
+
+export const products = sqliteTable(
+  "products",
+  {
+    id: text("id").primaryKey(),
+    sku: text("sku"),
+    name: text("name").notNull(),
+    categoryId: text("category_id").references(() => categories.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    priceCents: integer("price_cents").notNull().default(0),
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    version: integer("version").notNull().default(1),
+    pendingSync: integer("pending_sync", { mode: "boolean" }).notNull().default(false),
+  },
+  (t) => ({
+    skuIdx: uniqueIndex("ux_products_sku").on(t.sku),
+    nameIdx: uniqueIndex("ux_products_name").on(t.name),
+  }),
+);
+
+// Operação
+export const orders = sqliteTable("orders", {
+  id: text("id").primaryKey(),
+  status: text("status", { enum: ["open", "closed", "cancelled"] }).notNull().default("open"),
+  totalCents: integer("total_cents").notNull().default(0),
+  openedAt: text("opened_at"),
+  closedAt: text("closed_at"),
+  deviceId: text("device_id"),
+  notes: text("notes"),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  version: integer("version").notNull().default(1),
+  pendingSync: integer("pending_sync", { mode: "boolean" }).notNull().default(false),
+});
+
+export const orderItems = sqliteTable(
+  "order_items",
+  {
+    id: text("id").primaryKey(),
+    orderId: text("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
+    productId: text("product_id").references(() => products.id, { onDelete: "set null" }),
+    qty: integer("qty").notNull().default(1),
+    unitPriceCents: integer("unit_price_cents").notNull().default(0),
+    notes: text("notes"),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    version: integer("version").notNull().default(1),
+    pendingSync: integer("pending_sync", { mode: "boolean" }).notNull().default(false),
+  },
+  (t) => ({
+    orderIdx: uniqueIndex("ix_order_items_order").on(t.orderId),
+  }),
+);
+
+export const payments = sqliteTable(
+  "payments",
+  {
+    id: text("id").primaryKey(),
+    orderId: text("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
+    method: text("method", { enum: ["cash", "pix", "debit", "credit", "voucher"] }).notNull(),
+    amountCents: integer("amount_cents").notNull().default(0),
+    changeCents: integer("change_cents").notNull().default(0),
+    authCode: text("auth_code"),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    version: integer("version").notNull().default(1),
+    pendingSync: integer("pending_sync", { mode: "boolean" }).notNull().default(false),
+  },
+  (t) => ({
+    orderIdx: uniqueIndex("ix_payments_order").on(t.orderId),
+  }),
+);
+
+export const kdsTickets = sqliteTable(
+  "kds_tickets",
+  {
+    id: text("id").primaryKey(),
+    orderId: text("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
+    status: text("status", { enum: ["queued", "prep", "ready", "done"] }).notNull().default("queued"),
+    station: text("station"),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    version: integer("version").notNull().default(1),
+    pendingSync: integer("pending_sync", { mode: "boolean" }).notNull().default(false),
+  },
+  (t) => ({
+    orderIdx: uniqueIndex("ix_kds_order").on(t.orderId),
+  }),
+);
+
+// Caixa
+export const cashSessions = sqliteTable("cash_sessions", {
+  id: text("id").primaryKey(),
+  openedAt: text("opened_at"),
+  closedAt: text("closed_at"),
+  openedBy: text("opened_by"),
+  closedBy: text("closed_by"),
+  openingAmountCents: integer("opening_amount_cents").notNull().default(0),
+  closingAmountCents: integer("closing_amount_cents").notNull().default(0),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  version: integer("version").notNull().default(1),
+  pendingSync: integer("pending_sync", { mode: "boolean" }).notNull().default(false),
+});
+
+export const cashMovements = sqliteTable(
+  "cash_movements",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull().references(() => cashSessions.id, { onDelete: "cascade" }),
+    type: text("type", { enum: ["in", "out"] }).notNull(),
+    reason: text("reason"),
+    amountCents: integer("amount_cents").notNull().default(0),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    version: integer("version").notNull().default(1),
+    pendingSync: integer("pending_sync", { mode: "boolean" }).notNull().default(false),
+  },
+  (t) => ({
+    sessionIdx: uniqueIndex("ix_cash_movements_session").on(t.sessionId),
+  }),
+);
+
+// Auxiliares
+export const savedCarts = sqliteTable("saved_carts", {
+  id: text("id").primaryKey(),
+  payload: text("payload", { mode: "json" }).notNull(),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  version: integer("version").notNull().default(1),
+  pendingSync: integer("pending_sync", { mode: "boolean" }).notNull().default(false),
+});
+
+export const kitchenOperators = sqliteTable("kitchen_operators", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  role: text("role"),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  version: integer("version").notNull().default(1),
+  pendingSync: integer("pending_sync", { mode: "boolean" }).notNull().default(false),
+});
+
+export const globalObservations = sqliteTable(
+  "global_observations",
+  {
+    id: text("id").primaryKey(),
+    key: text("key").notNull(),
+    value: text("value"),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    version: integer("version").notNull().default(1),
+    pendingSync: integer("pending_sync", { mode: "boolean" }).notNull().default(false),
+  },
+  (t) => ({
+    keyIdx: uniqueIndex("ux_global_observations_key").on(t.key),
+  }),
+);
+
+export const counters = sqliteTable(
+  "counters",
+  {
+    key: text("key").notNull(),
+    value: integer("value").notNull().default(0),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.key] }),
+  }),
+);
+
+// Metadados de Sync
+export const syncLog = sqliteTable(
+  "sync_log",
+  {
+    id: text("id").primaryKey(),
+    tableName: text("table_name").notNull(),
+    lastPulledAt: text("last_pulled_at"),
+    lastPushedAt: text("last_pushed_at"),
+  },
+  (t) => ({
+    uxTable: uniqueIndex("ux_sync_table").on(t.tableName),
+  }),
+);
+
+// Tipos
+export type CategoryRow = typeof categories.$inferSelect;
+export type ProductRow = typeof products.$inferSelect;
+export type OrderRow = typeof orders.$inferSelect;
+export type OrderItemRow = typeof orderItems.$inferSelect;
+export type PaymentRow = typeof payments.$inferSelect;
+export type KDSTicketRow = typeof kdsTickets.$inferSelect;
+export type CashSessionRow = typeof cashSessions.$inferSelect;
+export type CashMovementRow = typeof cashMovements.$inferSelect;
+export type SavedCartRow = typeof savedCarts.$inferSelect;
+export type KitchenOperatorRow = typeof kitchenOperators.$inferSelect;
+export type GlobalObservationRow = typeof globalObservations.$inferSelect;
+export type CounterRow = typeof counters.$inferSelect;
+
+export const ALL_TABLES = {
+  categories,
+  products,
+  orders,
+  orderItems,
+  payments,
+  kdsTickets,
+  cashSessions,
+  cashMovements,
+  savedCarts,
+  kitchenOperators,
+  globalObservations,
+  counters,
+  syncLog,
+};
+
+
+--------------------------------------------------------------------------------
+2) apps/desktop/src/offline/db/client.ts  (CRIAR)
+--------------------------------------------------------------------------------
+import Database from "better-sqlite3";
+import { drizzle } from "drizzle-orm/better-sqlite3";
+const sqlite = new Database("data.db"); // caminho local (em produção Tauri → AppData)
+export const db = drizzle(sqlite);
+
+--------------------------------------------------------------------------------
+3) apps/desktop/src/offline/bootstrap/migrateFromLocalStorage.ts  (CRIAR)
+--------------------------------------------------------------------------------
+/**
+ * Migra dados existentes do localStorage para SQLite na primeira execução.
+ * Lê chaves reais: orders, savedCarts, kitchenOperators, categories, menuItems,
+ * currentCashSession, cashSessions, cashMovements, globalObservations,
+ * orderCounter, sessionCounter.
+ */
+import { eq } from "drizzle-orm";
+import { db } from "../db/client";
+import {
+  categories,
+  products,
+  orders,
+  orderItems,
+  payments,
+  kdsTickets,
+  cashSessions,
+  cashMovements,
+  savedCarts,
+  kitchenOperators,
+  globalObservations,
+  counters,
+} from "@db/schema";
+
+type Any = Record<string, any>;
+const LS_FLAG = "__migratedToSQLite__";
+
+function safeJSON<T = any>(k: string): T | null {
+  try { const raw = localStorage.getItem(k); return raw ? (JSON.parse(raw) as T) : null; } catch { return null; }
+}
+const toCents = (v: any) => { const n = Number(v ?? 0); return Number.isNaN(n) ? 0 : Math.round(n * 100); };
+const toIso = (v: any) => { if (!v) return null; const d = new Date(v); return Number.isNaN(d.getTime()) ? null : d.toISOString(); };
+const bool = (v: any) => (v ? 1 : 0);
+const uuid = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+
+export async function runMigrationOnce() {
+  if (localStorage.getItem(LS_FLAG) === "true") return;
+
+  const now = new Date().toISOString();
+
+  const lsOrders = safeJSON<Any[]>("orders") ?? [];
+  const lsSavedCarts = safeJSON<Any[]>("savedCarts") ?? [];
+  const lsKitchenOps = safeJSON<Any[]>("kitchenOperators") ?? [];
+  const lsCategories = safeJSON<Any[]>("categories") ?? [];
+  const lsMenuItems = safeJSON<Any[]>("menuItems") ?? [];
+  const lsCurrentCash = safeJSON<Any>("currentCashSession");
+  const lsCashSessions = safeJSON<Any[]>("cashSessions") ?? [];
+  const lsCashMovements = safeJSON<Any[]>("cashMovements") ?? [];
+  const lsGlobalObs = safeJSON<Any[]>("globalObservations") ?? [];
+  const orderCounter = Number(localStorage.getItem("orderCounter") ?? "0");
+  const sessionCounter = Number(localStorage.getItem("sessionCounter") ?? "0");
+
+  const catRows = (lsCategories || []).map((c) => ({
+    id: String(c.id ?? uuid()),
+    name: String(c.name ?? "Sem Categoria"),
+    updatedAt: toIso(c.updated_at) ?? now,
+    version: Number(c.version ?? 1),
+    pendingSync: bool(false),
+  }));
+
+  const catIdByName = new Map<string, string>();
+  catRows.forEach((c) => catIdByName.set(c.name, c.id));
+
+  const prodRows = (lsMenuItems || []).map((p) => {
+    const price = p.priceCents ?? p.price ?? 0;
+    const catName = p.category ?? p.categoryName ?? null;
+    const categoryId =
+      p.categoryId ?? (catName ? catIdByName.get(String(catName)) : undefined) ?? null;
+    return {
+      id: String(p.id ?? uuid()),
+      sku: p.sku ? String(p.sku) : null,
+      name: String(p.name ?? p.title ?? "Produto"),
+      categoryId,
+      priceCents: typeof price === "number" ? Math.round(price) : toCents(price),
+      isActive: bool(p.isActive ?? true),
+      updatedAt: toIso(p.updated_at) ?? now,
+      version: Number(p.version ?? 1),
+      pendingSync: bool(false),
+    };
+  });
+
+  const ordRows: Any[] = [];
+  const itemRows: Any[] = [];
+  const payRows: Any[] = [];
+  const ticketRows: Any[] = [];
+
+  for (const o of lsOrders) {
+    const oid = String(o.id ?? uuid());
+    const status = o.status && ["open", "closed", "cancelled"].includes(o.status) ? o.status : "open";
+    const totalCents = typeof o.totalCents === "number" ? Math.round(o.totalCents) : toCents(o.total ?? 0);
+
+    ordRows.push({
+      id: oid,
+      status,
+      totalCents,
+      openedAt: toIso(o.openedAt) ?? toIso(o.opened_at),
+      closedAt: toIso(o.closedAt) ?? toIso(o.closed_at),
+      deviceId: o.deviceId ? String(o.deviceId) : null,
+      notes: o.notes ? String(o.notes) : null,
+      updatedAt: toIso(o.updated_at) ?? now,
+      version: Number(o.version ?? 1),
+      pendingSync: bool(false),
+    });
+
+    const items: Any[] = o.items ?? o.orderItems ?? [];
+    for (const it of items) {
+      const iid = String(it.id ?? uuid());
+      const productId = it.productId ?? it.product_id ?? null;
+      const unitPrice =
+        typeof it.unitPriceCents === "number" ? Math.round(it.unitPriceCents) : toCents(it.unitPrice ?? it.price ?? 0);
+      itemRows.push({
+        id: iid,
+        orderId: oid,
+        productId: productId ? String(productId) : null,
+        qty: Number(it.qty ?? it.quantity ?? 1),
+        unitPriceCents: unitPrice,
+        notes: it.notes ? String(it.notes) : null,
+        updatedAt: toIso(it.updated_at) ?? now,
+        version: Number(it.version ?? 1),
+        pendingSync: bool(false),
+      });
+    }
+
+    const paymentsList: Any[] =
+      o.payments ?? (o.payment ? [{ method: o.payment.method ?? o.paymentMethod, amount: o.payment.amount, change: o.payment.change, authCode: o.payment.authCode }] : []);
+    for (const p of paymentsList) {
+      const pid = String(p.id ?? uuid());
+      const methodRaw = p.method ?? p.type ?? p.paymentMethod ?? "cash";
+      const method = ["cash", "pix", "debit", "credit", "voucher"].includes(methodRaw) ? methodRaw : "cash";
+
+      payRows.push({
+        id: pid,
+        orderId: oid,
+        method,
+        amountCents: typeof p.amountCents === "number" ? Math.round(p.amountCents) : toCents(p.amount ?? 0),
+        changeCents: typeof p.changeCents === "number" ? Math.round(p.changeCents) : toCents(p.change ?? 0),
+        authCode: p.authCode ? String(p.authCode) : null,
+        updatedAt: toIso(p.updated_at) ?? now,
+        version: Number(p.version ?? 1),
+        pendingSync: bool(false),
+      });
+    }
+
+    const t = o.kdsTicket ?? o.ticket;
+    if (t) {
+      ticketRows.push({
+        id: String(t.id ?? uuid()),
+        orderId: oid,
+        status: ["queued", "prep", "ready", "done"].includes(t.status) ? t.status : "queued",
+        station: t.station ? String(t.station) : null,
+        updatedAt: toIso(t.updated_at) ?? now,
+        version: Number(t.version ?? 1),
+        pendingSync: bool(false),
+      });
+    }
+  }
+
+  const sessionRows = (lsCashSessions || []).map((s) => ({
+    id: String(s.id ?? uuid()),
+    openedAt: toIso(s.openedAt) ?? toIso(s.opened_at),
+    closedAt: toIso(s.closedAt) ?? toIso(s.closed_at),
+    openedBy: s.openedBy ? String(s.openedBy) : null,
+    closedBy: s.closedBy ? String(s.closedBy) : null,
+    openingAmountCents: typeof s.openingAmountCents === "number" ? Math.round(s.openingAmountCents) : toCents(s.openingAmount ?? s.opening ?? 0),
+    closingAmountCents: typeof s.closingAmountCents === "number" ? Math.round(s.closingAmountCents) : toCents(s.closingAmount ?? s.closing ?? 0),
+    updatedAt: toIso(s.updated_at) ?? now,
+    version: Number(s.version ?? 1),
+    pendingSync: bool(false),
+  }));
+
+  if (lsCurrentCash && !sessionRows.find((x) => x.id === lsCurrentCash.id)) {
+    sessionRows.push({
+      id: String(lsCurrentCash.id ?? uuid()),
+      openedAt: toIso(lsCurrentCash.openedAt) ?? toIso(lsCurrentCash.opened_at),
+      closedAt: toIso(lsCurrentCash.closedAt) ?? toIso(lsCurrentCash.closed_at),
+      openedBy: lsCurrentCash.openedBy ? String(lsCurrentCash.openedBy) : null,
+      closedBy: lsCurrentCash.closedBy ? String(lsCurrentCash.closedBy) : null,
+      openingAmountCents: typeof lsCurrentCash.openingAmountCents === "number" ? Math.round(lsCurrentCash.openingAmountCents) : toCents(lsCurrentCash.openingAmount ?? 0),
+      closingAmountCents: typeof lsCurrentCash.closingAmountCents === "number" ? Math.round(lsCurrentCash.closingAmountCents) : toCents(lsCurrentCash.closingAmount ?? 0),
+      updatedAt: toIso(lsCurrentCash.updated_at) ?? now,
+      version: Number(lsCurrentCash.version ?? 1),
+      pendingSync: bool(false),
+    });
+  }
+
+  const movementRows = (lsCashMovements || []).map((m) => ({
+    id: String(m.id ?? uuid()),
+    sessionId: String(m.sessionId ?? m.cashSessionId ?? sessionRows[0]?.id),
+    type: (m.type === "out" ? "out" : "in") as "in" | "out",
+    reason: m.reason ? String(m.reason) : null,
+    amountCents: typeof m.amountCents === "number" ? Math.round(m.amountCents) : toCents(m.amount ?? 0),
+    createdAt: toIso(m.createdAt) ?? toIso(m.created_at) ?? now,
+    updatedAt: toIso(m.updated_at) ?? now,
+    version: Number(m.version ?? 1),
+    pendingSync: bool(false),
+  }));
+
+  const savedCartRows = (lsSavedCarts || []).map((c) => ({
+    id: String(c.id ?? uuid()),
+    payload: JSON.stringify(c.payload ?? c),
+    updatedAt: toIso(c.updated_at) ?? now,
+    version: Number(c.version ?? 1),
+    pendingSync: bool(false),
+  }));
+
+  const kitchenOpRows = (lsKitchenOps || []).map((k) => ({
+    id: String(k.id ?? uuid()),
+    name: String(k.name ?? "Operador"),
+    role: k.role ? String(k.role) : null,
+    updatedAt: toIso(k.updated_at) ?? now,
+    version: Number(k.version ?? 1),
+    pendingSync: bool(false),
+  }));
+
+  const globalObsRows = (lsGlobalObs || []).map((g) => ({
+    id: String(g.id ?? uuid()),
+    key: String(g.key ?? g.name ?? uuid()),
+    value: g.value != null ? String(g.value) : null,
+    updatedAt: toIso(g.updated_at) ?? now,
+    version: Number(g.version ?? 1),
+    pendingSync: bool(false),
+  }));
+
+  const counterRows = [
+    { key: "orderCounter", value: Number.isFinite(orderCounter) ? orderCounter : 0, updatedAt: now },
+    { key: "sessionCounter", value: Number.isFinite(sessionCounter) ? sessionCounter : 0, updatedAt: now },
+  ];
+
+  await db.transaction(async (tx) => {
+    await tx.insert(categories).values(catRows).onConflictDoNothing().run();
+    await tx.insert(products).values(prodRows).onConflictDoNothing().run();
+
+    await tx.insert(orders).values(ordRows).onConflictDoNothing().run();
+    await tx.insert(orderItems).values(itemRows).onConflictDoNothing().run();
+    await tx.insert(payments).values(payRows).onConflictDoNothing().run();
+    await tx.insert(kdsTickets).values(ticketRows).onConflictDoNothing().run();
+
+    await tx.insert(cashSessions).values(sessionRows).onConflictDoNothing().run();
+    await tx.insert(cashMovements).values(movementRows).onConflictDoNothing().run();
+
+    await tx.insert(savedCarts).values(savedCartRows).onConflictDoNothing().run();
+    await tx.insert(kitchenOperators).values(kitchenOpRows).onConflictDoNothing().run();
+    await tx.insert(globalObservations).values(globalObsRows).onConflictDoNothing().run();
+
+    for (const c of counterRows) {
+      const exists = await tx.select().from(counters).where(eq(counters.key, c.key));
+      if (exists.length) {
+        await tx.update(counters).set({ value: c.value, updatedAt: c.updatedAt }).where(eq(counters.key, c.key)).run();
+      } else {
+        await tx.insert(counters).values(c as any).run();
+      }
+    }
+  });
+
+  localStorage.setItem(LS_FLAG, "true");
+}
+
+--------------------------------------------------------------------------------
+4) Services no desktop (usar Drizzle/SQLite, manter assinaturas)
+--------------------------------------------------------------------------------
+- ordersService.ts: createOrder, addItem, removeItem, closeOrder, cancelOrder, listOrders, getOrderById
+- kdsService.ts: enqueueTicket, setTicketStatus, listTicketsByStatus, listTicketsByStation
+- productsService.ts: listProducts, getProductById, searchProducts, listCategories
+- cashService.ts: openSession, closeSession, addMovement, getCurrentSession, listSessions, listMovementsBySession
+- reportsService.ts: MESMAS funções que o módulo relatórios consome hoje, porém lendo do SQLite com agregações (crie índices/views se necessário)
+
+--------------------------------------------------------------------------------
+5) packages/sync/src/index.ts (interfaces) & supabaseAdapter.ts
+--------------------------------------------------------------------------------
+- Definir interface SyncEngine { start(), pushChanges(), pullChanges(), resolveConflicts?() }
+- Implementar supabaseAdapter.ts com:
+  - pushBatch(tabela, registrosPending)
+  - pullSince(tabela, lastPulledAt)
+  - upsertLocal(registros)  // helper
+
+--------------------------------------------------------------------------------
+6) packages/sync/src/worker.ts (loop de sync com backoff)
+--------------------------------------------------------------------------------
+- startSync({ intervalBaseMs = 1000, maxMs = 60000 }) => loop:
+    try pushChanges(); pullChanges(); reset backoff
+    catch erro => backoff exponencial até maxMs
+- Disparar também em eventos: ficar online, voltar do background, botão "Forçar Sync"
+
+Regras de conflito:
+- products/categories: SERVER-WINS
+- orders/order_items/payments/kds/cash_*: MAIOR updated_at vence; empate → MAIOR version
+
+--------------------------------------------------------------------------------
+7) packages/sync/src/realtime.ts (Supabase Realtime)
+--------------------------------------------------------------------------------
+- Assinar canais por tabela
+- Em INSERT/UPDATE, fazer upsert no SQLite local
+- Ignorar eventos cuja origem seja o próprio cliente quando possível
+
+--------------------------------------------------------------------------------
+8) apps/desktop/src/offline/ui/SyncStatusDev.tsx  (rota /sync-status – dev only)
+--------------------------------------------------------------------------------
+- Mostrar contagem de pending_sync por tabela
+- Mostrar last_pull/last_push (sync_log)
+- Botão "Forçar Sync" (chama push+pull)
+
+--------------------------------------------------------------------------------
+9) Bootstrap no desktop (main.tsx ou equivalente)
+--------------------------------------------------------------------------------
+import { runMigrationOnce } from "./offline/bootstrap/migrateFromLocalStorage";
+import { startSync } from "@sync/worker";
+runMigrationOnce();
+startSync();
+
+--------------------------------------------------------------------------------
+10) Supabase (lado servidor) – Tabelas + RLS
+--------------------------------------------------------------------------------
+- Criar tabelas no Postgres equivalentes ao schema do SQLite acima (nomes e colunas 1:1).
+- Ativar RLS em TODAS as tabelas.
+- Policies (exemplos mínimos):
+  -- products/categories: SELECT liberado para anon (somente leitura).
+  -- orders, order_items, payments, kds_tickets, cash_sessions, cash_movements: SELECT/INSERT/UPDATE restritos por organização/unidade (se já existir PROMPT 3); senão, permitir temporariamente por user_id ou API pública controlada.
+
+Exemplo de policies base (adaptar ao seu contexto multi-tenant depois):
+-- Leitura pública de catálogo
+create policy "products_select_public" on public.products
+  for select using (true);
+create policy "categories_select_public" on public.categories
+  for select using (true);
+
+-- Escrita restrita (exemplo simplificado – ajustar para org/unit e auth.uid() se já tiver Auth)
+create policy "orders_write_basic" on public.orders
+  for insert with check (true);
+create policy "orders_update_basic" on public.orders
+  for update using (true) with check (true);
+
+-- IMPORTANTE: não habilitar DELETE pelo cliente.
+
+--------------------------------------------------------------------------------
+11) README (adicionar se não existir)
+--------------------------------------------------------------------------------
+- Como rodar (desktop/web)
+- Como preencher .env
+- Como testar offline (desligar rede) e ver o /sync-status
+- Como ver eventos Realtime (console/log)
+- Troubleshooting: relógio do sistema defasado, arquivo data.db com permissão negada, etc.
+
+--------------------------------------------------------------------------------
+CRITÉRIOS DE ACEITE
+--------------------------------------------------------------------------------
+✅ Caixa e Cozinha funcionam 100% OFFLINE (criar pedido, avançar KDS, fechar pedido).  
+✅ Primeira execução migra os dados do localStorage para SQLite sem perder nada.  
+✅ Com internet, sincroniza com Supabase (push/pull) e recebe mudanças por Realtime.  
+✅ Módulo relatórios passa a ler de dados persistidos reais (via services).  
+✅ Nenhuma UI foi modificada.  
+
+Após concluir, responda no chat:  "PROMPT 2 ok ✅"

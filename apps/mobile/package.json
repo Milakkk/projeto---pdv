@@ -1,0 +1,9 @@
+{
+  "name": "mobile",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "echo 'Mobile placeholders iniciados'",
+    "build": "echo \"build via EAS\""
+  }
+}

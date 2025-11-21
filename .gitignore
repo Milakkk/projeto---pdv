@@ -1,0 +1,29 @@
+node_modules/
+apps/**/node_modules/
+.pnpm-store/
+.turbo/
+.vscode/
+
+# Builds e artefatos
+dist/
+build/
+out/
+coverage/
+apps/desktop/out/
+apps/desktop/release/
+apps/web-dashboard/.next/
+apps/web-dashboard/out/
+
+# Banco local e stores
+data.db
+**/data.db
+lan-sync-store/
+
+# Config e ambiente
+.env
+.env.*
+
+# SO/Logs
+.DS_Store
+Thumbs.db
+*.log

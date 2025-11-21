@@ -1,0 +1,100 @@
+{
+  "dependencies": {
+    "@stripe/react-stripe-js": "4.0.2",
+    "@supabase/supabase-js": "2.57.4",
+    "better-sqlite3": "12.4.1",
+    "drizzle-orm": "^0.33.0",
+    "firebase": "12.0.0",
+    "i18next": "^25.3.2",
+    "i18next-browser-languagedetector": "^8.2.0",
+    "lucide-react": "^0.553.0",
+    "material-symbols": "^0.39.2",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-hot-toast": "^2.6.0",
+    "react-i18next": "^15.6.0",
+    "react-router-dom": "^7.6.3",
+    "recharts": "3.2.0",
+    "remixicon": "^4.7.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
+    "@eslint/js": "^9.30.1",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react-swc": "^3.10.2",
+    "autoprefixer": "^10.4.21",
+    "concurrently": "^9.0.1",
+    "cross-env": "^10.1.0",
+    "drizzle-kit": "^0.24.0",
+    "electron": "^31.2.0",
+    "electron-builder": "^24.13.3",
+    "eslint": "^9.30.1",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.20",
+    "globals": "^16.3.0",
+    "postcss": "^8.5.6",
+    "source-map": "^0.7.6",
+    "tailwindcss": "^3.4.17",
+    "typescript": "~5.8.3",
+    "typescript-eslint": "^8.35.1",
+    "unplugin-auto-import": "^19.3.0",
+    "vite": "^7.0.3",
+    "wait-on": "^7.2.0",
+    "npm-run-all": "^4.1.5",
+    "get-port": "^7.0.0",
+    "kill-port": "^2.0.1"
+  },
+  "name": "desktop",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "build": "vite build",
+    "dev:renderer": "vite --port 3010 --strictPort",
+    "dev:main": "cross-env VITE_DEV_SERVER_PORT=3010 NODE_ENV=development electron ./electron/main.js",
+    "dev:main:pdv": "cross-env VITE_DEV_SERVER_PORT=3010 ELECTRON_WINDOW=pdv NODE_ENV=development electron ./electron/main.js",
+    "dev:main:kds": "cross-env VITE_DEV_SERVER_PORT=3010 ELECTRON_WINDOW=kds NODE_ENV=development electron ./electron/main.js",
+    "dev:main:both": "cross-env VITE_DEV_SERVER_PORT=3010 ELECTRON_WINDOW=both NODE_ENV=development electron ./electron/main.js",
+    "dev": "npm-run-all -p dev:renderer dev:main",
+    "dev:pdv": "npm-run-all -p dev:renderer dev:main:pdv",
+    "dev:kds": "npm-run-all -p dev:renderer dev:main:kds",
+    "dev:both": "npm-run-all -p dev:renderer dev:main:both",
+    "dev:desktop:pdv": "node scripts/dev-start.js pdv",
+    "dev:desktop:kds": "node scripts/dev-start.js kds",
+    "dev:desktop:both": "node scripts/dev-start.js both",
+    "preview": "vite preview",
+    "db:generate": "drizzle-kit generate:sqlite",
+    "db:migrate": "drizzle-kit up",
+    "electron:dev": "cross-env VITE_DEV_SERVER_PORT=3010 NODE_ENV=development electron ./electron/main.js",
+    "electron:start": "electron ./electron/main.js",
+    "electron:build": "pnpm build && node scripts/package.js",
+    "native:rebuild": "electron-rebuild -f -w better-sqlite3",
+    "rebuild:sqlite": "electron-rebuild -f -w better-sqlite3"
+  },
+  "type": "module",
+  "build": {
+    "appId": "com.pdv.kds.desktop",
+    "productName": "PDV KDS Desktop",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "npmRebuild": false,
+    "buildDependenciesFromSource": false,
+    "asar": true,
+    "win": {
+      "target": "portable",
+      "artifactName": "PDV-KDS-Desktop-${version}-Portable.exe",
+      "icon": "electron/icon.ico",
+      "signAndEditExecutable": false
+    }
+  },
+  "version": "0.0.0"
+}

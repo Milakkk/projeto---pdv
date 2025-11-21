@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2021",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "baseUrl": ".",
+    "paths": {
+      "@db/*": ["packages/db/src/*"],
+      "@sync/*": ["packages/sync/src/*"],
+      "@auth/*": ["packages/auth/src/*"],
+      "@ui/*": ["packages/ui/src/*"]
+    }
+  }
+}

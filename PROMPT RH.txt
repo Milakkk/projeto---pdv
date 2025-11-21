@@ -1,0 +1,294 @@
+Novo Módulo RH + Ajustes na Configuração Master
+Objetivo
+
+Implementar o Módulo RH (uso web/Next.js) com:
+
+Pessoas (colaboradores): cadastro com dados básicos, cargo/função, carga horária, vínculo com loja(s).
+
+Escala: calendário por pessoa/loja com turnos, folgas e recorrências simples.
+
+Configuração Master: abas para Perfis (RBAC), Usuários (criação a partir das Pessoas) e Lojas (já existe, apenas integrar).
+
+Regras
+
+Multiloja por unit_id (usar o mesmo padrão já existente).
+
+RLS/RBAC Supabase já ativos: acrescentar políticas específicas para RH.
+
+Sem alterar o visual global: usar os mesmos componentes (shadcn/ui, Tailwind).
+
+Online only (RH roda no Web Dashboard). Nada em desktop/Electron.
+
+1) Banco (Supabase) — SQL (criar/ajustar tabelas)
+
+Executar no Supabase SQL Editor em uma migration.
+Manter uuid como PK, unit_id obrigatório e updated_at para sincronismo/relatórios.
+
+-- Pessoas (colaboradores)
+create table if not exists public.people (
+  id uuid primary key default gen_random_uuid(),
+  unit_id uuid not null references public.units(id) on delete cascade,
+  full_name text not null,
+  document_id text null,                 -- CPF/RNE (opcional, tratar LGPD)
+  email text null,
+  phone text null,
+  birth_date date null,
+  hire_date date null,
+  termination_date date null,
+  status text not null default 'active' check (status in ('active','on_leave','terminated')),
+  role_title text null,                  -- cargo/função textual
+  weekly_hours integer null,             -- carga horária semanal (minutos/horas; aqui em horas)
+  notes text null,
+  updated_at timestamptz not null default now()
+);
+
+-- Vínculo pessoa x loja(s) (para futuros cenários multi-unidade por colaborador)
+create table if not exists public.people_units (
+  person_id uuid not null references public.people(id) on delete cascade,
+  unit_id uuid not null references public.units(id) on delete cascade,
+  primary key (person_id, unit_id)
+);
+
+-- Turnos/Modelos de Escala (templates reutilizáveis por loja)
+create table if not exists public.shift_templates (
+  id uuid primary key default gen_random_uuid(),
+  unit_id uuid not null references public.units(id) on delete cascade,
+  name text not null,                    -- ex.: "6x1 Manhã", "Fechamento"
+  start_time time not null,              -- ex.: 08:00
+  end_time time not null,                -- ex.: 16:20
+  break_minutes integer not null default 0,
+  notes text null,
+  updated_at timestamptz not null default now()
+);
+
+-- Escala (agenda) por pessoa
+create table if not exists public.schedules (
+  id uuid primary key default gen_random_uuid(),
+  unit_id uuid not null references public.units(id) on delete cascade,
+  person_id uuid not null references public.people(id) on delete cascade,
+  date date not null,
+  shift_template_id uuid null references public.shift_templates(id) on delete set null,
+  start_time time null,                  -- pode sobrepor o template
+  end_time time null,
+  break_minutes integer null,
+  label text null,                       -- ex.: "Cobertura", "Treinamento"
+  status text not null default 'scheduled' check (status in ('scheduled','worked','absence','justified')),
+  updated_at timestamptz not null default now()
+);
+create index if not exists idx_schedules_unit_date on public.schedules(unit_id, date);
+
+-- (Opcional) Feriados/Exceções por loja
+create table if not exists public.holidays (
+  id uuid primary key default gen_random_uuid(),
+  unit_id uuid not null references public.units(id) on delete cascade,
+  date date not null,
+  name text not null
+);
+
+-- (Opcional) Mapeamento pessoa -> usuário de autenticação (quando existir)
+-- Útil para criar usuários a partir das pessoas do RH
+create table if not exists public.person_users (
+  person_id uuid primary key references public.people(id) on delete cascade,
+  user_id uuid unique references auth.users(id) on delete set null,
+  unit_id uuid not null references public.units(id) on delete cascade,
+  role text not null check (role in ('owner','manager','cashier','cook','viewer','hr_manager','hr_viewer')),
+  created_at timestamptz not null default now()
+);
+
+-- Extensões de papel para RH
+-- Apenas se for usar papéis adicionais (recomendado)
+-- Lembre-se de ajustar o CHECK dos papéis também em user_units se for ampliar
+alter table public.user_units
+  drop constraint if exists user_units_role_check;
+alter table public.user_units
+  add constraint user_units_role_check
+  check (role in ('owner','manager','cashier','cook','viewer','hr_manager','hr_viewer'));
+
+-- RLS
+alter table public.people enable row level security;
+alter table public.people_units enable row level security;
+alter table public.shift_templates enable row level security;
+alter table public.schedules enable row level security;
+alter table public.holidays enable row level security;
+alter table public.person_users enable row level security;
+
+-- Policies de leitura (membros da unidade)
+create policy "read people (member)" on public.people
+for select using (is_member_of_unit(unit_id));
+
+create policy "read people_units (member)" on public.people_units
+for select using (is_member_of_unit(unit_id));
+
+create policy "read shift_templates (member)" on public.shift_templates
+for select using (is_member_of_unit(unit_id));
+
+create policy "read schedules (member)" on public.schedules
+for select using (is_member_of_unit(unit_id));
+
+create policy "read holidays (member)" on public.holidays
+for select using (is_member_of_unit(unit_id));
+
+create policy "read person_users (self or manager+)" on public.person_users
+for select using (
+  has_any_role(unit_id, array['owner','manager','hr_manager']) or
+  user_id = auth.uid()
+);
+
+-- Policies de escrita (RH/gestão)
+create policy "ins/upd people (hr_manager+)" on public.people
+for insert with check (has_any_role(unit_id, array['owner','manager','hr_manager']));
+create policy "upd people (hr_manager+)" on public.people
+for update using (has_any_role(unit_id, array['owner','manager','hr_manager']))
+       with check (has_any_role(unit_id, array['owner','manager','hr_manager']));
+
+create policy "ins/upd shift (hr_manager+)" on public.shift_templates
+for insert with check (has_any_role(unit_id, array['owner','manager','hr_manager']));
+create policy "upd shift (hr_manager+)" on public.shift_templates
+for update using (has_any_role(unit_id, array['owner','manager','hr_manager']))
+       with check (has_any_role(unit_id, array['owner','manager','hr_manager']));
+
+create policy "ins/upd schedules (hr_manager+)" on public.schedules
+for insert with check (has_any_role(unit_id, array['owner','manager','hr_manager']));
+create policy "upd schedules (hr_manager+)" on public.schedules
+for update using (has_any_role(unit_id, array['owner','manager','hr_manager']))
+       with check (has_any_role(unit_id, array['owner','manager','hr_manager']));
+
+create policy "ins/upd person_users (owner+manager+hr_manager)" on public.person_users
+for insert with check (has_any_role(unit_id, array['owner','manager','hr_manager']));
+create policy "upd person_users (owner+manager+hr_manager)" on public.person_users
+for update using (has_any_role(unit_id, array['owner','manager','hr_manager']))
+       with check (has_any_role(unit_id, array['owner','manager','hr_manager']));
+
+
+Observação de privacidade: não salve documentos sensíveis desnecessários (RG/CPF) em produção; se salvar, prefira criptografia no app e mascaramento na UI.
+
+2) Web (Next.js) — Páginas e UX
+
+Rotas (app router):
+
+/app/rh
+
+redireciona para /app/rh/pessoas
+
+/app/rh/pessoas
+
+Tabela com busca e filtros (status, cargo, loja)
+
+Botão “Nova pessoa” (modal)
+
+Ação “Editar” (drawer/modal)
+
+/app/rh/escala
+
+Calendário por pessoa e por loja (tabs ou filtros)
+
+Visões: Semana e Mês
+
+Criar/editar eventos de escala com:
+
+person_id, date, shift_template_id ou start_time/end_time custom
+
+status (scheduled|worked|absence|justified)
+
+Recorrência simples (ex.: repetir semanal por N semanas) → gerar múltiplos registros em schedules (não precisa RRULE agora)
+
+Arrastar/soltar (drag & drop) opcional se usar FullCalendar; senão, clique para criar.
+
+Componentes:
+
+Reaproveitar SelectUnit (seleção de loja) do app.
+
+Reutilizar estilo (shadcn/ui).
+
+Campos principais (Pessoas):
+
+Nome, e-mail, telefone, cargo (role_title), status, data de admissão/saída, carga horária semanal, notas.
+
+Tabela com colunas configuráveis + export CSV (opcional).
+
+3) Configuração Master — novas abas
+
+Em /app/configuracao-master adicionar 3 seções:
+
+Perfis (RBAC)
+
+Listar papéis disponíveis: owner, manager, cashier, cook, viewer, hr_manager, hr_viewer
+
+Descrever permissões (read/write resumido)
+
+(Opcional) UI para associar papéis a usuários por loja (atalho para Users)
+
+Usuários
+
+Criar usuário a partir de Pessoa (RH):
+
+Selecionar person_id (autocomplete)
+
+Definir email, papel (role) e unit_id
+
+Botão “Criar usuário”:
+
+Chama Server Action/API com SUPABASE_SERVICE_ROLE_KEY para:
+a) auth.admin.createUser({ email, password? (gerar temporária) })
+b) insert into user_units (user_id, unit_id, role)
+c) upsert into person_users (person_id, user_id, unit_id, role)
+
+Fluxo de reset de senha por e-mail (usar o padrão do Supabase)
+
+Lojas
+
+Reaproveitar CRUD existente (unidades).
+
+Mostrar quantas pessoas e usuários vinculados.
+
+Segurança
+
+Perfis e Usuários: somente owner|manager|hr_manager (checar papel).
+
+Rotas server (Actions/API) nunca expõem SERVICE_ROLE_KEY ao cliente.
+
+4) Integração e Regras de Negócio
+
+unit_id em tudo (people, schedules, templates).
+
+people_units: permitir que uma pessoa trabalhe temporariamente em outra loja (futuro).
+
+weekly_hours: usado apenas como referência (não precisa validar horas legais agora).
+
+Feriado (opcional): marcar visualmente no calendário.
+
+Escala → PDV/KDS (futuro): expor endpoint de escala do dia por loja para painel interno (não implementar agora).
+
+5) UI/UX e Acessibilidade
+
+Filtros persistentes por loja.
+
+Feedback com toasts (salvou/erro).
+
+Formulários com validação básica (nome obrigatório; data válida).
+
+Botão “Copiar escala do período anterior” (opcional, gerar em lote).
+
+Internacionalização mínima: datas em pt-BR, máscara de telefone.
+
+6) Testes (Aceite)
+
+Pessoas: criar, editar, filtrar por status/cargo.
+
+Escala: criar eventos para 2 pessoas diferentes; alternar Semana/Mês; editar horário; marcar ausência.
+
+Perfis/Usuários: criar 1 usuário a partir de pessoa RH para a loja Matriz (papel hr_manager) e outro viewer; testar acesso (viewer não pode editar).
+
+RLS: usuário de loja A não vê/edita dados da loja B.
+
+Redirects: sem sessão → /signin; com sessão e sem permissão de escrita → bloqueio adequado.
+
+Responder ao concluir: RH-MODULE ✅ com lista de arquivos alterados e prints das telas.
+
+7) Observações de privacidade (importante)
+
+O campo document_id deve ser opcional e mascarado na UI (exibir apenas final).
+
+Não exportar identificação sensível por CSV sem confirmação explícita.
+
+Em produção, considerar criptografar dados sensíveis no app antes de salvar.

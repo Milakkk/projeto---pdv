@@ -1,0 +1,138 @@
+
+PROMPT 1 — MONOREPO (NEXT.JS / TAURI / EXPO)
+
+Você é um engenheiro full-stack sênior. O sistema já existe e possui módulos funcionando: caixa, cozinha, relatórios, tarefas, check-list, procedimentos, configuração master. 
+Seu trabalho AGORA não é alterar lógica, nem visual, nem comportamento. 
+A missão é **SOMENTE ORGANIZAR** a arquitetura em um **MONOREPO PROFISSIONAL**, preparando o terreno para as próximas etapas.
+
+NÃO reescreva telas.
+NÃO alterar nomes de funções.
+NÃO criar novas features.
+Apenas mover, estruturar, padronizar e deixar pronto para evoluir.
+
+─────────────────────────────────────────────
+OBJETIVO GERAL
+─────────────────────────────────────────────
+
+Criar a seguinte estrutura:
+
+monorepo/
+  apps/
+    desktop/              # Tauri + React → módulos: caixa e cozinha (offline-first futuramente)
+      src/
+        pages/
+          caixa/          # mover código existente
+          cozinha/        # mover código existente
+    web-dashboard/        # Next.js → módulos web: relatórios + configuração master
+      app/
+        relatorios/       # mover código existente (apenas leitura online)
+        configuracao-master/
+    mobile/               # Expo → interface mobile (tarefas, checklist, procedimentos)
+      app/
+        tarefas/          # iniciar rotas vazias (só placeholders)
+        checklist/
+        procedimentos/
+  packages/
+    db/                   # Drizzle ORM schema compartilhado (será preenchido no PROMPT 2)
+    sync/                 # engine de sincronização (será implementada no PROMPT 2)
+    auth/                 # gestão de sessão e RBAC (PROMPT 3)
+    ui/                   # componentes compartilhados (botões, inputs, cards)
+
+Arquivos de configuração (criar/ajustar):
+- pnpm-workspace.yaml
+- turbo.json
+- tsconfig.base.json
+
+─────────────────────────────────────────────
+REGRAS IMPORTANTES
+─────────────────────────────────────────────
+
+1) **NÃO** alterar o layout ou lógica de **caixa** e **cozinha**.
+   Eles devem continuar funcionando exatamente como antes.
+
+2) **Relatórios** devem ser movidos para o web-dashboard (Next.js) sem alterar sua estrutura interna,
+   apenas ajustar imports quando necessário.
+
+3) **Módulos mobile (tarefas/checklist/procedimentos)** nesta etapa devem ser **SOMENTE rotas vazias** (placeholders).
+   A lógica será feita no PROMPT 4.
+
+4) **NENHUM código de banco, sync, cache ou offline deve ser implementado agora.**
+   Isso é o PROMPT 2.
+
+5) Ajustar imports após mover arquivos, sem alterar assinaturas de funções ou componentes.
+
+6) Após reorganizar, o sistema deve rodar assim:
+
+   - Desktop (caixa/cozinha):
+     pnpm dev:desktop
+
+   - Web Dashboard (relatórios/config master):
+     pnpm dev:web
+
+   - Mobile (tarefas, checklist, procedimentos placeholders):
+     pnpm dev:mobile
+
+─────────────────────────────────────────────
+CONFIGURAÇÕES DO MONOREPO
+─────────────────────────────────────────────
+
+Criar arquivo: **pnpm-workspace.yaml**
+-------------------------------------------------
+packages:
+  - "apps/*"
+  - "packages/*"
+
+Criar arquivo: **turbo.json**
+-------------------------------------------------
+{
+  "$schema": "https://turbo.build/schema.json",
+  "pipeline": {
+    "dev": { "cache": false, "persistent": true },
+    "build": { "dependsOn": ["^build"], "outputs": ["dist/**", ".next/**", "build/**"] },
+    "lint": {},
+    "test": {}
+  }
+}
+
+Criar arquivo: **tsconfig.base.json**
+-------------------------------------------------
+{
+  "compilerOptions": {
+    "target": "ES2021",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "baseUrl": ".",
+    "paths": {
+      "@db/*": ["packages/db/src/*"],
+      "@sync/*": ["packages/sync/src/*"],
+      "@auth/*": ["packages/auth/src/*"],
+      "@ui/*": ["packages/ui/src/*"]
+    }
+  }
+}
+
+Criar scripts no package.json root:
+-------------------------------------------------
+"scripts": {
+  "dev:desktop": "turbo run dev --filter=desktop",
+  "dev:web": "turbo run dev --filter=web-dashboard",
+  "dev:mobile": "turbo run dev --filter=mobile",
+  "build": "turbo run build",
+  "lint": "turbo run lint",
+  "test": "turbo run test"
+}
+
+─────────────────────────────────────────────
+APÓS A REESTRUTURAÇÃO, VALIDAR:
+─────────────────────────────────────────────
+
+✅ Caixa abre normalmente via `pnpm dev:desktop`  
+✅ Cozinha abre normalmente via `pnpm dev:desktop`  
+✅ Relatórios carregam em `pnpm dev:web`  
+✅ apps/mobile inicia com rotas placeholder via `pnpm dev:mobile`  
+✅ Nenhuma UI foi modificada  
+✅ Nenhuma regra de negócio alterada  
+✅ Imports ajustados sem refatoração profunda  
+

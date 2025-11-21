@@ -1,0 +1,13 @@
+packages:
+  - apps/*
+  - packages/*
+
+ignoredBuiltDependencies:
+  - '@firebase/util'
+  - '@swc/core'
+  - esbuild
+  - protobufjs
+
+allowedBuiltDependencies:
+  - electron
+  - better-sqlite3
