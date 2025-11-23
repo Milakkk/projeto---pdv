@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import Button from '../../components/base/Button';
 import Input from '../../components/base/Input';
@@ -69,6 +70,7 @@ const createLocalEndOfDay = (dateString: string) => {
 
 
 export default function GerenciamentoCaixaPage() {
+  const navigate = useNavigate();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState('');
   const [showPasswordModal, setShowPasswordModal] = useState(true);
@@ -276,7 +278,11 @@ export default function GerenciamentoCaixaPage() {
 
         <Modal
           isOpen={showPasswordModal}
-          onClose={() => {}}
+          onClose={() => {
+            setShowPasswordModal(false);
+            setPassword('');
+            navigate('/dashboard', { replace: true });
+          }}
           title="Acesso ao Gerenciamento de Caixa"
           size="sm"
         >

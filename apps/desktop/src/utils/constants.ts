@@ -13,3 +13,13 @@ export const DEFAULT_TASK_STATUSES = [
   { key: 'in_progress', label: 'Em Andamento', color: 'bg-blue-500', isDefault: true, isFinal: false },
   { key: 'completed', label: 'Concluída', color: 'bg-green-500', isDefault: true, isFinal: true },
 ];
+
+export const DEFAULT_GLOBAL_OBSERVATIONS: string[] = [
+  'Sem cebola',
+  'Sem tomate',
+  'Sem maionese',
+  'Bem passado',
+  'Mal passado',
+  'Extra queijo',
+  'Sem pimenta',
+];

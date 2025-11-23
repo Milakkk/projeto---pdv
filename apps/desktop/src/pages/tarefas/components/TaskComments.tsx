@@ -1,6 +1,7 @@
 import type { TaskComment } from '../../../types';
 import Button from '../../../components/base/Button';
 import { useAuth } from '../../../context/AuthContext';
+import { useState } from 'react';
 
 interface TaskCommentsProps {
   comments: TaskComment[];

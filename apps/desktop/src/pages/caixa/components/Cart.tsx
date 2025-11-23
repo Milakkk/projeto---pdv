@@ -7,11 +7,11 @@ import { useLocalStorage } from '../../../hooks/useLocalStorage';
 import { mockPaymentMethods, mockCategories } from '../../../mocks/data'; // Importando mockCategories
 import OrderConfirmationModal from './OrderConfirmationModal';
 import ConfirmationModal from '../../../components/base/ConfirmationModal'; // Importando o novo modal
-import { DEFAULT_PAYMENT_SHORTCUTS } from '../../../utils/constants';
+import { DEFAULT_PAYMENT_SHORTCUTS, DEFAULT_GLOBAL_OBSERVATIONS } from '../../../utils/constants';
 import type { CashMovement as CashMovementType } from './CashMovement';
 import { useAuth } from '../../../context/AuthContext'; // IMPORTAÇÃO CORRIGIDA
 // Serviços offline: pedidos e caixa
-import { createOrder, addItem, addPayment } from '@/offline/services/ordersService'
+import { createOrder, addItem, addPayment, closeOrder } from '@/offline/services/ordersService'
 import { enqueueTicket } from '@/offline/services/kdsService'
 import { addMovement, getCurrentSession } from '@/offline/services/cashService'
 
@@ -106,7 +106,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
   const [selectedOptionalObservations, setSelectedOptionalObservations] = useState<string[]>([]); // RENOMEADO
   const [customObservation, setCustomObservation] = useState('');
   
-  const [globalObservations] = useLocalStorage<string[]>('globalObservations', []); // LIDO AQUI
+  const [globalObservations] = useLocalStorage<string[]>('globalObservations', DEFAULT_GLOBAL_OBSERVATIONS);
   const [selectedCartToReplace, setSelectedCartToReplace] = useState<string | null>(null);
   const [customerWhatsApp, setCustomerWhatsApp] = useState('');
   const [selectedPayment, setSelectedPayment] = useState('');
@@ -182,7 +182,9 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
     return () => {}
   }, [showConfirmationModal, showCheckout, showEditObservations, showDeleteCartModal, showLoadModal, showSaveModal])
 
-  const total = items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
+  const subtotal = items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
+  const [globalDiscountPercentage, setGlobalDiscountPercentage] = useState<number>(0);
+  const total = Math.max(0, subtotal * (1 - Math.max(0, Math.min(100, globalDiscountPercentage)) / 100));
   const totalItems = items.reduce((sum, item) => sum + item.quantity, 0);
 
   // Calcular troco
@@ -363,13 +365,13 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [showCheckout, items.length, isMultiplePayment, selectedPayment, orderPassword, config.checkoutShortcut, paymentShortcuts, isConfirmDisabled]); 
 
-  // Função para gerar o número do pedido no formato P + mês + últimos 2 dígitos do ano + sequencial
+  // Função para gerar o número do pedido no formato p + mês + últimos 2 dígitos do ano + sequencial (4 dígitos)
   const generateOrderPin = () => {
     const now = new Date();
     const month = (now.getMonth() + 1).toString().padStart(2, '0');
     const year = now.getFullYear().toString().slice(-2);
-    const sequential = orderCounter.toString().padStart(3, '0');
-    return `P${month}${year}${sequential}`;
+    const sequential = orderCounter.toString().padStart(4, '0');
+    return `p${month}${year}${sequential}`;
   };
 
   // Atualizar valor restante quando breakdown mudar
@@ -438,7 +440,8 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
   // Usando useCallback para memoizar a função de checkout e garantir que 'operationalSession' seja capturado
   const handleCheckout = useCallback(async () => {
     // Recalcular paidAmount e total aqui para garantir que estamos usando os valores mais recentes
-    const currentTotal = items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
+    const currentSubtotal = items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
+    const currentTotal = Math.max(0, currentSubtotal * (1 - Math.max(0, Math.min(100, globalDiscountPercentage)) / 100));
     const currentPaidAmount = parseFloat(amountPaid) || 0;
 
     // Se a validação centralizada falhar, disparamos o alerta específico e retornamos.
@@ -568,6 +571,8 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
       // Enfileirar ticket na cozinha somente se houver itens que passam pela cozinha
       if (!onlyDirectDelivery) {
         try { await enqueueTicket({ orderId }) } catch {}
+      } else {
+        try { await closeOrder(orderId) } catch {}
       }
 
       // Movimento de caixa (apenas dinheiro)
@@ -588,7 +593,33 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
 
     // CHAMA O PROP setOrders DO PAI
     onSaveOrders(prevOrders => [...prevOrders, newOrder]); 
-    setOrderCounter(orderCounter + 1);
+    setOrderCounter(orderCounter >= 9999 ? 1 : (orderCounter + 1));
+
+    try {
+      const unitId = (typeof localStorage !== 'undefined' && localStorage.getItem('unitId')) || 'default'
+      const hubUrl = (import.meta as any)?.env?.VITE_LAN_HUB_URL || 'http://localhost:4000'
+      const secret = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || ''
+      const url = hubUrl.replace(/\/$/, '') + '/push'
+      const headers: Record<string,string> = { 'Content-Type': 'application/json' }
+      if (secret) headers['Authorization'] = `Bearer ${secret}`
+      const events: any[] = [{ table: 'orders', row: { ...newOrder, id: (typeof orderId!=='undefined' ? orderId : newOrder.id) }, unit_id: unitId }]
+      if (cashSession && cashAmountForMovement > 0) {
+        events.push({
+          table: 'cashMovements',
+          row: {
+            id: String(Date.now()),
+            type: 'IN',
+            amount: cashAmountForMovement,
+            description: `Venda - Pedido ${orderPin} (${newOrder.paymentMethod})`,
+            timestamp: new Date().toISOString(),
+            orderId: (typeof orderId!=='undefined' ? orderId : newOrder.id),
+            sessionId: cashSession.id,
+          },
+          unit_id: unitId,
+        })
+      }
+      await fetch(url, { method: 'POST', headers, body: JSON.stringify({ events }) })
+    } catch {}
 
     // Registrar movimento de caixa para pagamentos em dinheiro
     if (cashSession && cashAmountForMovement > 0) {
@@ -1035,6 +1066,21 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
             <span className="text-base lg:text-lg font-semibold text-gray-900">Total:</span>
             <span className="text-base lg:text-lg font-bold text-amber-600">R$ {total.toFixed(2)}</span>
           </div>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-gray-700">Desconto global (%):</span>
+            <div className="flex items-center space-x-2">
+              <Input
+                type="number"
+                value={globalDiscountPercentage.toString()}
+                onChange={(e)=> setGlobalDiscountPercentage(Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)))}
+                className="w-24"
+                step="1"
+                min="0"
+                max="100"
+              />
+              <span className="text-sm">%</span>
+            </div>
+          </div>
           
           <Button 
             className="w-full" 
@@ -1070,7 +1116,17 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
                   <span>R$ {(item.unitPrice * item.quantity).toFixed(2)}</span>
                 </div>
               ))}
-              <div className="border-t pt-2 flex justify-between font-medium">
+              <div className="border-t pt-2 flex justify-between">
+                <span className="font-medium">Subtotal:</span>
+                <span>R$ {subtotal.toFixed(2)}</span>
+              </div>
+              {globalDiscountPercentage > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-sm">Desconto ({globalDiscountPercentage}%)</span>
+                  <span className="text-sm">- R$ {(subtotal - total).toFixed(2)}</span>
+                </div>
+              )}
+              <div className="flex justify-between font-bold">
                 <span>Total:</span>
                 <span className="text-amber-600">R$ {total.toFixed(2)}</span>
               </div>

@@ -3,6 +3,7 @@ import Modal from '../../../components/base/Modal';
 import Button from '../../../components/base/Button';
 import type { OrderItem, Order, Category } from '../../../types';
 import { printOrder } from '../../../utils/print'; // Importando a função de impressão
+import { useAuth } from '../../../context/AuthContext';
 import { useLocalStorage } from '../../../hooks/useLocalStorage'; // Importando useLocalStorage
 import { mockCategories } from '../../../mocks/data'; // Importando mockCategories
 
@@ -50,6 +51,8 @@ export default function OrderConfirmationModal({ isOpen, onClose, orderData }: O
   // HOOKS CHAMADOS INCONDICIONALMENTE NO TOPO
   // CORREÇÃO: Usando mockCategories como fallback
   const [categories] = useLocalStorage<Category[]>('categories', mockCategories);
+  const { store } = useAuth();
+  const [shouldPrint, setShouldPrint] = useLocalStorage<boolean>('printOnConfirm', true);
   
   // Criar mapa de categorias (useMemo 1)
   const categoryMap = useMemo(() => {
@@ -82,22 +85,19 @@ export default function OrderConfirmationModal({ isOpen, onClose, orderData }: O
     };
   }, [orderData]);
 
-  // Efeito para impressão e atalhos (useEffect 1)
   useEffect(() => {
-    if (isOpen && printableOrder) {
-      // Aciona a impressão imediatamente após a abertura do modal, passando o mapa de categorias
-      printOrder(printableOrder, categoryMap);
-      
-      const handleKeyDown = (event: KeyboardEvent) => {
-        if (event.key === 'Enter' || event.key === 'Escape') {
-          onClose();
+    if (!isOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Enter' || event.key === 'Escape') {
+        if (shouldPrint && printableOrder) {
+          printOrder(printableOrder, categoryMap, store?.name);
         }
-      };
-
-      window.addEventListener('keydown', handleKeyDown);
-      return () => window.removeEventListener('keydown', handleKeyDown);
-    }
-  }, [isOpen, onClose, printableOrder, categoryMap]);
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose, printableOrder, categoryMap, shouldPrint, store?.name]);
 
   // RETORNO CONDICIONAL DEVE VIR DEPOIS DE TODOS OS HOOKS
   if (!orderData || !printableOrder) return null;
@@ -120,6 +120,11 @@ export default function OrderConfirmationModal({ isOpen, onClose, orderData }: O
           <i className="ri-check-double-line text-7xl text-green-600 mb-3 animate-pulse"></i>
           <h3 className="text-2xl font-extrabold text-gray-900">Pedido #{pin} Enviado!</h3>
           {/* REMOVIDO: <p className="text-gray-600 mt-1">Acompanhe o pedido pela senha na cozinha.</p> */}
+        </div>
+
+        <div className="flex items-center justify-center gap-2">
+          <input type="checkbox" checked={shouldPrint} onChange={(e)=> setShouldPrint(e.target.checked)} />
+          <span className="text-sm text-gray-700">Imprimir recibo agora</span>
         </div>
 
         {/* Detalhes Principais */}
@@ -184,7 +189,7 @@ export default function OrderConfirmationModal({ isOpen, onClose, orderData }: O
         </div>
 
         <div className="pt-4 border-t">
-          <Button onClick={onClose} className="w-full" autoFocus>
+          <Button onClick={() => { if (shouldPrint && printableOrder) { printOrder(printableOrder, categoryMap, store?.name); } onClose(); }} className="w-full" autoFocus>
             <i className="ri-printer-line mr-2"></i>
             Fechar (ENTER)
           </Button>

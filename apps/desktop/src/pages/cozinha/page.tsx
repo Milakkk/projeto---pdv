@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useMemo, startTransition } from 'react';
 import OrderBoard from './components/OrderBoard';
 import OperatorManagementModal from './components/OperatorManagementModal';
 import AlertModal from '../../components/base/AlertModal';
-import ConfirmationModal from '../../components/base/ConfirmationModal';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import type { Order, KitchenOperator, Category, ProductionUnit, OperationalSession } from '../../types';
 import { useOffline } from '../../hooks/useOffline';
@@ -16,13 +15,12 @@ import DeliveredOrderList from './components/DeliveredOrderList';
 import Icon from '../../ui/Icon';
 // Serviços offline (leitura do SQLite)
 import * as productsService from "../../offline/services/productsService";
-import * as ordersService   from "../../offline/services/ordersService";
 import * as kdsService      from "../../offline/services/kdsService";
 import * as cashService     from "../../offline/services/cashService";
 import { ensureDeviceProfile } from '@/offline/services/deviceProfileService'
-import { getDeviceProfile } from '@/offline/services/deviceProfileService'
-import { getOperationInfo, getAppVersions, getDbVersion, getDataPath } from '@/offline/services/syncInfoService'
+ 
 import OperationModeBadge from '@/components/OperationModeBadge'
+import { getDeviceProfile } from '../../offline/services/deviceProfileService'
 
 const createProductionUnits = (quantity: number): ProductionUnit[] => {
   const units: ProductionUnit[] = [];
@@ -51,6 +49,9 @@ export default function CozinhaPage() {
   const [cashSession, setCashSession] = useLocalStorage<any>('currentCashSession', null);
   
   const [showOperatorModal, setShowOperatorModal] = useState(false);
+  const [showOperatorViewModal, setShowOperatorViewModal] = useState(false);
+  const [operatorFilter, setOperatorFilter] = useState('');
+  const [onlyPreparingOperatorView, setOnlyPreparingOperatorView] = useState(true);
   
   
   const [showReadyModal, setShowReadyModal] = useState(false);
@@ -71,6 +72,12 @@ export default function CozinhaPage() {
   
   const previousOrdersRef = useRef<Order[]>(orders); 
   const hasMigratedRef = useRef(false); // NOVO: Ref para controlar se a migração já foi tentada
+  const getOrderDetails = (id: string): { pin?: string; password?: string } => {
+    try { const raw = localStorage.getItem('kdsOrderDetails'); const map = raw ? JSON.parse(raw) : {}; return map[id] || {} } catch { return {} }
+  }
+  const setOrderDetails = (id: string, patch: { pin?: string; password?: string }) => {
+    try { const raw = localStorage.getItem('kdsOrderDetails'); const map = raw ? JSON.parse(raw) : {}; map[id] = { ...(map[id]||{}), ...patch }; localStorage.setItem('kdsOrderDetails', JSON.stringify(map)) } catch {}
+  }
 
   const isOperationalSessionOpen = useMemo(() => !!operationalSession && operationalSession.status === 'OPEN', [operationalSession]);
 
@@ -78,9 +85,154 @@ export default function CozinhaPage() {
     return orders.filter(order => ['NEW', 'PREPARING', 'READY'].includes(order.status));
   }, [orders]);
 
+  useEffect(() => {
+    let mounted = true
+    const hubUrl = (() => {
+      const envUrl = (import.meta as any)?.env?.VITE_LAN_HUB_URL
+      if (envUrl) return envUrl
+      const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost'
+      return `http://${host}:4000`
+    })()
+    const secret = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || undefined
+    ;(async () => {
+      try {
+        const dp = await getDeviceProfile()
+        const unitId = dp?.unitId || 'default'
+        const deviceId = dp?.deviceId || crypto.randomUUID()
+        const wsUrl = hubUrl.replace(/^http/, 'ws') + `/realtime?token=${encodeURIComponent(secret || '')}`
+        const ws = new WebSocket(wsUrl)
+        ws.addEventListener('open', () => {
+          ws.send(JSON.stringify({ unit_id: unitId, device_id: deviceId }))
+        })
+        ws.addEventListener('message', (ev) => {
+          if (!mounted) return
+          let events: any[] = []
+          try { const msg = JSON.parse(String((ev as MessageEvent).data)); if (msg?.type==='events') events = msg.events || [] } catch {}
+          if (!Array.isArray(events) || events.length === 0) return
+          const tickets = events.filter((e:any)=> String(e.table)==='kdsTickets' && (e.row || e.rows))
+          const ordersEv = events.filter((e:any)=> String(e.table)==='orders' && (e.row || e.rows))
+          const phaseTimesEv = events.filter((e:any)=> String(e.table)==='kds_phase_times' && (e.row || e.rows))
+          if (tickets.length){
+            const mapToOrderStatus = (s:string)=> s==='ready'?'READY': s==='prep'?'PREPARING': s==='done'?'DELIVERED': 'NEW'
+            const byIdStatus: Record<string,string> = {}
+            for (const e of tickets){
+              const r = e.row || {}
+              const id = String(r.order_id ?? r.orderId ?? r.id)
+              const st = mapToOrderStatus(String(r.status ?? e.status ?? 'queued'))
+              byIdStatus[id] = st
+            }
+            startTransition(() => {
+              setOrders(prev => prev.map(o => {
+                const oid = String(o.id)
+                const st = byIdStatus[oid]
+                if (!st) return o
+                if (st==='DELIVERED') return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date(), updatedAt: o.updatedAt }
+                if (st==='READY') return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
+                if (st==='PREPARING') return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date(), readyAt: undefined }
+                if (st==='NEW') return { ...o, status: 'NEW', updatedAt: undefined, readyAt: undefined }
+                return o
+              }))
+            })
+          }
+          if (ordersEv.length){
+            for (const e of ordersEv){
+              const r = e.row || {}
+              const id = String(r.id || '')
+              const pin = typeof r.pin==='string' ? r.pin : undefined
+              const password = typeof r.password==='string' ? r.password : undefined
+              if (id && (pin || password)) setOrderDetails(id, { pin, password })
+            }
+            startTransition(() => {
+              setOrders(prev => prev.map(o => {
+                const evs = ordersEv.filter(e=> String(e.row?.id || e.rows?.[0]?.id || '')===String(o.id))
+                const r = evs.length ? (evs[evs.length-1].row || {}) : {}
+                const st = String(r.status || '').toLowerCase()
+                const det = getOrderDetails(String(o.id))
+                const next: Order = { ...o }
+                if (!next.pin && det.pin) next.pin = det.pin
+                if (!next.password && det.password) next.password = det.password
+                if (st==='closed') {
+                  next.status = 'DELIVERED'
+                  next.deliveredAt = r.closed_at ? new Date(r.closed_at) : (o.deliveredAt ?? new Date())
+                }
+                return next
+              }))
+            })
+          }
+          if (phaseTimesEv.length){
+            startTransition(() => {
+              setOrders(prev => prev.map(o => {
+                const evs = phaseTimesEv.filter(e=> String(e.row?.orderId || '')===String(o.id))
+                if (!evs.length) return o
+                const patch = evs.reduce((acc:any, e:any)=> ({ ...acc, ...e.row }), {})
+                const createdAt = patch.newStart ? new Date(patch.newStart) : o.createdAt
+                const updatedAt = patch.preparingStart ? new Date(patch.preparingStart) : o.updatedAt
+                const readyAt = patch.readyAt ? new Date(patch.readyAt) : o.readyAt
+                const deliveredAt = patch.deliveredAt ? new Date(patch.deliveredAt) : o.deliveredAt
+                return { ...o, createdAt, updatedAt, readyAt, deliveredAt }
+              }))
+            })
+          }
+        })
+        ws.addEventListener('close', () => {
+          setTimeout(() => {
+            if (!mounted) return
+            const ws2 = new WebSocket(wsUrl)
+            ws2.addEventListener('open', () => { ws2.send(JSON.stringify({ unit_id: unitId, device_id: deviceId })) })
+            ws2.addEventListener('message', (ev) => {
+              if (!mounted || !Array.isArray(events)) return
+              let events: any[] = []
+              try { const msg = JSON.parse(String((ev as MessageEvent).data)); if (msg?.type==='events') events = msg.events || [] } catch {}
+              const tickets = events.filter((e:any)=> String(e.table)==='kdsTickets' && (e.row || e.rows))
+              if (tickets.length){
+                const mapToOrderStatus = (s:string)=> s==='ready'?'READY': s==='prep'?'PREPARING': s==='done'?'DELIVERED': 'NEW'
+                const byIdStatus: Record<string,string> = {}
+                for (const e of tickets){
+                  const r = e.row || {}
+                  const id = String(r.order_id ?? r.orderId ?? r.id)
+                  const st = mapToOrderStatus(String(r.status ?? e.status ?? 'queued'))
+                  byIdStatus[id] = st
+                }
+                startTransition(() => {
+                  setOrders(prev => prev.map(o => {
+                    const oid = String(o.id)
+                    const st = byIdStatus[oid]
+                    if (!st) return o
+                    if (st==='DELIVERED') return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date(), updatedAt: o.updatedAt }
+                    if (st==='READY') return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
+                    if (st==='PREPARING') return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date(), readyAt: undefined }
+                    if (st==='NEW') return { ...o, status: 'NEW', updatedAt: undefined, readyAt: undefined }
+                    return o
+                  }))
+                })
+              }
+            })
+          }, 1000)
+        })
+      } catch {}
+    })()
+    return () => { mounted = false }
+  }, [setOrders])
+
   const readyOrdersList = useMemo(() => orders.filter(order => order.status === 'READY'), [orders]);
   const deliveredOrdersList = useMemo(() => orders.filter(o => o.status === 'DELIVERED'), [orders]);
   const canceledOrdersList = useMemo(() => orders.filter(o => o.status === 'CANCELLED'), [orders]);
+
+  const operatorGroups = useMemo(() => {
+    const groups: Record<string, { name: string; units: { orderId: string; orderPin: string; itemName: string; unitId: string; status: ProductionUnit['unitStatus'] }[] }> = {};
+    orders.forEach(order => {
+      (order.items || []).forEach(item => {
+        if (item.skipKitchen || item.menuItem?.skipKitchen) return;
+        (item.productionUnits || []).forEach(unit => {
+          const key = unit.operatorName || 'Sem Operador';
+          const g = groups[key] || { name: key, units: [] };
+          g.units.push({ orderId: order.id, orderPin: order.pin, itemName: item.menuItem?.name || 'Item', unitId: unit.unitId, status: unit.unitStatus });
+          groups[key] = g;
+        });
+      });
+    });
+    return Object.values(groups).sort((a, b) => a.name.localeCompare(b.name));
+  }, [orders]);
 
   // NOVO useEffect para a lógica de migração, executado apenas uma vez na montagem
   useEffect(() => {
@@ -186,7 +338,7 @@ export default function CozinhaPage() {
         }
 
         if (Array.isArray(cats)) {
-          const mapped = (cats as any[]).map((c: any) => ({ id: String(c.id), name: String(c.name ?? 'Sem nome') })) as Category[];
+          const mapped = (cats as any[]).map((c: any, idx: number) => ({ id: String(c.id), name: String(c.name ?? 'Sem nome'), active: true, order: idx })) as Category[];
           startTransition(() => setCategories(mapped));
         }
 
@@ -210,17 +362,19 @@ export default function CozinhaPage() {
         case 'queued': return 'NEW';
         case 'prep': return 'PREPARING';
         case 'ready': return 'READY';
+        case 'done': return 'DELIVERED';
         default: return 'NEW';
       }
     };
-    const fetchTickets = async () => {
+  const fetchTickets = async () => {
       try {
-        const [tkQueued, tkPrep, tkReady] = await Promise.all([
+        const [tkQueued, tkPrep, tkReady, tkDone] = await Promise.all([
           kdsService.listTicketsByStatus('queued'),
           kdsService.listTicketsByStatus('prep'),
           kdsService.listTicketsByStatus('ready'),
+          kdsService.listTicketsByStatus('done'),
         ]);
-        const tk = ([] as any[]).concat(tkQueued || [], tkPrep || [], tkReady || []);
+        const tk = ([] as any[]).concat(tkQueued || [], tkPrep || [], tkReady || [], tkDone || []);
         if (!mounted || !Array.isArray(tk)) return;
         const mappedOrders: Order[] = (tk as any[]).map((t: any) => {
           const items = Array.isArray(t.items) ? t.items.map((item: any) => ({
@@ -242,12 +396,14 @@ export default function CozinhaPage() {
             })) : [],
           })) : []
           const slaMinutes = items.reduce((sum: number, it: any) => sum + (Number(it.menuItem?.sla ?? 15) * Math.max(1, Number(it.quantity ?? 1))), 0)
+          const details = getOrderDetails(String(t.order_id ?? t.orderId ?? t.id ?? ''))
           const ord: Order = {
             id: String(t.order_id ?? t.orderId ?? t.id ?? Math.random().toString(36)),
-            pin: String(t.pin ?? t.orderPin ?? ''),
-            password: String(t.password ?? ''),
+            pin: String(t.pin ?? t.orderPin ?? details.pin ?? ''),
+            password: String(t.password ?? details.password ?? ''),
             status: mapStatus(String(t.status ?? 'queued')),
             createdAt: t.createdAt ? new Date(t.createdAt) : new Date(),
+            updatedAt: t.updatedAt ? new Date(t.updatedAt) : undefined,
             readyAt: t.readyAt ? new Date(t.readyAt) : undefined,
             deliveredAt: t.deliveredAt ? new Date(t.deliveredAt) : undefined,
             items,
@@ -262,10 +418,21 @@ export default function CozinhaPage() {
         const mergedOrders: Order[] = mappedOrders.map(o => {
           const prev = previousOrdersRef.current.find(po => po.id === o.id)
           const prevItems = prev?.items || []
-          const createdAt = prev?.createdAt ?? o.createdAt
+          const createdAt = (() => {
+            if (prev?.createdAt && o.createdAt) return prev.createdAt.getTime() <= o.createdAt.getTime() ? prev.createdAt : o.createdAt
+            return prev?.createdAt ?? o.createdAt
+          })()
+          const updatedAt = (() => {
+            if (prev?.updatedAt && o.updatedAt) return prev.updatedAt.getTime() <= o.updatedAt.getTime() ? prev.updatedAt : o.updatedAt
+            return o.updatedAt ?? prev?.updatedAt
+          })()
+          const readyAt = o.readyAt ?? prev?.readyAt
+          const deliveredAt = o.deliveredAt ?? prev?.deliveredAt
           const items = (o.items && o.items.length > 0 ? o.items : prevItems)
             .filter(it => !(it.skipKitchen || it.menuItem?.skipKitchen))
-          return { ...o, items, createdAt }
+          const pin = (o.pin && String(o.pin).trim()) ? o.pin : (prev?.pin ?? '')
+          const password = (o.password && String(o.password).trim()) ? o.password : (prev?.password ?? '')
+          return { ...o, items, createdAt, updatedAt, readyAt, deliveredAt, pin, password }
         })
         startTransition(() => setOrders(mergedOrders));
       } catch (error) {
@@ -431,6 +598,10 @@ export default function CozinhaPage() {
       }));
     });
     showSuccess(`Pedido #${orderToDeliver.pin} marcado como entregue.`);
+    try {
+      const tId = (orderToDeliver as any)?.ticketId || orderToDeliver.id;
+      kdsService.setTicketStatus(String(tId), 'done');
+    } catch {}
     setShowDeliveryConfirmation(false);
     setOrderToDeliver(null);
   };
@@ -447,6 +618,10 @@ export default function CozinhaPage() {
     });
     const ord = orders.find(o => o.id === orderId);
     showSuccess(`Pedido #${ord?.pin ?? orderId} marcado como entregue.`);
+    try {
+      const tId = (ord as any)?.ticketId || orderId;
+      kdsService.setTicketStatus(String(tId), 'done');
+    } catch {}
   };
 
   const updateProductionUnitStatus = (orderId: string, itemId: string, unitId: string, unitStatus: ProductionUnit['unitStatus'], completedObservations?: string[]) => {
@@ -643,6 +818,10 @@ export default function CozinhaPage() {
               <Icon name="UserPlus" className="mr-2" />
               + Operador
             </Button>
+            <Button onClick={() => setShowOperatorViewModal(true)} size="sm" className="flex-shrink-0">
+              <Icon name="ListChecks" className="mr-2" />
+              Por Operador
+            </Button>
           </div>
         </div>
 
@@ -675,6 +854,68 @@ export default function CozinhaPage() {
           operators={operators}
           setOperators={setOperators}
         />
+
+        <Modal
+          isOpen={showOperatorViewModal}
+          onClose={() => setShowOperatorViewModal(false)}
+          title="Visão por Operador"
+          size="lg"
+        >
+          <div className="space-y-4">
+            {operatorGroups.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">Nenhuma unidade em produção</div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <select className="border rounded px-2 py-1" value={operatorFilter} onChange={(e)=> setOperatorFilter(e.target.value)}>
+                    <option value="">Todos</option>
+                    <option value="Sem Operador">Sem Operador</option>
+                    {operators.map(op=> (<option key={op.id} value={op.name}>{op.name}</option>))}
+                  </select>
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input type="checkbox" checked={onlyPreparingOperatorView} onChange={(e)=> setOnlyPreparingOperatorView(e.target.checked)} />
+                    Mostrar apenas em preparo
+                  </label>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {(operatorGroups.filter(g=> !operatorFilter || g.name===operatorFilter)).map(group => {
+                  const total = group.units.length;
+                  const visibleUnits = onlyPreparingOperatorView ? group.units.filter(u=> u.status !== 'READY') : group.units;
+                  const pendentes = visibleUnits.filter(u => u.status === 'PENDING').length;
+                  const prontos = visibleUnits.filter(u => u.status === 'READY').length;
+                  return (
+                    <div key={group.name} className="border rounded-lg p-4 bg-white">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="font-semibold text-gray-900">{group.name}</div>
+                        <div className="flex items-center space-x-2 text-sm">
+                          <span className="inline-flex items-center px-2 py-1 rounded-full bg-gray-100 text-gray-700">Total {total}</span>
+                          <span className="inline-flex items-center px-2 py-1 rounded-full bg-yellow-100 text-yellow-700">Pendentes {pendentes}</span>
+                          <span className="inline-flex items-center px-2 py-1 rounded-full bg-green-100 text-green-700">Prontos {prontos}</span>
+                        </div>
+                      </div>
+                      <div className="divide-y">
+                        {visibleUnits.map(u => (
+                          <div key={u.unitId} className="py-2 flex items-center justify-between">
+                            <div className="text-sm text-gray-800">
+                              Pedido #{u.orderPin} • {u.itemName}
+                            </div>
+                            <span className={`inline-flex items-center px-2 py-1 rounded text-xs ${u.status === 'READY' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-yellow-50 text-yellow-700 border border-yellow-200'}`}>
+                              {u.status === 'READY' ? 'Pronto' : 'Em preparo'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              </div>
+            )}
+            <div className="flex justify-end pt-4 border-t">
+              <Button variant="secondary" onClick={() => setShowOperatorViewModal(false)}>Fechar</Button>
+            </div>
+          </div>
+        </Modal>
         
         
         
@@ -880,4 +1121,27 @@ export default function CozinhaPage() {
     </>
   );
 }
+  
+  // Atualizador leve de tempos por fase para refletir mudanças imediatas na UI
+  useEffect(() => {
+    const interval = setInterval(() => {
+      startTransition(() => {
+        setOrders(prev => prev.map(o => {
+          try {
+            const raw = localStorage.getItem('kdsPhaseTimes')
+            const obj = raw ? JSON.parse(raw) : {}
+            const patch = obj[String(o.id)] || {}
+            return {
+              ...o,
+              createdAt: patch.newStart ? new Date(patch.newStart) : o.createdAt,
+              updatedAt: patch.preparingStart ? new Date(patch.preparingStart) : o.updatedAt,
+              readyAt: patch.readyAt ? new Date(patch.readyAt) : o.readyAt,
+              deliveredAt: patch.deliveredAt ? new Date(patch.deliveredAt) : o.deliveredAt,
+            }
+          } catch { return o }
+        }))
+      })
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [])
   

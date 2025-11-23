@@ -20,6 +20,7 @@ import type { Category, MenuItem, OrderItem, Order, SavedCart, ProductionUnit, O
 import * as productsService from '../../offline/services/productsService';
 import * as cashService from '../../offline/services/cashService';
 import * as ordersService from '../../offline/services/ordersService';
+import * as kdsService from '../../offline/services/kdsService';
 import { useOffline } from '../../hooks/useOffline';
 import Input from '../../components/base/Input';
 import Button from '../../components/base/Button';
@@ -28,6 +29,7 @@ import OrderListTab from './components/OrderListTab';
 import { useAuth } from '../../context/AuthContext'; // Importação corrigida
 import { ensureDeviceProfile } from '@/offline/services/deviceProfileService'
 import OperationModeBadge from '@/components/OperationModeBadge'
+import { getDeviceProfile } from '../../offline/services/deviceProfileService'
 
 type CaixaTab = 'pdv' | 'orders';
 
@@ -66,6 +68,7 @@ export default function CaixaPage() {
   const [cashPromptSessionId, setCashPromptSessionId] = useLocalStorage<string | null>('cashPromptSessionId', null);
   const [cartItems, setCartItems] = useState<OrderItem[]>([]);
   const [quickSearchCode, setQuickSearchCode] = useState('');
+  const [selectedItemIndex, setSelectedItemIndex] = useState(0);
   
   // Estados de Sessão e Caixa
   const [operationalSession, setOperationalSession] = useLocalStorage<OperationalSession | null>('currentOperationalSession', null);
@@ -165,9 +168,22 @@ export default function CaixaPage() {
   const [activeTab, setActiveTab] = useState<CaixaTab>('pdv');
 
   const quickSearchRef = useRef<HTMLInputElement>(null);
+  const navScopeRef = useRef<HTMLDivElement>(null);
   const previousOrdersRef = useRef<Order[]>(orders);
 
   const { isOnline, addPendingAction } = useOffline();
+
+  const filteredMenuItems = useMemo(() => {
+    const activeItems = menuItems.filter(item => item.active)
+    if (!selectedCategory) return []
+    if (selectedCategory === 'promo-combos') return activeItems.filter(it => it.isPromo)
+    const byDb = activeItems.filter(item => item.categoryId === selectedCategory)
+    if (byDb.length > 0) return byDb
+    const lsItems = (menuItemsLS || []).filter(it => it.active)
+    const byLs = lsItems.filter(it => it.categoryId === selectedCategory)
+    return byLs
+  }, [menuItems, selectedCategory, menuItemsLS])
+  useEffect(() => { setSelectedItemIndex(0) }, [selectedCategory])
 
   // Pedidos da sessão atual (apenas os vinculados à sessão operacional aberta)
   const sessionOrders = useMemo(() => {
@@ -252,11 +268,22 @@ export default function CaixaPage() {
             code: p.sku ?? undefined,
             skipKitchen: Boolean((fromLs as any)?.skipKitchen ?? false),
             unitDeliveryCount: Math.max(1, Number((fromLs as any)?.unitDeliveryCount ?? 1)),
+            isPromo: Boolean((fromLs as any)?.isPromo ?? false),
+            comboItemIds: Array.isArray((fromLs as any)?.comboItemIds) ? (fromLs as any).comboItemIds : [],
           }
         });
 
         if (mounted) {
-          const finalCategories = (mappedCategories && mappedCategories.length > 0) ? mappedCategories : categories;
+          const baseCategories = (mappedCategories && mappedCategories.length > 0) ? mappedCategories : categories;
+          const promoCategory: Category = {
+            id: 'promo-combos',
+            name: 'Promoções / Combos',
+            icon: '',
+            order: Math.max(0, baseCategories.length),
+            active: true,
+            isPromo: true,
+          }
+          const finalCategories = [...baseCategories, promoCategory]
           setCategories(finalCategories);
           // Fallback para itens do armazenamento local quando o banco estiver vazio
           const finalMenuItems = (mappedMenuItems && mappedMenuItems.length > 0) ? mappedMenuItems : menuItemsLS;
@@ -274,7 +301,7 @@ export default function CaixaPage() {
   // Selecionar automaticamente a primeira categoria ativa quando categorias forem carregadas
   useEffect(() => {
     if (autoSelectCategory && !selectedCategory && categories && categories.length > 0) {
-      const firstActive = categories.filter(cat => cat.active).sort((a, b) => a.order - b.order)[0]
+      const firstActive = categories.filter(cat => (cat.active ?? true)).sort((a, b) => a.order - b.order)[0]
       if (firstActive) setSelectedCategory(firstActive.id)
     }
   }, [categories, selectedCategory, autoSelectCategory])
@@ -298,28 +325,286 @@ export default function CaixaPage() {
   // Efeito para atalhos de teclado: Space (foco na busca) e ESC (deselecionar categoria)
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      // Atalhos só funcionam quando a janela do navegador está focada
       if (!document.hasFocus()) return;
-      const activeElement = document.activeElement;
-      const isInput = activeElement?.tagName === 'INPUT' || activeElement?.tagName === 'TEXTAREA';
+      const ae = document.activeElement as HTMLElement | null
+      const isInput = !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA');
 
-      if (activeTab === 'pdv') {
-        // Foco na busca com Space quando não estiver em um input
-        if (event.key === ' ' && !isInput) {
-          event.preventDefault();
-          quickSearchRef.current?.focus();
+      if (activeTab !== 'pdv') return
+
+      if (event.key === ' ' && !isInput) {
+        event.preventDefault();
+        quickSearchRef.current?.focus();
+        return
+      }
+      if (event.key === 'Escape') {
+        const anyOpen = showOptionsModal || showCodeListModal || showOrderTrackerModal || showDirectDeliveryChecklist || showCashOpening || showCashMovement || showCashClosing || showAlertModal || showEndSessionConfirmation || showMovementConfirmation
+        if (anyOpen) {
+          setShowOptionsModal(false)
+          setShowCodeListModal(false)
+          setShowOrderTrackerModal(false)
+          setShowDirectDeliveryChecklist(false)
+          setShowCashOpening(false)
+          setShowCashMovement(false)
+          setShowCashClosing(false)
+          setShowAlertModal(false)
+          setShowEndSessionConfirmation(false)
+          setShowMovementConfirmation(false)
+          return
         }
-        // ESC desmarca a categoria selecionada e limpa a grade
-        if (event.key === 'Escape') {
-          setAutoSelectCategory(false);
-          setSelectedCategory('');
+        setAutoSelectCategory(false)
+        setSelectedCategory('')
+        return
+      }
+      if (isInput) return
+
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        const activeCategories = categories.filter(c=> (c.active ?? true)).sort((a,b)=>a.order-b.order)
+        const idx = activeCategories.findIndex(c=>c.id===selectedCategory)
+        if (idx>0) setSelectedCategory(activeCategories[idx-1].id)
+        return
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        const activeCategories = categories.filter(c=> (c.active ?? true)).sort((a,b)=>a.order-b.order)
+        const idx = activeCategories.findIndex(c=>c.id===selectedCategory)
+        if (idx>=0 && idx<activeCategories.length-1) setSelectedCategory(activeCategories[idx+1].id)
+        return
+      }
+      if (event.key === 'ArrowRight') {
+        event.preventDefault()
+        if (filteredMenuItems.length) setSelectedItemIndex(i=> Math.min(filteredMenuItems.length-1, i+1))
+        return
+      }
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault()
+        if (filteredMenuItems.length) setSelectedItemIndex(i=> Math.max(0, i-1))
+        return
+      }
+      if (event.key === '+' || (event.key === '=' && event.shiftKey) || event.code === 'NumpadAdd') {
+        event.preventDefault()
+        const item = filteredMenuItems[selectedItemIndex]
+        if (item) {
+          setSelectedItemForOptions(item)
+          setSelectedRequiredModifiers({})
+          setSelectedOptionalObservations([])
+          setCustomObservation('')
+          setShowOptionsModal(true)
         }
+        return
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        const item = filteredMenuItems[selectedItemIndex]
+        if (item) {
+          const required = (item.requiredModifierGroups||[]).filter(g=>g.active)
+          if (required.length>0) {
+            setSelectedItemForOptions(item)
+            setSelectedRequiredModifiers({})
+            setSelectedOptionalObservations([])
+            setCustomObservation('')
+            setShowOptionsModal(true)
+          } else {
+            handleAddToCart(item)
+          }
+        }
+        return
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeTab]);
+  }, [activeTab, categories, selectedCategory, filteredMenuItems, selectedItemIndex]);
+
+  useEffect(() => {
+    try { if (activeTab === 'pdv') navScopeRef.current?.focus() } catch {}
+  }, [activeTab])
+
+  useEffect(() => {
+    let mounted = true;
+    const syncStatuses = async () => {
+      try {
+        const [tkQueued, tkPrep, tkReady, tkDone] = await Promise.all([
+          kdsService.listTicketsByStatus('queued'),
+          kdsService.listTicketsByStatus('prep'),
+          kdsService.listTicketsByStatus('ready'),
+          kdsService.listTicketsByStatus('done'),
+        ]);
+        const mapIds = (arr: any[]) => (Array.isArray(arr) ? arr : []).map((t:any)=> String(t.order_id ?? t.orderId ?? t.id));
+        const queuedIds = mapIds(tkQueued)
+        const prepIds = mapIds(tkPrep)
+        const readyIds = mapIds(tkReady)
+        const doneIds = mapIds(tkDone)
+        if (!mounted) return;
+        setOrders(prev => prev.map(o => {
+          const oid = String(o.id)
+          if (doneIds.includes(oid)) return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date() }
+          if (readyIds.includes(oid)) return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
+          if (prepIds.includes(oid)) return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date() }
+          if (queuedIds.includes(oid)) return { ...o, status: 'NEW', updatedAt: undefined, readyAt: undefined }
+          return o
+        }))
+      } catch {}
+    };
+    syncStatuses();
+    const timer = setInterval(syncStatuses, 2000);
+    return () => { mounted = false; clearInterval(timer); };
+  }, [setOrders])
+
+  useEffect(() => {
+    let mounted = true
+    const hubUrl = (() => {
+      const envUrl = (import.meta as any)?.env?.VITE_LAN_HUB_URL
+      if (envUrl) return envUrl
+      const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost'
+      return `http://${host}:4000`
+    })()
+    const secret = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || undefined
+    ;(async () => {
+      try {
+        const dp = await getDeviceProfile()
+        const unitId = dp?.unitId || 'default'
+        const deviceId = dp?.deviceId || crypto.randomUUID()
+        const wsUrl = hubUrl.replace(/^http/, 'ws') + `/realtime?token=${encodeURIComponent(secret || '')}`
+        const ws = new WebSocket(wsUrl)
+        ws.addEventListener('open', () => {
+          ws.send(JSON.stringify({ unit_id: unitId, device_id: deviceId }))
+        })
+        ws.addEventListener('message', (ev) => {
+          if (!mounted) return
+          let events: any[] = []
+          try { const msg = JSON.parse(String((ev as MessageEvent).data)); if (msg?.type==='events') events = msg.events || [] } catch {}
+          const tickets = events.filter((e:any)=> String(e.table)==='kdsTickets' && (e.row || e.rows))
+          if (tickets.length){
+            const mapToOrderStatus = (s:string)=> s==='ready'?'READY': s==='prep'?'PREPARING': s==='done'?'DELIVERED': 'NEW'
+            const byIdStatus: Record<string,string> = {}
+            for (const e of tickets){
+              const r = e.row || {}
+              const id = String(r.order_id ?? r.orderId ?? r.id)
+              const st = mapToOrderStatus(String(r.status ?? e.status ?? 'queued'))
+              byIdStatus[id] = st
+            }
+            setOrders(prev => prev.map(o => {
+              const oid = String(o.id)
+              const st = byIdStatus[oid]
+              if (!st) return o
+              if (st==='DELIVERED') return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date() }
+              if (st==='READY') return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
+              if (st==='PREPARING') return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date() }
+              if (st==='NEW') return { ...o, status: 'NEW', updatedAt: undefined, readyAt: undefined }
+              return o
+            }))
+          }
+          const ordEvents = events.filter((e:any)=> String(e.table)==='orders' && (e.row || e.rows))
+          if (ordEvents.length){
+            const incoming: Record<string, any> = {}
+            for (const e of ordEvents){
+              const r = e.row || {}
+              const id = String(r.id ?? '')
+              if (!id) continue
+              incoming[id] = r
+            }
+            setOrders(prev => {
+              const map: Record<string, Order> = {}
+              for (const o of prev) map[String(o.id)] = o
+              for (const [id, r] of Object.entries(incoming)){
+                const existing = map[id]
+                if (existing){
+                  map[id] = {
+                    ...existing,
+                    ...r,
+                    createdAt: r.createdAt ? new Date(r.createdAt) : existing.createdAt,
+                    updatedAt: r.updatedAt ? new Date(r.updatedAt) : (existing.updatedAt ?? new Date()),
+                    readyAt: r.readyAt ? new Date(r.readyAt) : existing.readyAt,
+                    deliveredAt: r.deliveredAt ? new Date(r.deliveredAt) : existing.deliveredAt,
+                  } as any
+                } else {
+                  map[id] = {
+                    ...(r as any),
+                    createdAt: r.createdAt ? new Date(r.createdAt) : new Date(),
+                    updatedAt: r.updatedAt ? new Date(r.updatedAt) : new Date(),
+                    readyAt: r.readyAt ? new Date(r.readyAt) : undefined,
+                    deliveredAt: r.deliveredAt ? new Date(r.deliveredAt) : undefined,
+                  }
+                }
+              }
+              return Object.values(map)
+            })
+          }
+        })
+        ws.addEventListener('close', () => {
+          setTimeout(() => {
+            if (!mounted) return
+            const ws2 = new WebSocket(wsUrl)
+            ws2.addEventListener('open', () => { ws2.send(JSON.stringify({ unit_id: unitId, device_id: deviceId })) })
+        ws2.addEventListener('message', (ev) => {
+              if (!mounted) return
+              let events: any[] = []
+              try { const msg = JSON.parse(String((ev as MessageEvent).data)); if (msg?.type==='events') events = msg.events || [] } catch {}
+              const tickets = events.filter((e:any)=> String(e.table)==='kdsTickets' && (e.row || e.rows))
+              if (tickets.length){
+                const mapToOrderStatus = (s:string)=> s==='ready'?'READY': s==='prep'?'PREPARING': s==='done'?'DELIVERED': 'NEW'
+                const byIdStatus: Record<string,string> = {}
+                for (const e of tickets){
+                  const r = e.row || {}
+                  const id = String(r.order_id ?? r.orderId ?? r.id)
+                  const st = mapToOrderStatus(String(r.status ?? e.status ?? 'queued'))
+                  byIdStatus[id] = st
+                }
+                setOrders(prev => prev.map(o => {
+                  const oid = String(o.id)
+                  const st = byIdStatus[oid]
+                  if (!st) return o
+                  if (st==='DELIVERED') return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date() }
+                  if (st==='READY') return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
+                  if (st==='PREPARING') return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date() }
+                  if (st==='NEW') return { ...o, status: 'NEW', updatedAt: undefined, readyAt: undefined }
+                  return o
+                }))
+              }
+              const ordEvents = events.filter((e:any)=> String(e.table)==='orders' && (e.row || e.rows))
+              if (ordEvents.length){
+                const incoming: Record<string, any> = {}
+                for (const e of ordEvents){
+                  const r = e.row || {}
+                  const id = String(r.id ?? '')
+                  if (!id) continue
+                  incoming[id] = r
+                }
+                setOrders(prev => {
+                  const map: Record<string, Order> = {}
+                  for (const o of prev) map[String(o.id)] = o
+                  for (const [id, r] of Object.entries(incoming)){
+                    const existing = map[id]
+                    if (existing){
+                      map[id] = {
+                        ...existing,
+                        ...r,
+                        createdAt: r.createdAt ? new Date(r.createdAt) : existing.createdAt,
+                        updatedAt: r.updatedAt ? new Date(r.updatedAt) : (existing.updatedAt ?? new Date()),
+                        readyAt: r.readyAt ? new Date(r.readyAt) : existing.readyAt,
+                        deliveredAt: r.deliveredAt ? new Date(r.deliveredAt) : existing.deliveredAt,
+                      } as any
+                    } else {
+                      map[id] = {
+                        ...(r as any),
+                        createdAt: r.createdAt ? new Date(r.createdAt) : new Date(),
+                        updatedAt: r.updatedAt ? new Date(r.updatedAt) : new Date(),
+                        readyAt: r.readyAt ? new Date(r.readyAt) : undefined,
+                        deliveredAt: r.deliveredAt ? new Date(r.deliveredAt) : undefined,
+                      }
+                    }
+                  }
+                  return Object.values(map)
+                })
+              }
+            })
+          }, 1000)
+        })
+      } catch {}
+    })()
+    return () => { mounted = false }
+  }, [setOrders])
 
   
 
@@ -399,7 +684,7 @@ export default function CaixaPage() {
 
   // --- Funções de Manipulação do Carrinho ---
 
-  const handleAddToCart = (item: MenuItem, observations?: string) => {
+  const handleAddToCart = (item: MenuItem, observations?: string, discountPercentage: number = 0) => {
     if (!isCashOpen) {
       displayAlert('Caixa Fechado', 'É necessário abrir o caixa para registrar vendas.', 'info');
       return;
@@ -414,7 +699,7 @@ export default function CaixaPage() {
     };
 
     const existingItemIndex = cartItems.findIndex(
-      (cartItem) => cartItem.menuItem.id === item.id && cartItem.observations === observations
+      (cartItem) => cartItem.menuItem.id === item.id && cartItem.observations === observations && Math.round((cartItem.discountPercentage || 0)) === Math.round(discountPercentage || 0)
     );
 
     if (existingItemIndex > -1) {
@@ -437,14 +722,16 @@ export default function CaixaPage() {
       setCartItems(newCartItems);
     } else {
       // Adiciona novo item com quantity: 1 e unidades de produção condicionais
+      const effectiveUnitPrice = Math.max(0, item.price * (1 - Math.max(0, Math.min(100, discountPercentage || 0)) / 100))
       const newItem: OrderItem = {
         id: Date.now().toString(),
         menuItem: item,
         quantity: 1,
-        unitPrice: item.price,
+        unitPrice: effectiveUnitPrice,
         observations,
         productionUnits: item.skipKitchen ? [] : [initialUnit],
         skipKitchen: !!item.skipKitchen,
+        discountPercentage: Math.max(0, Math.min(100, discountPercentage || 0)),
       };
       setCartItems([...cartItems, newItem]);
     }
@@ -606,16 +893,6 @@ export default function CaixaPage() {
     setShowCodeListModal(false);
   };
 
-  // --- Lógica de Filtragem de Itens ---
-  const filteredMenuItems = useMemo(() => {
-    const activeItems = menuItems.filter(item => item.active)
-    if (!selectedCategory) return []
-    const byDb = activeItems.filter(item => item.categoryId === selectedCategory)
-    if (byDb.length > 0) return byDb
-    const lsItems = (menuItemsLS || []).filter(it => it.active)
-    const byLs = lsItems.filter(it => it.categoryId === selectedCategory)
-    return byLs
-  }, [menuItems, selectedCategory, menuItemsLS])
 
   // --- Lógica de Reordenação de Categoria ---
   const handleReorderCategory = (categoryId: string, direction: 'up' | 'down') => {
@@ -797,20 +1074,7 @@ export default function CaixaPage() {
   // --- Renderização ---
   
   const totalCart = cartItems.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
-  const [offlineActiveOrdersCount, setOfflineActiveOrdersCount] = useState<number>(0);
-  useEffect(() => {
-    (async () => {
-      try {
-        const rows = await ordersService.listOrders();
-        const openCount = (rows || []).filter((r: any) => r.status === 'open').length;
-        setOfflineActiveOrdersCount(openCount);
-      } catch (error) {
-        console.error('Erro ao carregar pedidos offline:', error);
-      }
-    })();
-  }, []);
-
-  const totalActiveOrders = Math.max(activeOrders.length, offlineActiveOrdersCount);
+  const totalActiveOrders = activeOrders.length;
 
   return (
     // O pai (ProtectedRoute) agora define h-screen e overflow-hidden.
@@ -961,7 +1225,7 @@ export default function CaixaPage() {
       </div>
 
       {/* Conteúdo Principal (3 Colunas no PDV) - Usa flex-1 para preencher a altura restante */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden" tabIndex={0} ref={navScopeRef}>
         
         {activeTab === 'pdv' && (
           <div className="flex-1 flex flex-row overflow-hidden">
@@ -992,7 +1256,6 @@ export default function CaixaPage() {
                     }}
                     placeholder="Buscar item por código (Ex: XB001) ou use ESPAÇO"
                     className="flex-1"
-                    autoFocus
                   />
                   <Button 
                     onClick={() => handleQuickSearch(quickSearchCode)}
@@ -1015,6 +1278,8 @@ export default function CaixaPage() {
                 <MenuGrid
                   items={filteredMenuItems}
                   onAddToCart={handleAddToCart}
+                  selectedIndex={selectedItemIndex}
+                  onSelectIndex={setSelectedItemIndex}
                 />
               </div>
             </div>
@@ -1189,6 +1454,39 @@ export default function CaixaPage() {
                     });
                     return { ...o, items: newItems };
                   }));
+                  ;(async () => {
+                    try {
+                      const envUrl = (import.meta as any)?.env?.VITE_LAN_HUB_URL
+                      const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost'
+                      const hubUrl = (envUrl || `http://${host}:4000`).replace(/\/$/, '')
+                      const secret = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || ''
+                      const dp = await getDeviceProfile()
+                      const unitId = dp?.unitId || 'default'
+                      const headers: Record<string,string> = { 'Content-Type': 'application/json' }
+                      if (secret) headers['Authorization'] = `Bearer ${secret}`
+                      const builtItems = (checklistOrder.items || []).map(it => {
+                        const totalUnits = Math.max(1, (it.quantity || 1) * Math.max(1, it.menuItem?.unitDeliveryCount || 1));
+                        const prevTimesRaw = Array.isArray((it as any).directDeliveredUnitTimes) ? (it as any).directDeliveredUnitTimes : [];
+                        const prevTimes: (Date | undefined)[] = Array.from({ length: totalUnits }, (_, idx) => {
+                          const val = prevTimesRaw[idx];
+                          return val ? new Date(val) : undefined;
+                        });
+                        const now = new Date();
+                        const newTimes: (Date | undefined)[] = [];
+                        for (let i = 0; i < totalUnits; i++) {
+                          const key = `${it.id}-${i}`;
+                          const wasDelivered = !!prevTimes[i];
+                          const isChecked = !!checklistUnitChecks[key];
+                          newTimes[i] = isChecked ? (wasDelivered ? prevTimes[i] : now) : undefined
+                        }
+                        const delivered = newTimes.filter(Boolean).length;
+                        return { ...it, directDeliveredUnitCount: delivered, directDeliveredUnitTimes: newTimes } as any
+                      })
+                      const row = { ...checklistOrder, items: builtItems }
+                      const events = [{ table: 'orders', row, unit_id: unitId }]
+                      await fetch(hubUrl + '/push', { method: 'POST', headers, body: JSON.stringify({ events }) })
+                    } catch {}
+                  })()
 
                   // Se todos estiverem completos, marcar como entregue
                   const allItemsCompleted = (checklistOrder.items || []).every(it => {
@@ -1202,13 +1500,52 @@ export default function CaixaPage() {
                   });
                   if (checklistMode === 'all') {
                     if (allItemsCompleted) {
-                      setOrders(orders.map(o => o.id === checklistOrder.id ? { ...o, status: 'DELIVERED', deliveredAt: new Date() } : o));
+                      const now = new Date()
+                      setOrders(orders.map(o => o.id === checklistOrder.id ? { ...o, status: 'DELIVERED', deliveredAt: now } : o));
+                      ;(async () => {
+                        try {
+                          const envUrl = (import.meta as any)?.env?.VITE_LAN_HUB_URL
+                          const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost'
+                          const hubUrl = (envUrl || `http://${host}:4000`).replace(/\/$/, '')
+                          const secret = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || ''
+                          const dp = await getDeviceProfile()
+                          const unitId = dp?.unitId || 'default'
+                          const headers: Record<string,string> = { 'Content-Type': 'application/json' }
+                          if (secret) headers['Authorization'] = `Bearer ${secret}`
+                          const row = { ...checklistOrder, status: 'DELIVERED', deliveredAt: now }
+                          const events = [{ table: 'orders', row, unit_id: unitId }]
+                          await fetch(hubUrl + '/push', { method: 'POST', headers, body: JSON.stringify({ events }) })
+                        } catch {}
+                      })()
                       showSuccess(`Pedido #${checklistOrder.pin} marcado como entregue.`);
                     } else {
                       showInfo('Entrega parcial registrada. Conclua as unidades restantes depois.');
                     }
                   } else {
-                    showSuccess('Entrega direta registrada. Os itens de cozinha seguem em preparo.');
+                    const originalOrder = orders.find(o => o.id === checklistOrder.id)
+                    const hasKitchenItems = !!originalOrder && (originalOrder.items || []).some(it => !(it.skipKitchen || it.menuItem?.skipKitchen))
+                    if (!hasKitchenItems && allItemsCompleted) {
+                      const now = new Date()
+                      setOrders(orders.map(o => o.id === checklistOrder.id ? { ...o, status: 'DELIVERED', deliveredAt: now } : o));
+                      ;(async () => {
+                        try {
+                          const envUrl = (import.meta as any)?.env?.VITE_LAN_HUB_URL
+                          const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost'
+                          const hubUrl = (envUrl || `http://${host}:4000`).replace(/\/$/, '')
+                          const secret = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || ''
+                          const dp = await getDeviceProfile()
+                          const unitId = dp?.unitId || 'default'
+                          const headers: Record<string,string> = { 'Content-Type': 'application/json' }
+                          if (secret) headers['Authorization'] = `Bearer ${secret}`
+                          const row = { ...checklistOrder, status: 'DELIVERED', deliveredAt: now }
+                          const events = [{ table: 'orders', row, unit_id: unitId }]
+                          await fetch(hubUrl + '/push', { method: 'POST', headers, body: JSON.stringify({ events }) })
+                        } catch {}
+                      })()
+                      showSuccess(`Pedido #${checklistOrder.pin} marcado como entregue.`);
+                    } else {
+                      showSuccess('Entrega direta registrada. Os itens de cozinha seguem em preparo.');
+                    }
                   }
                   setShowDirectDeliveryChecklist(false);
                   setChecklistOrder(null);

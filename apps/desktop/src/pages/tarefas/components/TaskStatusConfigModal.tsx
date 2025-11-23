@@ -2,6 +2,7 @@ import Modal from '../../../components/base/Modal';
 import Input from '../../../components/base/Input';
 import Button from '../../../components/base/Button';
 import type { TaskStatus } from '../../../types';
+import { useState, useEffect } from 'react';
 
 interface TaskStatusConfigModalProps {
   isOpen: boolean;
@@ -43,7 +44,7 @@ export default function TaskStatusConfigModal({ isOpen, onClose, statuses, onSav
     // Usar um slug simples para a chave
     const newKey = newStatusLabel.trim().toLowerCase().replace(/\s+/g, '_');
     
-    if (currentStatuses.some(s => s.key === newKey)) {
+    if (currentStatuses.some((s: TaskStatus) => s.key === newKey)) {
       alert('Status com este nome já existe.');
       return;
     }
@@ -63,7 +64,7 @@ export default function TaskStatusConfigModal({ isOpen, onClose, statuses, onSav
   };
 
   const handleRemoveStatus = (key: string) => {
-    setCurrentStatuses(currentStatuses.filter(s => s.key !== key));
+    setCurrentStatuses(currentStatuses.filter((s: TaskStatus) => s.key !== key));
   };
   
   const handleReorder = (index: number, direction: 'up' | 'down') => {
@@ -89,7 +90,7 @@ export default function TaskStatusConfigModal({ isOpen, onClose, statuses, onSav
 
   const handleSave = () => {
     // Garantir que o status 'completed' seja sempre final
-    const finalStatuses = currentStatuses.map(s => 
+    const finalStatuses = currentStatuses.map((s: TaskStatus) => 
       s.key === 'completed' ? { ...s, isFinal: true } : s
     );
     onSaveStatuses(finalStatuses);
@@ -162,7 +163,7 @@ export default function TaskStatusConfigModal({ isOpen, onClose, statuses, onSav
         <div>
           <h4 className="font-medium text-gray-900 mb-3">Status Ativos ({currentStatuses.length})</h4>
           <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
-            {currentStatuses.map((status, index) => {
+            {currentStatuses.map((status: TaskStatus, index: number) => {
               const isMovable = !status.isDefault;
               const canMoveUp = isMovable && index > 0 && !currentStatuses[index - 1].isDefault;
               const canMoveDown = isMovable && index < currentStatuses.length - 1 && !currentStatuses[index + 1].isDefault;

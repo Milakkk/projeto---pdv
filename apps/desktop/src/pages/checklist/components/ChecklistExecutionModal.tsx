@@ -2,6 +2,7 @@ import Modal from '../../../components/base/Modal';
 import Button from '../../../components/base/Button';
 import type { ChecklistMaster, ChecklistExecution, ChecklistExecutionItem } from '../../../types';
 import { useAuth } from '../../../context/AuthContext';
+import { useEffect, useState } from 'react';
 
 interface ChecklistExecutionModalProps {
   isOpen: boolean;

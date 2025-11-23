@@ -8,12 +8,15 @@ import * as inventory from '@/offline/services/inventoryService'
 
 interface MenuGridProps {
   items: MenuItem[];
-  onAddToCart: (item: MenuItem, observations?: string) => void;
+  onAddToCart: (item: MenuItem, observations?: string, discountPercentage?: number) => void;
+  selectedIndex?: number;
+  onSelectIndex?: (index: number) => void;
 }
 
-export default function MenuGrid({ items, onAddToCart }: MenuGridProps) {
+export default function MenuGrid({ items, onAddToCart, selectedIndex = 0, onSelectIndex }: MenuGridProps) {
   const [showObservationsModal, setShowObservationsModal] = useState(false);
   const [selectedItem, setSelectedItem] = useState<MenuItem | null>(null);
+  const [selectedDiscount, setSelectedDiscount] = useState<number>(0);
   
   // Estados para Modificadores Obrigatórios (Map<groupId, selectedOption>)
   const [selectedRequiredModifiers, setSelectedRequiredModifiers] = useState<Record<string, string>>({});
@@ -52,6 +55,7 @@ export default function MenuGrid({ items, onAddToCart }: MenuGridProps) {
     setSelectedRequiredModifiers({});
     setSelectedOptionalObservations([]);
     setCustomObservation('');
+    setSelectedDiscount(0);
     
     setShowObservationsModal(true);
   };
@@ -100,7 +104,7 @@ export default function MenuGrid({ items, onAddToCart }: MenuGridProps) {
     const allParts = [requiredPrefix, optionalText, customText].filter(p => p.length > 0);
     const observationsText = allParts.length > 0 ? allParts.join(', ') : undefined;
     
-    onAddToCart(selectedItem, observationsText);
+    onAddToCart(selectedItem, observationsText, selectedDiscount);
     
     setShowObservationsModal(false);
     setSelectedItem(null);
@@ -124,6 +128,8 @@ export default function MenuGrid({ items, onAddToCart }: MenuGridProps) {
   
   // REMOVIDO: requiresSelection, pois a lógica foi movida para a renderização dos botões.
 
+  const [discounts, setDiscounts] = useState<Record<string, number>>({});
+
   if (items.length === 0) {
     return (
       <div className="flex-1 p-4 lg:p-6 flex items-center justify-center">
@@ -141,8 +147,12 @@ export default function MenuGrid({ items, onAddToCart }: MenuGridProps) {
       <div className="flex-1 px-4 lg:px-6 pb-4 lg:pb-6 overflow-y-auto bg-gray-50">
         
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3 lg:gap-4">
-          {items.map((item) => (
-            <div key={item.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
+          {items.map((item, idx) => (
+            <div
+              key={item.id}
+              className={`bg-white rounded-lg shadow-sm border overflow-hidden hover:shadow-md transition-shadow ${idx===selectedIndex ? 'border-amber-400 ring-2 ring-amber-300' : 'border-gray-200'}`}
+              onClick={() => onSelectIndex?.(idx)}
+            >
               {item.image && (
                 <img
                   src={item.image}
@@ -162,7 +172,7 @@ export default function MenuGrid({ items, onAddToCart }: MenuGridProps) {
                   R$ {item.price.toFixed(2)}
                 </p>
                 
-                <div className="flex space-x-2">
+                <div className="flex space-x-2 items-center">
                   {/* Se houver opções obrigatórias ATIVAS, o botão principal deve abrir o modal */}
                   {hasRequiredModifiers(item) ? (
                     <Button
@@ -179,7 +189,7 @@ export default function MenuGrid({ items, onAddToCart }: MenuGridProps) {
                     <Button
                       // Se houver observações opcionais, o botão principal adiciona diretamente.
                       // O modal só é aberto pelo botão secundário.
-                      onClick={() => onAddToCart(item)}
+                      onClick={() => onAddToCart(item, undefined, 0)}
                       className="flex-1"
                       size="sm"
                     >
@@ -292,6 +302,24 @@ export default function MenuGrid({ items, onAddToCart }: MenuGridProps) {
             <p className="text-xs text-gray-500 mt-1">
               {customObservation.length}/500 caracteres
             </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Desconto (%):
+            </label>
+            <div className="flex items-center space-x-2">
+              <Input
+                type="number"
+                value={selectedDiscount.toString()}
+                onChange={(e) => setSelectedDiscount(Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)))}
+                className="w-24"
+                step="1"
+                min="0"
+                max="100"
+              />
+              <span className="text-sm">%</span>
+            </div>
           </div>
 
           <div className="flex space-x-3 pt-4 border-t">

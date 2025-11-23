@@ -14,6 +14,23 @@ export function useLocalStorage<T>(key: string, initialValue: T) {
 
   const [storedValue, setStoredValue] = useState<T>(readValue);
 
+  useEffect(() => {
+    try {
+      const existing = window.localStorage.getItem(key);
+      if (existing == null) {
+        window.localStorage.setItem(key, JSON.stringify(storedValue));
+        const event = new StorageEvent('storage', {
+          key: key,
+          newValue: JSON.stringify(storedValue),
+          oldValue: null,
+          url: window.location.href,
+          storageArea: window.localStorage,
+        });
+        window.dispatchEvent(event);
+      }
+    } catch {}
+  }, [key]);
+
   // Função para escrever o valor no localStorage
   const setValue = (value: T | ((val: T) => T)) => {
     try {

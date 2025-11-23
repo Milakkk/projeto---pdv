@@ -1,6 +1,7 @@
 import type { Task, TaskStatus } from '../../../types';
 import Button from '../../../components/base/Button';
 import { useLocalStorage } from '../../../hooks/useLocalStorage';
+import { useState, useEffect, useRef } from 'react';
 
 interface TaskCardProps {
   task: Task;

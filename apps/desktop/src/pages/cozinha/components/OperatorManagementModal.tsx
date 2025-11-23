@@ -4,6 +4,7 @@ import Modal from '../../../components/base/Modal';
 import Input from '../../../components/base/Input';
 import Button from '../../../components/base/Button';
 import ConfirmationModal from '../../../components/base/ConfirmationModal';
+import * as kdsService from '../../../offline/services/kdsService';
 
 interface OperatorManagementModalProps {
   isOpen: boolean;
@@ -21,7 +22,7 @@ export default function OperatorManagementModal({ isOpen, onClose, operators, se
   const [editingOperator, setEditingOperator] = useState<KitchenOperator | null>(null);
   const [editedName, setEditedName] = useState('');
 
-  const handleAddOperator = () => {
+  const handleAddOperator = async () => {
     if (newOperatorName.trim() === '') {
       alert('O nome do operador não pode ser vazio.');
       return;
@@ -31,12 +32,15 @@ export default function OperatorManagementModal({ isOpen, onClose, operators, se
       return;
     }
 
-    const newOperator: KitchenOperator = {
-      id: Date.now().toString(),
-      name: newOperatorName.trim(),
-    };
-
-    setOperators([...operators, newOperator]);
+    const id = await kdsService.upsertOperator({ name: newOperatorName.trim() });
+    try {
+      const updated = await kdsService.listOperators();
+      const mapped = (updated || []).map((r: any) => ({ id: String(r.id), name: String(r.name || '') } as KitchenOperator));
+      setOperators(mapped);
+    } catch {
+      const newOperator: KitchenOperator = { id: String(id), name: newOperatorName.trim() };
+      setOperators([...operators, newOperator]);
+    }
     setNewOperatorName('');
   };
   
@@ -45,7 +49,7 @@ export default function OperatorManagementModal({ isOpen, onClose, operators, se
     setEditedName(operator.name);
   };
   
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (!editingOperator || editedName.trim() === '') {
       alert('O nome não pode ser vazio.');
       return;
@@ -59,9 +63,14 @@ export default function OperatorManagementModal({ isOpen, onClose, operators, se
       return;
     }
     
-    setOperators(operators.map(op => 
-      op.id === editingOperator.id ? { ...op, name: trimmedName } : op
-    ));
+    await kdsService.upsertOperator({ id: editingOperator.id, name: trimmedName });
+    try {
+      const updated = await kdsService.listOperators();
+      const mapped = (updated || []).map((r: any) => ({ id: String(r.id), name: String(r.name || '') } as KitchenOperator));
+      setOperators(mapped);
+    } catch {
+      setOperators(operators.map(op => op.id === editingOperator.id ? { ...op, name: trimmedName } : op));
+    }
     
     setEditingOperator(null);
     setEditedName('');
@@ -77,9 +86,16 @@ export default function OperatorManagementModal({ isOpen, onClose, operators, se
     setShowDeleteConfirm(true);
   };
 
-  const confirmDeleteOperator = () => {
+  const confirmDeleteOperator = async () => {
     if (operatorToDelete) {
-      setOperators(operators.filter(op => op.id !== operatorToDelete.id));
+      await kdsService.deleteOperator(operatorToDelete.id);
+      try {
+        const updated = await kdsService.listOperators();
+        const mapped = (updated || []).map((r: any) => ({ id: String(r.id), name: String(r.name || '') } as KitchenOperator));
+        setOperators(mapped);
+      } catch {
+        setOperators(operators.filter(op => op.id !== operatorToDelete.id));
+      }
     }
     setShowDeleteConfirm(false);
     setOperatorToDelete(null);

@@ -1,5 +1,5 @@
 import { useState, useMemo, memo } from 'react';
-import { Order, KitchenOperator, OrderItem, ProductionUnit } from '../../../types';
+import type { Order, KitchenOperator, OrderItem, ProductionUnit } from '../../../types';
 import Button from '../../../components/base/Button';
 import { useTimer } from '../../../hooks/useTimer';
 import Modal from '../../../components/base/Modal';
@@ -60,7 +60,9 @@ const statusInfo = {
   NEW: { text: 'Novo', color: 'bg-blue-100 text-blue-800', bgColor: 'bg-blue-50' },
   PREPARING: { text: 'Preparando', color: 'bg-yellow-100 text-yellow-800', bgColor: 'bg-yellow-50' },
   READY: { text: 'Pronto', color: 'bg-green-100 text-green-800', bgColor: 'bg-green-50' },
-};
+  DELIVERED: { text: 'Entregue', color: 'bg-gray-100 text-gray-800', bgColor: 'bg-gray-50' },
+  CANCELLED: { text: 'Cancelado', color: 'bg-red-100 text-red-800', bgColor: 'bg-red-50' },
+} as const;
 
 function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAssignOperator, onAssignOperatorToAll, onDisplayAlert, onUpdateItemStatus, onCancelOrder }: OrderRowProps) {
   const [isExpanded, setIsExpanded] = useState(false);

@@ -4,6 +4,7 @@ import Button from '../../../components/base/Button';
 import Input from '../../../components/base/Input';
 import { useTimer } from '../../../hooks/useTimer'; // Importando useTimer
 import { printOrder } from '../../../utils/print'; // Importando a função de impressão
+import { useAuth } from '../../../context/AuthContext';
 
 interface OrderListTabProps {
   orders: Order[];
@@ -234,6 +235,7 @@ function OrderTimeStatus({ order }: { order: Order }) {
 
 
 export default function OrderListTab({ orders, onMarkAsDelivered }: OrderListTabProps) {
+  const { store } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | Order['status']>('all');
 
@@ -600,7 +602,7 @@ export default function OrderListTab({ orders, onMarkAsDelivered }: OrderListTab
                           variant="secondary"
                           onClick={(e) => {
                             e.stopPropagation();
-                            printOrder(order);
+                            printOrder(order, undefined, store?.name);
                           }}
                           className="w-full"
                         >

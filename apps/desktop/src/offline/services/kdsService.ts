@@ -21,7 +21,12 @@ const uuid = () =>
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`
 
-const lanHubUrl: string | undefined = (import.meta as any)?.env?.VITE_LAN_HUB_URL || 'http://localhost:4000'
+const lanHubUrl: string | undefined = (() => {
+  const envUrl = (import.meta as any)?.env?.VITE_LAN_HUB_URL
+  if (envUrl) return envUrl
+  const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost'
+  return `http://${host}:4000`
+})()
 const lanSecret: string | undefined = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || undefined
 
 async function pushLanEvents(events: any[]) {
@@ -36,6 +41,26 @@ async function pushLanEvents(events: any[]) {
       body: JSON.stringify({ events: enriched }),
     })
   } catch {}
+}
+
+function getPhaseTimes(orderId: string): any {
+  try {
+    const raw = localStorage.getItem('kdsPhaseTimes')
+    const obj = raw ? JSON.parse(raw) : {}
+    return obj[String(orderId)] || {}
+  } catch { return {} }
+}
+
+async function setPhaseTime(orderId: string, patch: any) {
+  try {
+    const raw = localStorage.getItem('kdsPhaseTimes')
+    const obj = raw ? JSON.parse(raw) : {}
+    const cur = obj[String(orderId)] || {}
+    const next = { ...cur, ...patch }
+    obj[String(orderId)] = next
+    localStorage.setItem('kdsPhaseTimes', JSON.stringify(obj))
+  } catch {}
+  try { await pushLanEvents([{ table: 'kds_phase_times', row: { orderId, ...patch } }]) } catch {}
 }
 
 export async function enqueueTicket(params: { orderId: UUID; station?: string | null }) {
@@ -56,13 +81,45 @@ export async function enqueueTicket(params: { orderId: UUID; station?: string | 
       localStorage.setItem('kdsTickets', JSON.stringify(arr))
     } catch {}
   }
+  try { await pushLanEvents([{ table: 'kdsTickets', row: { id, order_id: params.orderId, unit_id: unitId ?? null, status: 'queued', station: params.station ?? null, updated_at: now } }]) } catch {}
+  try { await setPhaseTime(params.orderId, { newStart: now }) } catch {}
   return id
 }
 
 export async function setTicketStatus(id: UUID, status: 'queued' | 'prep' | 'ready' | 'done') {
   const now = new Date().toISOString()
+  let orderId: string | undefined
+  try {
+    const r = await query('SELECT order_id FROM kds_tickets WHERE id = ?', [id])
+    orderId = r?.rows && r.rows[0]?.order_id ? String(r.rows[0].order_id) : undefined
+  } catch {}
+  if (!orderId) {
+    try {
+      const raw = localStorage.getItem('kdsTickets')
+      const arr = raw ? JSON.parse(raw) : []
+      const tk = (Array.isArray(arr) ? arr : []).find((t:any)=> String(t.id)===String(id))
+      orderId = tk?.order_id || tk?.orderId
+    } catch {}
+  }
+  if (orderId) {
+    try {
+      if (status === 'queued') await setPhaseTime(orderId, { newStart: now })
+      if (status === 'prep') await setPhaseTime(orderId, { preparingStart: now })
+      if (status === 'ready') await setPhaseTime(orderId, { readyAt: now })
+      if (status === 'done') await setPhaseTime(orderId, { deliveredAt: now })
+    } catch {}
+  }
   try {
     await query('UPDATE kds_tickets SET status = ?, updated_at = ?, pending_sync = 1 WHERE id = ?', [status, now, id])
+    if (status === 'done') {
+      try {
+        const res = await query('SELECT order_id FROM kds_tickets WHERE id = ?', [id])
+        const orderId = res?.rows && res.rows[0]?.order_id
+        if (orderId) {
+          await query('UPDATE orders SET status = ?, closed_at = ?, updated_at = ?, pending_sync = 1 WHERE id = ?', ['closed', now, now, orderId])
+        }
+      } catch {}
+    }
   } catch {
     try {
       const raw = localStorage.getItem('kdsTickets')
@@ -70,17 +127,20 @@ export async function setTicketStatus(id: UUID, status: 'queued' | 'prep' | 'rea
       const updated = arr.map((t:any)=> t.id===id ? { ...t, status, updated_at: now } : t)
       localStorage.setItem('kdsTickets', JSON.stringify(updated))
 
-      const mapToOrderStatus = (s:string)=> s==='ready'?'READY': s==='prep'?'PREPARING': 'NEW'
+      const mapToOrderStatus = (s:string)=> s==='done'?'closed': s==='ready'?'READY': s==='prep'?'PREPARING': 'NEW'
       try {
         const rawOrders = localStorage.getItem('orders')
         const orders = rawOrders ? JSON.parse(rawOrders) : []
+        const tk = (Array.isArray(arr)?arr:[]).find((t:any)=> String(t.id)===String(id))
+        const orderId = tk?.order_id || tk?.orderId
         const updOrders = (Array.isArray(orders)?orders:[]).map((o:any)=> {
-          if (String(o.id)===String(id)) {
+          if (String(o.id)===String(orderId)) {
             const nextStatus = mapToOrderStatus(String(status))
             const out:any = { ...o, status: nextStatus }
-            if (nextStatus==='PREPARING' && !o.updatedAt) out.updatedAt = now
+            if (nextStatus==='PREPARING' && !o.updated_at) out.updated_at = now
             if (nextStatus==='READY') out.readyAt = now
             if (nextStatus!=='READY') out.readyAt = undefined
+            if (nextStatus==='closed') { out.closed_at = now; out.updated_at = now }
             return out
           }
           return o
@@ -89,6 +149,7 @@ export async function setTicketStatus(id: UUID, status: 'queued' | 'prep' | 'rea
       } catch {}
     } catch {}
   }
+  try { await pushLanEvents([{ table: 'kdsTickets', row: { id, status, updated_at: now } }]) } catch {}
 }
 
 export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 'done') {
@@ -98,6 +159,7 @@ export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 
     const enriched = [] as any[]
     for (const t of tickets) {
       const ordId = t.order_id ?? t.orderId
+      const times = getPhaseTimes(String(ordId))
       const resItems = await query('SELECT oi.*, p.name as product_name, p.category_id as category_id FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ?', [ordId])
       const items = (resItems?.rows ?? []).map((it:any) => ({
         id: String(it.id),
@@ -117,7 +179,6 @@ export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 
           completedAt: undefined,
         })),
       }))
-      // Merge com estado persistido no navegador (operador, status e checklist)
       try {
         const rawState = localStorage.getItem('kdsUnitState')
         const state = rawState ? JSON.parse(rawState) : {}
@@ -136,9 +197,9 @@ export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 
           ...it,
           productionUnits: it.productionUnits.map((u:any)=> mergeUnit(String(ordId), String(it.id), u))
         }))
-        enriched.push({ ...t, items: mergedItems })
+        enriched.push({ ...t, items: mergedItems, createdAt: times?.newStart || t.createdAt, updatedAt: times?.preparingStart || t.updatedAt, readyAt: times?.readyAt || t.readyAt, deliveredAt: times?.deliveredAt || t.deliveredAt })
       } catch {
-        enriched.push({ ...t, items })
+        enriched.push({ ...t, items, createdAt: times?.newStart || t.createdAt, updatedAt: times?.preparingStart || t.updatedAt, readyAt: times?.readyAt || t.readyAt, deliveredAt: times?.deliveredAt || t.deliveredAt })
       }
     }
     return enriched
@@ -153,6 +214,7 @@ export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 
           const ordRaw = localStorage.getItem('orders')
           const orders = ordRaw ? JSON.parse(ordRaw) : []
           const ord = Array.isArray(orders) ? orders.find((o:any)=> String(o.id)===String(t.order_id || t.orderId)) : null
+          const times = getPhaseTimes(String(t.order_id || t.orderId))
           let items = Array.isArray(ord?.items) ? ord.items.filter((it:any)=> !(it.skipKitchen || it.menuItem?.skipKitchen)) : []
           try {
             const rawState = localStorage.getItem('kdsUnitState')
@@ -173,7 +235,7 @@ export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 
               productionUnits: (Array.isArray(it.productionUnits)? it.productionUnits : []).map((u:any)=> mergeUnit(String(t.order_id || t.orderId), String(it.id), u))
             }))
           } catch {}
-          res.push({ ...t, items })
+          res.push({ ...t, items, createdAt: times?.newStart || t.createdAt, updatedAt: times?.preparingStart || t.updatedAt, readyAt: times?.readyAt || t.readyAt, deliveredAt: times?.deliveredAt || t.deliveredAt })
         }
         return res
       }
@@ -182,7 +244,7 @@ export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 
       const mapStatus = (s:string)=> s==='READY'?'ready': s==='PREPARING'?'prep': 'queued'
       const res = (Array.isArray(orders)?orders:[])
         .filter((o:any)=> mapStatus(String(o.status||'NEW'))===status)
-        .map((o:any)=> ({ id: String(o.id), order_id: String(o.id), status: mapStatus(String(o.status||'NEW')), items: (Array.isArray(o.items)? o.items.filter((it:any)=> !(it.skipKitchen || it.menuItem?.skipKitchen)) : []) }))
+        .map((o:any)=> ({ id: String(o.id), order_id: String(o.id), status: mapStatus(String(o.status||'NEW')), items: (Array.isArray(o.items)? o.items.filter((it:any)=> !(it.skipKitchen || it.menuItem?.skipKitchen)) : []), createdAt: getPhaseTimes(String(o.id))?.newStart || o.opened_at || o.createdAt, updatedAt: getPhaseTimes(String(o.id))?.preparingStart || o.updatedAt, readyAt: getPhaseTimes(String(o.id))?.readyAt || o.readyAt, deliveredAt: getPhaseTimes(String(o.id))?.deliveredAt || o.closed_at || o.deliveredAt }))
       return res
     } catch { return [] }
   }
@@ -263,5 +325,40 @@ export async function listOperators() {
       return Array.isArray(arr) ? arr : []
     } catch { return [] }
   }
+}
+
+export async function upsertOperator(params: { id?: string; name: string; role?: string | null }) {
+  const id = params.id ?? uuid()
+  const now = new Date().toISOString()
+  const role = params.role ?? null
+  try {
+    await query(
+      'INSERT INTO kitchen_operators (id, name, role, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, role=excluded.role, updated_at=excluded.updated_at, version=excluded.version, pending_sync=excluded.pending_sync',
+      [id, params.name, role, now, 1, 1],
+    )
+  } catch {
+    try {
+      const raw = localStorage.getItem('kitchenOperators')
+      const arr = raw ? JSON.parse(raw) : []
+      const next = [{ id, name: params.name, role, updated_at: now, version: 1, pending_sync: 1 }, ...arr.filter((o:any)=> String(o.id)!==String(id))]
+      localStorage.setItem('kitchenOperators', JSON.stringify(next))
+    } catch {}
+  }
+  try { await pushLanEvents([{ table: 'kitchen_operators', row: { id, name: params.name, role, updated_at: now } }]) } catch {}
+  return id
+}
+
+export async function deleteOperator(id: string) {
+  try {
+    await query('DELETE FROM kitchen_operators WHERE id = ?', [id])
+  } catch {
+    try {
+      const raw = localStorage.getItem('kitchenOperators')
+      const arr = raw ? JSON.parse(raw) : []
+      const next = (Array.isArray(arr) ? arr : []).filter((o:any)=> String(o.id)!==String(id))
+      localStorage.setItem('kitchenOperators', JSON.stringify(next))
+    } catch {}
+  }
+  try { await pushLanEvents([{ table: 'kitchen_operators_delete', row: { id } }]) } catch {}
 }
 import { getCurrentUnitId } from './deviceProfileService'

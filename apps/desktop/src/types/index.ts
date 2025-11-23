@@ -6,6 +6,7 @@ export interface Category {
   active: boolean;
   // Código de integração opcional (numérico, pode ficar vazio)
   integrationCode?: string;
+  isPromo?: boolean;
 }
 
 // NOVO: Interface para grupos de modificadores obrigatórios (seleção única)
@@ -35,6 +36,8 @@ export interface MenuItem {
   allowPartialDelivery?: boolean;
   // NOVO: Quantidade total de unidades por item para conferência de entrega
   unitDeliveryCount?: number;
+  isPromo?: boolean;
+  comboItemIds?: string[];
 }
 
 // Novo tipo para rastrear o status de cada unidade de produção
@@ -64,6 +67,7 @@ export interface OrderItem {
   directDeliveredUnitCount?: number;
   // NOVO: Timestamps de entrega por unidade (ordem do checklist)
   directDeliveredUnitTimes?: Date[];
+  discountPercentage?: number;
 }
 
 export interface Order {

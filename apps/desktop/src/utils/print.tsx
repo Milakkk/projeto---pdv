@@ -8,10 +8,10 @@ import type { Order } from '../types';
  * @param order O objeto Order a ser impresso.
  * @param categoryMap Mapa de ID da categoria para Nome da categoria.
  */
-export const printOrder = (order: Order, categoryMap: Record<string, string> = {}) => {
+export const printOrder = (order: Order, categoryMap: Record<string, string> = {}, storeName?: string) => {
   // 1. Renderiza o componente React para HTML estático
   const printableHtml = ReactDOMServer.renderToStaticMarkup(
-    <PrintableOrder order={order} categoryMap={categoryMap} />
+    <PrintableOrder order={order} categoryMap={categoryMap} storeName={storeName} />
   );
 
   // 2. Cria o conteúdo HTML completo com estilos de impressão

@@ -18,15 +18,11 @@ import ProcedimentosPage from '../pages/procedimentos/page';
 import RHPage from '../pages/rh/page';
 import RHConfigPage from '../pages/rh/ConfigPage';
 // Dev pages para fallback
-import DevCaixa from '../pages/dev/DevCaixa';
-import DevCozinha from '../pages/dev/DevCozinha';
 import ProtectedRoute from '../components/auth/ProtectedRoute';
+const isExternalPreview = (typeof __IS_PREVIEW__ !== 'undefined' && __IS_PREVIEW__ === true)
 import type { Module } from '../types';
 
-const IS_DEV = import.meta.env.DEV;
-
-// Rota de debug de sync desativada para simplificar dev
-const SyncStatusDev = null
+ 
 
 
 const routes: RouteObject[] = [
@@ -77,146 +73,108 @@ const routes: RouteObject[] = [
       },
 
       // Módulos com Navegação (Renderiza Navigation e Outlet)
-  {
-    path: '/',
-    element: <ProtectedRoute isModuleRoute={true} />, 
-    children: [
-          // Módulo CAIXA
+      {
+        path: 'caixa',
+        element: (
+          <ProtectedRoute
+            isModuleRoute={true}
+            requiredPermission={'CAIXA' as Module}
+            allowedRoles={['Administrador Master', 'Gerente', 'Operador de Caixa']}
+          />
+        ),
+        children: [
+          { index: true, element: <CaixaPage /> },
           {
-            path: 'caixa',
-            element: (
-              <ProtectedRoute
-                requiredPermission={'CAIXA' as Module}
-                allowedRoles={['Administrador Master', 'Gerente', 'Operador de Caixa']}
-              />
-            ),
-            children: [
-              { index: true, element: <CaixaPage /> },
-              // Configurações movidas para o módulo CAIXA
-              {
-                path: 'configuracoes',
-                element: (
-                  <ProtectedRoute
-                    requiredPermission={'CAIXA' as Module}
-                    allowedRoles={['Administrador Master', 'Gerente', 'Operador de Caixa']}
-                  />
-                ),
-                children: [
-                  { index: true, element: <ConfiguracoesPage /> },
-                ],
-              }
-            ]
-          },
-          
-          // Módulo COZINHA
+            path: 'configuracoes',
+            element: <ConfiguracoesPage />,
+          }
+        ]
+      },
+      {
+        path: 'cozinha',
+        element: (
+          <ProtectedRoute
+            isModuleRoute={true}
+            requiredPermission={'COZINHA' as Module}
+            allowedRoles={['Administrador Master', 'Gerente', 'Cozinheiro']}
+          />
+        ),
+        children: [
+          { index: true, element: <CozinhaPage /> },
           {
-            path: 'cozinha',
-            element: (
-              <ProtectedRoute
-                requiredPermission={'COZINHA' as Module}
-                allowedRoles={['Administrador Master', 'Gerente', 'Cozinheiro']}
-              />
-            ),
-            children: [
-              { index: true, element: <CozinhaPage /> },
-              // Configurações do módulo COZINHA
-              {
-                path: 'configuracoes',
-                element: (
-                  <ProtectedRoute
-                    requiredPermission={'COZINHA' as Module}
-                    allowedRoles={['Administrador Master', 'Gerente', 'Cozinheiro']}
-                  />
-                ),
-                children: [
-                  { index: true, element: <ConfiguracoesPage /> },
-                ],
-              }
-            ]
-          },
-          
-          // Módulo GESTÃO
+            path: 'configuracoes',
+            element: <ConfiguracoesPage />,
+          }
+        ]
+      },
+      // Relatórios ficam acessíveis também por rota pública; manter fora daqui
+      {
+        path: 'gerenciamento-caixa',
+        element: <ProtectedRoute isModuleRoute={true} requiredPermission={'GESTAO' as Module} />,
+        children: [
+          { index: true, element: <GerenciamentoCaixaPage /> }
+        ]
+      },
+      {
+        path: 'tarefas',
+        element: <ProtectedRoute isModuleRoute={true} requiredPermission={'TAREFAS' as Module} />,
+        children: [
+          { index: true, element: <TarefasPage /> }
+        ]
+      },
+      {
+        path: 'checklist',
+        element: <ProtectedRoute isModuleRoute={true} requiredPermission={'CHECKLIST' as Module} />,
+        children: [
+          { index: true, element: <ChecklistPage /> }
+        ]
+      },
+      {
+        path: 'procedimentos',
+        element: <ProtectedRoute isModuleRoute={true} requiredPermission={'PROCEDIMENTOS' as Module} />,
+        children: [
+          { index: true, element: <ProcedimentosPage /> }
+        ]
+      },
+      {
+        path: 'estoque',
+        element: (
+          <ProtectedRoute
+            isModuleRoute={true}
+            requiredPermission={'ESTOQUE' as Module}
+            allowedRoles={['Administrador Master', 'Gerente']}
+          />
+        ),
+        children: [
+          { path: 'fichas', element: <EstoqueFichasPage /> },
+          { path: 'precos', element: <EstoquePrecosPage /> },
+          { path: 'gerenciamento', element: <EstoqueGerenciamentoPage /> },
+        ]
+      },
+      {
+        path: 'rh',
+        element: (
+          <ProtectedRoute
+            isModuleRoute={true}
+            requiredPermission={'RH' as Module}
+            allowedRoles={['Administrador Master', 'Gerente']}
+          />
+        ),
+        children: [
+          { index: true, element: <RHPage /> },
           {
-            path: 'relatorios',
-            element: <ProtectedRoute requiredPermission={'GESTAO' as Module} />,
-            children: [
-              { index: true, element: <RelatoriosPage /> }
-            ]
-          },
-          {
-            path: 'gerenciamento-caixa',
-            element: <ProtectedRoute requiredPermission={'GESTAO' as Module} />,
-            children: [
-              { index: true, element: <GerenciamentoCaixaPage /> }
-            ]
-          },
-          // A rota /configuracoes foi removida daqui
-          
-          // Novos Módulos Operacionais (Permissão TAREFAS, CHECKLIST, PROCEDIMENTOS)
-          {
-            path: 'tarefas',
-            element: <ProtectedRoute requiredPermission={'TAREFAS' as Module} />,
-            children: [
-              { index: true, element: <TarefasPage /> }
-            ]
-          },
-          {
-            path: 'checklist',
-            element: <ProtectedRoute requiredPermission={'CHECKLIST' as Module} />,
-            children: [
-              { index: true, element: <ChecklistPage /> }
-            ]
-          },
-          {
-            path: 'procedimentos',
-            element: <ProtectedRoute requiredPermission={'PROCEDIMENTOS' as Module} />,
-            children: [
-              { index: true, element: <ProcedimentosPage /> }
-            ]
-          },
-          
-          {
-            path: 'estoque',
-            element: (
-              <ProtectedRoute
-                requiredPermission={'ESTOQUE' as Module}
-                allowedRoles={['Administrador Master', 'Gerente']}
-              />
-            ),
-            children: [
-              { path: 'fichas', element: <EstoqueFichasPage /> },
-              { path: 'precos', element: <EstoquePrecosPage /> },
-              { path: 'gerenciamento', element: <EstoqueGerenciamentoPage /> },
-            ]
-          },
-          // Módulo RH
-          {
-            path: 'rh',
-            element: (
-              <ProtectedRoute
-                requiredPermission={'RH' as Module}
-                allowedRoles={['Administrador Master', 'Gerente']}
-              />
-            ),
-            children: [
-              { index: true, element: <RHPage /> },
-              {
-                path: 'config',
-                element: (
-                  <ProtectedRoute
-                    requiredPermission={'RH' as Module}
-                    allowedRoles={['Administrador Master', 'Gerente']}
-                  />
-                ),
-                children: [
-                  { index: true, element: <RHConfigPage /> },
-                ],
-              }
-            ]
-          },
+            path: 'config',
+            element: <RHConfigPage />,
+          }
         ]
       },
     ]
+  },
+
+  // Rota pública para Relatórios (sem ProtectedRoute)
+  {
+    path: '/relatorios',
+    element: <RelatoriosPage />
   },
   
   // Rota 404

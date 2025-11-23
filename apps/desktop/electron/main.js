@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, globalShortcut } from 'electron'
+import { app, BrowserWindow, ipcMain, globalShortcut, session } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 // Registra o canal IPC de DB no processo MAIN
@@ -41,9 +41,9 @@ function createWindow () {
     console.log('[renderer] loaded:', win.webContents.getURL())
   })
 
-  loadRenderer(win, '/login').catch(() => {
+  loadRenderer(win, '/dashboard').catch(() => {
     // fallback em caso de erro
-    win.loadFile(path.join(__dirname, '../out/index.html'), { hash: 'login' }).catch(() => {})
+    win.loadFile(path.join(__dirname, '../out/index.html'), { hash: 'dashboard' }).catch(() => {})
   })
 }
 
@@ -79,7 +79,7 @@ export function openPdvWindow() {
 
 // Abre janela KDS com sessão persistente própria e rota /cozinha
 export function openKdsWindow() {
-  return openWindowWithPartition('persist:pdv', '/cozinha')
+  return openWindowWithPartition('persist:kds', '/cozinha')
 }
 
 // Abre uma nova janela por módulo, usando partições adequadas quando aplicável
@@ -145,10 +145,41 @@ ipcMain.handle('close-focused-window', () => {
   return false
 })
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  if (String(process.env.RESET_DATA) === '1') {
+    try {
+      const fs = (eval('require'))('fs')
+      const p = (eval('require'))('path')
+      const files = ['data.db', 'data.db-shm', 'data.db-wal']
+      for (const f of files) {
+        try {
+          const fp = p.join(process.cwd(), f)
+          if (fs.existsSync(fp)) fs.unlinkSync(fp)
+        } catch {}
+      }
+    } catch {}
+    const storages = ['appcache','cookies','filesystem','indexdb','localstorage','serviceworkers','shadercache','websql']
+    const parts = ['persist:pdv','persist:kds','persist:default']
+    for (const part of parts) {
+      try { await session.fromPartition(part).clearStorageData({ storages }) } catch {}
+    }
+    try { await session.defaultSession.clearStorageData({ storages }) } catch {}
+  }
   globalShortcut.register('Escape', () => {
     const w = BrowserWindow.getFocusedWindow()
     if (w) w.webContents.send('app:escape')
+  })
+  globalShortcut.register('F5', () => {
+    const w = BrowserWindow.getFocusedWindow()
+    if (w) w.reload()
+  })
+  globalShortcut.register('CommandOrControl+R', () => {
+    const w = BrowserWindow.getFocusedWindow()
+    if (w) w.reload()
+  })
+  globalShortcut.register('CommandOrControl+Shift+R', () => {
+    const w = BrowserWindow.getFocusedWindow()
+    if (w) w.webContents.reloadIgnoringCache()
   })
   const target = String(process.env.ELECTRON_WINDOW || process.env.LAUNCH_TARGET || '').trim().toLowerCase()
   if (target === 'pdv') {

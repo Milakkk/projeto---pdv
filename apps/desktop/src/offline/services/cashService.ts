@@ -21,7 +21,12 @@ const uuid = () =>
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`
 
-const lanHubUrl: string | undefined = (import.meta as any)?.env?.VITE_LAN_HUB_URL || 'http://localhost:4000'
+const lanHubUrl: string | undefined = (() => {
+  const envUrl = (import.meta as any)?.env?.VITE_LAN_HUB_URL
+  if (envUrl) return envUrl
+  const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost'
+  return `http://${host}:4000`
+})()
 const lanSecret: string | undefined = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || undefined
 
 async function pushLanEvents(events: any[]) {

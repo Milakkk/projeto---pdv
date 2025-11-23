@@ -1,4 +1,4 @@
-import { Order } from '../../../types';
+import type { Order } from '../../../types';
 import Button from '../../../components/base/Button';
 import { useTimer } from '../../../hooks/useTimer';
 

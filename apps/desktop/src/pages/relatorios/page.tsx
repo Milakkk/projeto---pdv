@@ -1,12 +1,14 @@
-import { useState, useMemo } from 'react';
-import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { useState, useMemo, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import Input from '../../components/base/Input';
 import type { Order, Category, MenuItem } from '../../types';
 import Button from '../../components/base/Button';
-import Input from '../../components/base/Input';
 import HourlySalesChart from '../../components/feature/HourlySalesChart';
 import OperatorPerformanceChart from '../../components/feature/OperatorPerformanceChart';
 import { mockCategories, mockMenuItems } from '../../mocks/data'; // Importando mocks para fallback
 import OrderListTab from '../caixa/components/OrderListTab';
+import * as ordersService from '../../offline/services/ordersService';
+import * as productsService from '../../offline/services/productsService';
 
 type ReportTab = 'sales' | 'orders' | 'performance' | 'items_categories' | 'analysis';
 
@@ -134,16 +136,147 @@ const consolidatePayments = (order: Order) => {
 
 
 export default function RelatoriosPage() {
+  const navigate = useNavigate();
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    try {
+      const ss = sessionStorage.getItem('reportsAuthOk') === '1'
+      const ls = localStorage.getItem('reportsAuthOk') === '1'
+      return ss || ls
+    } catch { return false }
+  });
+  const [authPass, setAuthPass] = useState('');
+  const [authError, setAuthError] = useState('');
+  const AUTH_PASS = '156389';
+  const tryAuth = () => {
+    if (authPass === AUTH_PASS) {
+      setIsAuthenticated(true);
+      setAuthError('');
+      try { sessionStorage.setItem('reportsAuthOk', '1') } catch {}
+      try { localStorage.setItem('reportsAuthOk', '1') } catch {}
+    } else {
+      setAuthError('Senha inválida');
+    }
+  };
   const [activeTab, setActiveTab] = useState<ReportTab>('sales');
-  const [orders] = useLocalStorage<Order[]>('orders', []);
-  const [categories] = useLocalStorage<Category[]>('categories', mockCategories);
-  const [menuItems] = useLocalStorage<MenuItem[]>('menuItems', mockMenuItems);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [categories, setCategories] = useState<Category[]>(mockCategories);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>(mockMenuItems);
   const [dateFrom, setDateFrom] = useState(getTodayDateString());
   const [dateTo, setDateTo] = useState(getTodayDateString());
   const [searchPin, setSearchPin] = useState(''); // Novo estado para busca por PIN
   const [itemsFilter, setItemsFilter] = useState(''); // Filtro da tabela de Itens vendidos
   const [itemsSortBy, setItemsSortBy] = useState<'name' | 'category' | 'quantity' | 'revenue'>('quantity');
   const [itemsSortDir, setItemsSortDir] = useState<'asc' | 'desc'>('desc');
+
+  useEffect(() => {
+    let stopped = false;
+    (async () => {
+      try {
+        const cats = await productsService.listCategories();
+        const prods = await productsService.listProducts();
+        const categoriesOut: Category[] = (cats || []).map((c: any) => ({
+          id: String(c.id),
+          name: String(c.name || ''),
+          icon: '',
+          order: 0,
+          active: Boolean(c.isActive ?? true),
+        }));
+        const menuItemsOut: MenuItem[] = (prods || []).map((p: any) => ({
+          id: String(p.id),
+          name: String(p.name || ''),
+          price: Math.max(0, Number(p.priceCents ?? 0) / 100),
+          sla: 0,
+          categoryId: p.categoryId ? String(p.categoryId) : '',
+          observations: [],
+          active: Boolean(p.isActive ?? true),
+        }));
+        const productMap: Record<string, MenuItem> = {};
+        menuItemsOut.forEach(mi => { productMap[mi.id] = mi; });
+        if (!stopped) {
+          if (categoriesOut.length) setCategories(categoriesOut);
+          if (menuItemsOut.length) setMenuItems(menuItemsOut);
+        }
+        const rows = await ordersService.listOrders();
+        const out: Order[] = [];
+        for (const r of (rows || [])) {
+          let items: any[] = [];
+          let payments: any[] = [];
+          try {
+            const det = await ordersService.getOrderById(String(r.id));
+            items = det?.items || [];
+            payments = det?.payments || [];
+          } catch {}
+          const orderItems = (items || []).map((it: any) => {
+            const pid = it.product_id ?? it.productId;
+            const mi = pid ? productMap[String(pid)] : undefined;
+            const menuItem: MenuItem = mi || {
+              id: String(pid || String(it.id)),
+              name: mi?.name || 'Item',
+              price: Math.max(0, Number(it.unit_price_cents ?? it.unitPriceCents ?? 0) / 100),
+              sla: 0,
+              categoryId: mi?.categoryId || '',
+              observations: [],
+              active: true,
+            };
+            return {
+              id: String(it.id),
+              menuItem,
+              quantity: Number(it.qty ?? it.quantity ?? 1),
+              unitPrice: Math.max(0, Number(it.unit_price_cents ?? it.unitPriceCents ?? menuItem.price) / 100),
+              productionUnits: [],
+            } as any;
+          });
+          const paid = (payments || []).reduce((s: number, p: any) => s + Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100), 0);
+          const breakdown = (payments || []).length > 1 ? Object.fromEntries((payments || []).map((p: any) => [String(p.method).toUpperCase(), Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100)])) : undefined;
+          const method = (payments || []).length > 1 ? 'MÚLTIPLO' : ((payments || [])[0]?.method ? String((payments || [])[0].method).toUpperCase() : '');
+          const ord: Order = {
+            id: String(r.id),
+            pin: String(r.id),
+            password: '',
+            items: orderItems,
+            total: paid > 0 ? paid : Math.max(0, Number(r.total_cents ?? 0) / 100),
+            paymentMethod: breakdown ? 'MÚLTIPLO' : (method || 'Não informado'),
+            paymentBreakdown: breakdown,
+            status:
+              r.closed_at
+                ? 'DELIVERED'
+                : String(r.status).toLowerCase() === 'closed' || String(r.status).toUpperCase() === 'DELIVERED'
+                ? 'DELIVERED'
+                : String(r.status).toLowerCase() === 'cancelled' || String(r.status).toUpperCase() === 'CANCELLED'
+                ? 'CANCELLED'
+                : 'NEW',
+            createdAt: r.opened_at ? new Date(r.opened_at) : new Date(),
+            updatedAt: r.updated_at ? new Date(r.updated_at) : undefined,
+            readyAt: r.ready_at ? new Date(r.ready_at) : undefined,
+            deliveredAt: r.closed_at ? new Date(r.closed_at) : undefined,
+            slaMinutes: 0,
+            createdBy: '',
+          } as any;
+          out.push(ord);
+        }
+        if (!stopped) setOrders(out);
+      } catch {}
+    })();
+    return () => { stopped = true };
+  }, []);
+
+  if (!isAuthenticated) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center bg-black/40">
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+          <div className="mb-4">
+            <h3 className="text-lg font-medium text-gray-900">Acesso aos Relatórios</h3>
+            <p className="text-xs text-gray-500">Digite a senha para acessar</p>
+          </div>
+          <div className="space-y-3">
+            <Input value={authPass} onChange={e=>setAuthPass((e.target as HTMLInputElement).value)} onKeyDown={e=>{ if ((e as any).key === 'Enter') tryAuth() }} placeholder="Senha" type="password" />
+            {authError ? <div className="text-red-600 text-sm">{authError}</div> : null}
+            <Button onClick={tryAuth}>Entrar</Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Mapeamento de itens para facilitar a busca por categoria
   const itemMap = useMemo(() => {
@@ -593,11 +726,17 @@ export default function RelatoriosPage() {
       <div className="bg-white border-b border-gray-200 flex-shrink-0">
         <div className="px-6 py-4">
           <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">Relatórios</h1>
-              <p className="text-sm text-gray-500 mt-1">
-                {filteredOrders.length} pedidos no período selecionado
-              </p>
+            <div className="flex items-center space-x-3">
+              <Button variant="secondary" onClick={() => navigate('/dashboard')}>
+                <i className="ri-arrow-left-line mr-2"></i>
+                Voltar aos Módulos
+              </Button>
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">Relatórios</h1>
+                <p className="text-sm text-gray-500 mt-1">
+                  {filteredOrders.length} pedidos no período selecionado
+                </p>
+              </div>
             </div>
             <Button onClick={exportCSV} variant="secondary" className="whitespace-nowrap">
               <i className="ri-download-line mr-2"></i>

@@ -67,12 +67,35 @@ export async function listCategories() {
     if (unitId && rows.length === 0) {
       res = await query('SELECT * FROM categories')
     }
-    return res?.rows ?? []
+    const list = res?.rows ?? []
+    const map = new Map<string, any>()
+    for (const c of list) {
+      const key = String(c.name || '').trim().toLowerCase()
+      if (!key) continue
+      const prev = map.get(key)
+      if (!prev) {
+        map.set(key, c)
+      } else {
+        const preferCurrent = Boolean(c.unit_id) && !Boolean(prev.unit_id)
+        map.set(key, preferCurrent ? c : prev)
+      }
+    }
+    return Array.from(map.values())
   } catch {
     try {
       const raw = localStorage.getItem('categories')
       const arr = raw ? JSON.parse(raw) : []
-      return Array.isArray(arr) ? arr.map((c:any)=>({ id:c.id, name:c.name })) : []
+      if (!Array.isArray(arr)) return []
+      const set = new Set<string>()
+      const unique: any[] = []
+      for (const c of arr) {
+        const key = String(c?.name || '').trim().toLowerCase()
+        if (!key) continue
+        if (set.has(key)) continue
+        set.add(key)
+        unique.push(c)
+      }
+      return unique.map((c:any)=>({ id:c.id, name:c.name }))
     } catch { return [] }
   }
 }
@@ -129,6 +152,16 @@ export async function upsertCategory(params: { id?: UUID; name: string }) {
   const id = params.id ?? uuid()
   const unitId = await getCurrentUnitId()
   const now = new Date().toISOString()
+  try {
+    const found = await query('SELECT id, unit_id FROM categories WHERE LOWER(name) = LOWER(?) AND (unit_id = ? OR unit_id IS NULL)', [params.name, unitId ?? null])
+    const rows = found?.rows ?? []
+    const preferred = rows.find((r:any)=> String(r.unit_id||'') === String(unitId||'')) || rows[0]
+    const targetId = preferred?.id ? String(preferred.id) : null
+    if (targetId) {
+      await query('UPDATE categories SET name = ?, unit_id = ?, updated_at = ?, pending_sync = 1 WHERE id = ?', [params.name, unitId ?? null, now, targetId])
+      return targetId
+    }
+  } catch {}
   await query(
     'INSERT INTO categories (id, name, unit_id, default_station, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, unit_id=excluded.unit_id, default_station=excluded.default_station, updated_at=excluded.updated_at, version=excluded.version, pending_sync=excluded.pending_sync',
     [id, params.name, unitId ?? null, null, now, 1, 1],

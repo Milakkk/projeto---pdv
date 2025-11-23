@@ -14,7 +14,7 @@ export default function CategorySidebar({
   onReorderCategory 
 }: CategorySidebarProps) {
   const activeCategories = categories
-    .filter(category => category.active)
+    .filter(category => (category.active ?? true))
     .sort((a, b) => a.order - b.order);
 
   return (

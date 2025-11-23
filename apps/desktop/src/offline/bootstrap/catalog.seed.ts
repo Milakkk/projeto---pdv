@@ -58,6 +58,9 @@ const seedProducts = [
 
 export async function seedCatalogIfEmpty() {
   try {
+    const hasLsCats = !!localStorage.getItem('categories')
+    const hasLsItems = !!localStorage.getItem('menuItems')
+    if (hasLsCats && hasLsItems) return
     const hasIpc = typeof (window as any)?.api?.db?.query === 'function'
     const existingCats = hasIpc ? await productsService.listCategories() : [];
     const existingProds = hasIpc ? await productsService.listProducts() : [];
@@ -110,11 +113,9 @@ export async function seedCatalogIfEmpty() {
         allowPartialDelivery: true,
         unitDeliveryCount: '',
       }));
-      localStorage.setItem('categories', JSON.stringify(lsCategories));
-      localStorage.setItem('menuItems', JSON.stringify(lsMenuItems));
-      console.log('[seed] catálogo refletido no localStorage');
+      if (!hasLsCats) localStorage.setItem('categories', JSON.stringify(lsCategories));
+      if (!hasLsItems) localStorage.setItem('menuItems', JSON.stringify(lsMenuItems));
     } catch (e) {
-      console.warn('[seed] falha ao hidratar localStorage', e);
     }
   } catch (e) {
     console.warn('[seed] falha no seed via IPC', e);

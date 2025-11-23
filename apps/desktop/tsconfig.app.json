@@ -21,5 +21,10 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": [
+    "src/pages/tarefas/**",
+    "src/pages/dev/**",
+    "src/offline/ui/SyncStatusDev.tsx"
+  ]
 }

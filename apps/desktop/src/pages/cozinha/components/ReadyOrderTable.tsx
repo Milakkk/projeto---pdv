@@ -3,6 +3,7 @@ import type { Order, MenuItem } from '../../../types';
 import Button from '../../../components/base/Button';
 import { useTimer } from '../../../hooks/useTimer'; // Importando useTimer
 import { printOrder } from '../../../utils/print'; // Importando a função de impressão
+import { useAuth } from '../../../context/AuthContext';
 import Modal from '../../../components/base/Modal';
 
 interface ReadyOrderTableProps {
@@ -115,6 +116,7 @@ function KitchenTimeStatus({ order }: { order: Order }) {
 
 
 export default function ReadyOrderTable({ readyOrders, onUpdateStatus, onUpdateDirectDelivery, onConfirmDelivery }: ReadyOrderTableProps) {
+  const { store } = useAuth();
   const [showDirectDeliveryModal, setShowDirectDeliveryModal] = useState(false);
   const [modalDirectItems, setModalDirectItems] = useState<{ itemId: string; quantity: number; menuItem: MenuItem; deliveredCount: number }[]>([]);
   const [pendingDeliverOrderId, setPendingDeliverOrderId] = useState<string | null>(null);
@@ -124,8 +126,8 @@ export default function ReadyOrderTable({ readyOrders, onUpdateStatus, onUpdateD
   // Ordenar pedidos prontos pelo tempo de espera (mais antigo primeiro)
   const sortedOrders = useMemo(() => {
     return [...readyOrders].sort((a, b) => {
-      const timeA = new Date(a.updatedAt || a.createdAt).getTime();
-      const timeB = new Date(b.updatedAt || b.createdAt).getTime();
+      const timeA = new Date(a.readyAt || a.updatedAt || a.createdAt).getTime();
+      const timeB = new Date(b.readyAt || b.updatedAt || b.createdAt).getTime();
       return timeA - timeB;
     });
   }, [readyOrders]);
@@ -227,9 +229,7 @@ export default function ReadyOrderTable({ readyOrders, onUpdateStatus, onUpdateD
                           const optionalObservations = extractOptionalObservations(item.observations);
                           const deliveredCountForItem = Math.max(0, item.directDeliveredUnitCount || 0);
                           const totalUnitsForItem = Math.max(1, item.quantity * Math.max(1, item.menuItem.unitDeliveryCount || 1));
-                          const isItemFullyDelivered = deliveredCountForItem >= totalUnitsForItem;
                           const isItemPartiallyDelivered = deliveredCountForItem > 0 && deliveredCountForItem < totalUnitsForItem;
-                          const isDirectSingleUnit = !!item.skipKitchen && totalUnitsForItem === 1;
                           
                           return (
                             <div key={index} className="border border-gray-200 rounded-lg p-2 bg-white">
@@ -371,7 +371,7 @@ export default function ReadyOrderTable({ readyOrders, onUpdateStatus, onUpdateD
                         variant="secondary"
                         onClick={(e) => {
                           e.stopPropagation();
-                          printOrder(order); // Chama a função de impressão
+                          printOrder(order, undefined, store?.name); // Chama a função de impressão
                         }}
                         className="w-full"
                       >

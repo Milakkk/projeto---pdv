@@ -7,12 +7,16 @@ import Modal from '../../components/base/Modal';
 import Input from '../../components/base/Input';
 import ConfirmationModal from '../../components/base/ConfirmationModal';
 import { mockCategories, mockMenuItems, mockPaymentMethods } from '../../mocks/data';
-import { DEFAULT_PAYMENT_SHORTCUTS } from '../../utils/constants';
+import { DEFAULT_PAYMENT_SHORTCUTS, DEFAULT_GLOBAL_OBSERVATIONS } from '../../utils/constants';
 import { showSuccess } from '../../utils/toast'
 import { getDeviceProfile } from '@/offline/services/deviceProfileService'
 import { getOperationInfo, getAppVersions, getDbVersion, getDataPath } from '@/offline/services/syncInfoService'
 import * as inventory from '@/offline/services/inventoryService'
 import * as productsService from '@/offline/services/productsService'
+
+const hubUrl = (import.meta as any)?.env?.VITE_LAN_HUB_URL || 'http://localhost:4000'
+const hubSecret = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || ''
+const unitDefault = 'default'
 
 type ConfigTab = 'categories' | 'items' | 'payments' | 'general' | 'shortcuts' | 'device';
 type PasswordFormat = 'numeric' | 'alphabetic' | 'alphanumeric';
@@ -24,15 +28,7 @@ export default function ConfiguracoesPage() {
   const [categories, setCategories] = useLocalStorage<Category[]>('categories', mockCategories);
   const [menuItems, setMenuItems] = useLocalStorage<MenuItem[]>('menuItems', mockMenuItems);
   const [paymentMethods, setPaymentMethods] = useLocalStorage<string[]>('paymentMethods', mockPaymentMethods);
-  const [globalObservations, setGlobalObservations] = useLocalStorage<string[]>('globalObservations', [
-    'Sem cebola',
-    'Sem tomate',
-    'Sem maionese',
-    'Bem passado',
-    'Mal passado',
-    'Extra queijo',
-    'Sem pimenta'
-  ]);
+  const [globalObservations, setGlobalObservations] = useLocalStorage<string[]>('globalObservations', DEFAULT_GLOBAL_OBSERVATIONS);
   const [appConfig, setAppConfig] = useLocalStorage<any>('appConfig', { 
     checkoutShortcut: 'F', // Atalho padrão
     soundAlert: true,
@@ -42,6 +38,19 @@ export default function ConfiguracoesPage() {
     passwordFormat: 'numeric' as PasswordFormat // Novo campo
   });
   const [paymentShortcuts, setPaymentShortcuts] = useLocalStorage<Record<string, string>>('paymentShortcuts', DEFAULT_PAYMENT_SHORTCUTS);
+  useEffect(() => {
+    (async () => {
+      try {
+        const headers: Record<string,string> = { 'Content-Type': 'application/json' }
+        if (hubSecret) headers['Authorization'] = `Bearer ${hubSecret}`
+        await fetch(hubUrl.replace(/\/$/, '') + '/push', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ events: [{ table: 'global_observations', unit_id: unitDefault, row: { observations: globalObservations, updated_at: new Date().toISOString() } }] }),
+        })
+      } catch {}
+    })()
+  }, [globalObservations])
 
   // NOVOS ESTADOS PARA IMAGEM
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -150,6 +159,7 @@ export default function ConfiguracoesPage() {
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [showItemModal, setShowItemModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showComboModal, setShowComboModal] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false); // Novo estado para confirmação
   const [confirmationData, setConfirmationData] = useState<{
     title: string;
@@ -162,6 +172,7 @@ export default function ConfiguracoesPage() {
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
   const [editingPayment, setEditingPayment] = useState<string>('');
+  const [comboForm, setComboForm] = useState({ name: '', price: '', includedItemIds: [] as string[] });
 
   // Estados para formulários
   const [categoryForm, setCategoryForm] = useState({ name: '', icon: 'ri-restaurant-line', integrationCode: '' });
@@ -531,7 +542,9 @@ export default function ConfiguracoesPage() {
       // Entrega parcial sempre permitida
       allowPartialDelivery: true,
       // Sempre salvar contagem de unidades por item (padrão 1)
-      unitDeliveryCount: Math.max(1, parseInt(String(itemForm.unitDeliveryCount || '1')))
+      unitDeliveryCount: Math.max(1, parseInt(String(itemForm.unitDeliveryCount || '1'))),
+      isPromo: editingItem?.isPromo ?? false,
+      comboItemIds: editingItem?.comboItemIds ?? []
     };
 
     if (editingItem) {
@@ -558,6 +571,63 @@ export default function ConfiguracoesPage() {
     setShowItemModal(false);
     setEditingItem(null);
     resetForms();
+  };
+
+  const handleSaveCombo = () => {
+    if (!comboForm.name.trim() || !comboForm.price) {
+      alert('Nome e preço do combo são obrigatórios');
+      return;
+    }
+
+    const priceValue = parseFloat(comboForm.price);
+    const priceCents = Math.round((Number(priceValue) || 0) * 100);
+    productsService
+      .upsertProduct({ sku: null, name: comboForm.name, categoryId: null, priceCents, isActive: true })
+      .then((newId) => {
+        const newItem: MenuItem = {
+          id: String(newId),
+          name: comboForm.name,
+          price: priceValue,
+          sla: 15,
+          categoryId: '',
+          observations: [],
+          requiredModifierGroups: [],
+          image: '',
+          active: true,
+          code: undefined,
+          integrationCode: undefined,
+          skipKitchen: false,
+          allowPartialDelivery: true,
+          unitDeliveryCount: 1,
+          isPromo: true,
+          comboItemIds: comboForm.includedItemIds,
+        };
+        setMenuItems([...menuItems, newItem]);
+      })
+      .catch(() => {
+        const newItem: MenuItem = {
+          id: Date.now().toString(),
+          name: comboForm.name,
+          price: priceValue,
+          sla: 15,
+          categoryId: '',
+          observations: [],
+          requiredModifierGroups: [],
+          image: '',
+          active: true,
+          code: undefined,
+          integrationCode: undefined,
+          skipKitchen: false,
+          allowPartialDelivery: true,
+          unitDeliveryCount: 1,
+          isPromo: true,
+          comboItemIds: comboForm.includedItemIds,
+        };
+        setMenuItems([...menuItems, newItem]);
+      });
+
+    setShowComboModal(false);
+    setComboForm({ name: '', price: '', includedItemIds: [] });
   };
 
   const handleSavePayment = () => {
@@ -875,6 +945,7 @@ export default function ConfiguracoesPage() {
       : [
           { id: 'categories', name: 'Categorias', icon: 'ri-folder-line' },
           { id: 'items', name: 'Cardápio', icon: 'ri-restaurant-line' },
+          { id: 'promotions', name: 'Promoções e Combos', icon: 'ri-gift-line' },
           { id: 'payments', name: 'Pagamentos', icon: 'ri-money-dollar-circle-line' },
           { id: 'shortcuts', name: 'Atalhos', icon: 'ri-keyboard-line' },
           { id: 'general', name: 'Geral', icon: 'ri-settings-line' },
@@ -1108,6 +1179,91 @@ export default function ConfiguracoesPage() {
       <div className="flex-1 overflow-y-auto p-6 pb-24">
         {activeTab === 'device' && (
           <DeviceTab />
+        )}
+        {activeTab === 'promotions' && (
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <div className="flex items-center space-x-4">
+                <h2 className="text-lg font-semibold text-gray-900">Promoções e Combos</h2>
+              </div>
+              <div className="flex space-x-3">
+                {selectedItems.length > 0 && (
+                  <Button 
+                    variant="secondary" 
+                    onClick={deleteSelectedItems}
+                    className="bg-red-50 text-red-600 hover:bg-red-100"
+                  >
+                    <i className="ri-delete-bin-line mr-2"></i>
+                    Excluir Selecionados ({selectedItems.length})
+                  </Button>
+                )}
+                <Button onClick={() => setShowComboModal(true)}>
+                  <i className="ri-add-line mr-2"></i>
+                  Novo Combo
+                </Button>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+              <div className="divide-y divide-gray-200">
+                {menuItems.filter(i=>i.isPromo).length === 0 && (
+                  <div className="p-4 text-sm text-gray-500 italic">Nenhuma promoção/combo cadastrado</div>
+                )}
+                {menuItems.filter(i=>i.isPromo).map((item) => (
+                  <div
+                    key={item.id}
+                    className={`p-4 flex items-center justify-between transition-colors transition-all duration-200 ease-out ${
+                      selectedItems.includes(item.id) ? 'bg-amber-50' : ''
+                    }`}
+                  >
+                    <div className="flex items-center space-x-3 flex-1">
+                      <input
+                        type="checkbox"
+                        checked={selectedItems.includes(item.id)}
+                        onChange={() => toggleItemSelection(item.id)}
+                        className="rounded border-gray-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                      />
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-3 mb-2">
+                          <span className={`font-medium text-gray-900 ${!item.active ? 'line-through text-gray-500' : ''}`}>{item.name}</span>
+                          <span className="text-sm text-gray-500">Combo</span>
+                        </div>
+                        <div className="flex items-center space-x-4 text-sm text-gray-600">
+                          <span>R$ {item.price.toFixed(2)}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-4">
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input 
+                          type="checkbox" 
+                          className="sr-only peer" 
+                          checked={item.active}
+                          onChange={() => toggleItemActive(item.id)}
+                        />
+                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-amber-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
+                        <span className="ml-3 text-sm font-medium text-gray-900">
+                          {item.active ? 'Ativo' : 'Inativo'}
+                        </span>
+                      </label>
+                      <button
+                        onClick={() => openEditItem(item)}
+                        className="text-blue-600 hover:text-blue-800 cursor-pointer"
+                      >
+                        <i className="ri-edit-line"></i>
+                      </button>
+                      <button
+                        onClick={() => handleDeleteItem(item)}
+                        className="text-red-600 hover:text-red-800 cursor-pointer"
+                      >
+                        <i className="ri-delete-bin-line"></i>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         )}
         {activeTab === 'categories' && (
           <div className="space-y-6 overflow-y-auto" ref={categoriesContainerRef} onDragOverCapture={handleDragOverViewport}>
@@ -1407,11 +1563,7 @@ export default function ConfiguracoesPage() {
                           </span>
                         </label>
                         
-                        <div
-                          className="flex space-x-2"
-                          onClickCapture={(e) => { e.preventDefault(); e.stopPropagation(); (e as any).nativeEvent?.stopImmediatePropagation?.() }}
-                          onMouseDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); (e as any).nativeEvent?.stopImmediatePropagation?.() }}
-                        >
+                        <div className="flex space-x-2">
                           <button
                             onClick={() => openEditItem(item)}
                             className="text-blue-600 hover:text-blue-800 cursor-pointer"
@@ -1420,10 +1572,8 @@ export default function ConfiguracoesPage() {
                           </button>
                           <button
                             type="button"
-                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); (e as any).nativeEvent?.stopImmediatePropagation?.(); openRecipeModal(item) }}
-                            onClickCapture={(e) => { e.preventDefault(); e.stopPropagation(); (e as any).nativeEvent?.stopImmediatePropagation?.() }}
-                            onMouseDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); (e as any).nativeEvent?.stopImmediatePropagation?.() }}
-                            onKeyDownCapture={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); (e as any).nativeEvent?.stopImmediatePropagation?.(); openRecipeModal(item) } }}
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); openRecipeModal(item) }}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); openRecipeModal(item) } }}
                             className="text-amber-600 hover:text-amber-800 cursor-pointer"
                             title="Ficha técnica (janela)"
                             aria-label="Abrir ficha técnica do item"
@@ -1431,7 +1581,7 @@ export default function ConfiguracoesPage() {
                             <i className="ri-article-line pointer-events-none"></i>
                           </button>
                           <button
-                            onClick={() => handleDeleteItem(item)}
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteItem(item) }}
                             className="text-red-600 hover:text-red-800 cursor-pointer"
                           >
                             <i className="ri-delete-bin-line"></i>
@@ -2195,6 +2345,68 @@ export default function ConfiguracoesPage() {
             </Button>
             <Button onClick={handleSavePayment} className="flex-1">
               {editingPayment ? 'Salvar' : 'Criar'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={showComboModal}
+        onClose={() => {
+          setShowComboModal(false);
+          setComboForm({ name: '', price: '', includedItemIds: [] });
+        }}
+        title={'Novo Combo'}
+        size="md"
+      >
+        <div className="space-y-4">
+          <Input
+            label="Nome do combo *"
+            value={comboForm.name}
+            onChange={(e) => setComboForm({ ...comboForm, name: e.target.value })}
+            placeholder="Ex: Combo X"
+            required
+          />
+          <Input
+            label="Preço do combo *"
+            type="number"
+            value={comboForm.price}
+            onChange={(e) => setComboForm({ ...comboForm, price: e.target.value })}
+            placeholder="Ex: 19.90"
+            required
+          />
+          <div className="space-y-2">
+            <div className="text-sm text-gray-600">Itens incluídos (opcional)</div>
+            <div className="max-h-40 overflow-y-auto border rounded">
+              {menuItems.filter(mi=>mi.active).map(mi=> (
+                <label key={mi.id} className="flex items-center px-3 py-2 text-sm gap-2">
+                  <input
+                    type="checkbox"
+                    checked={comboForm.includedItemIds.includes(mi.id)}
+                    onChange={(e) => {
+                      const checked = e.target.checked
+                      const next = checked ? [...comboForm.includedItemIds, mi.id] : comboForm.includedItemIds.filter(id=>id!==mi.id)
+                      setComboForm({ ...comboForm, includedItemIds: next })
+                    }}
+                  />
+                  <span>{mi.name}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="flex space-x-3 pt-2">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setShowComboModal(false);
+                setComboForm({ name: '', price: '', includedItemIds: [] });
+              }}
+              className="flex-1"
+            >
+              Cancelar
+            </Button>
+            <Button onClick={handleSaveCombo} className="flex-1">
+              Criar
             </Button>
           </div>
         </div>

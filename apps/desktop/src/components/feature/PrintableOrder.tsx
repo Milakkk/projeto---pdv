@@ -3,6 +3,7 @@ import type { Order } from '../../types';
 interface PrintableOrderProps {
   order: Order;
   categoryMap: Record<string, string>; // NOVO PROP
+  storeName?: string;
 }
 
 // Função auxiliar para extrair opções obrigatórias (agora com nome do grupo)
@@ -25,7 +26,7 @@ const extractOptionalObservations = (observations: string | undefined): string[]
 };
 
 // Componente que define o layout do recibo
-export default function PrintableOrder({ order, categoryMap }: PrintableOrderProps) {
+export default function PrintableOrder({ order, categoryMap, storeName }: PrintableOrderProps) {
   const { pin, password, total, items, paymentMethod, amountPaid, changeAmount, createdAt } = order;
   
   const displayChange = typeof changeAmount === 'number' && changeAmount > 0.01;
@@ -36,6 +37,9 @@ export default function PrintableOrder({ order, categoryMap }: PrintableOrderPro
     <div className="p-2 text-xs font-mono w-[300px] mx-auto">
       <div className="text-center mb-2 border-b border-dashed border-gray-700 pb-1">
         <h1 className="text-lg font-bold mb-0">RECIBO DE PEDIDO</h1>
+        {storeName && (
+          <p className="text-sm font-bold">{storeName}</p>
+        )}
         <p className="text-[10px]">Data: {new Date(createdAt).toLocaleString('pt-BR')}</p>
         <p className="text-[10px]">Atendente: {order.createdBy}</p>
       </div>

@@ -6,7 +6,7 @@ export default function SplashPage() {
 
   useEffect(() => {
     const t = setTimeout(() => {
-      navigate('/role', { replace: true })
+      navigate('/dashboard', { replace: true })
     }, 3000)
     return () => clearTimeout(t)
   }, [navigate])

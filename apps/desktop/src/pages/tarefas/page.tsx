@@ -12,6 +12,7 @@ import { useAuth } from '../../context/AuthContext';
 import { mockUsers, mockStores } from '../../mocks/auth';
 import { DEFAULT_TASK_STATUSES } from '../../utils/constants';
 import { listTasks, upsertTask, updateTaskStatus as svcUpdateTaskStatus, deleteTask as svcDeleteTask } from '../../offline/services/tarefasService';
+import { useState, useEffect, useMemo } from 'react';
 
 type FilterStatus = 'all' | TaskStatusKey;
 type FilterPriority = 'all' | 'low' | 'medium' | 'high';
@@ -20,7 +21,7 @@ type ViewMode = 'quadros' | 'list' | 'calendar';
  
 
 export default function TarefasPage() {
-  const { store, user } = useAuth();
+  const { store } = useAuth();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [stores] = useLocalStorage<Store[]>('mockStores', mockStores);
   const [taskStatuses, setTaskStatuses] = useLocalStorage<TaskStatus[]>('taskStatuses', DEFAULT_TASK_STATUSES);
@@ -140,8 +141,7 @@ export default function TarefasPage() {
 
     // 5. Ordenar (apenas para Quadros e Lista)
     if (viewMode !== 'calendar') {
-      const priorityOrder = { high: 3, medium: 2, low: 1, pending: 0 };
-      
+      const getPriorityWeight = (p: Task['priority']) => (p === 'high' ? 3 : p === 'medium' ? 2 : p === 'low' ? 1 : 0);
       filtered.sort((a, b) => {
         // Status final sempre no final
         const statusAIsFinal = taskStatuses.find(s => s.key === a.status)?.isFinal;
@@ -151,8 +151,8 @@ export default function TarefasPage() {
         if (!statusAIsFinal && statusBIsFinal) return -1;
         
         // Ordenar por prioridade (decrescente)
-        const priorityA = priorityOrder[a.priority];
-        const priorityB = priorityOrder[b.priority];
+        const priorityA = getPriorityWeight(a.priority);
+        const priorityB = getPriorityWeight(b.priority);
         if (priorityA !== priorityB) {
           return priorityB - priorityA;
         }

@@ -50,6 +50,7 @@ export default defineConfig({
     port: 3010,
     strictPort: true,
     host: '0.0.0.0',
+    allowedHosts: true,
     fs: {
       strict: false,
       allow: [resolve(__dirname, './src'), '..']
