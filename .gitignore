@@ -1,29 +1,19 @@
 node_modules/
-apps/**/node_modules/
-.pnpm-store/
-.turbo/
-.vscode/
+**/node_modules/
 
-# Builds e artefatos
-dist/
-build/
-out/
-coverage/
-apps/desktop/out/
-apps/desktop/release/
-apps/web-dashboard/.next/
-apps/web-dashboard/out/
-
-# Banco local e stores
-data.db
-**/data.db
-lan-sync-store/
-
-# Config e ambiente
+# Ambiente (mantido privado)
 .env
 .env.*
 
-# SO/Logs
-.DS_Store
-Thumbs.db
-*.log
+# Artefatos pesados (não versionar)
+out/
+apps/**/out/
+apps/desktop/release/
+apps/desktop/release/**
+apps/web-dashboard/.next/
+apps/web-dashboard/out/
+lan-sync-store/
+*.exe
+*.asar
+*.7z
+.turbo/
