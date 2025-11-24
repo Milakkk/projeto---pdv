@@ -29,18 +29,23 @@ const lanHubUrl: string | undefined = (() => {
 })()
 const lanSecret: string | undefined = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || undefined
 
+let lastPushFailAt = 0
 async function pushLanEvents(events: any[]) {
+  if (!lanSecret) return
+  const nowMs = Date.now()
+  if (lastPushFailAt && nowMs - lastPushFailAt < 15000) return
   try {
     const unitDefault = 'default'
     const enriched = (Array.isArray(events) ? events : []).map((e:any)=> ({ ...e, unit_id: e?.unit_id ?? unitDefault }))
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (lanSecret) headers['Authorization'] = `Bearer ${lanSecret}`
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${lanSecret}` }
     await fetch(`${lanHubUrl.replace(/\/$/, '')}/push`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ events: enriched }),
     })
-  } catch {}
+  } catch {
+    lastPushFailAt = nowMs
+  }
 }
 
 export async function openSession(params: { openedBy?: string | null; openingAmountCents?: number }) {
@@ -185,26 +190,11 @@ export async function addMovement(params: {
 
 export async function getCurrentSession() {
   try {
-    const res = await query(
-      'SELECT * FROM cash_sessions WHERE closed_at IS NULL ORDER BY datetime(opened_at) DESC LIMIT 1',
-      [],
-    )
-    const row = (res?.rows ?? [])[0]
-    if (row) return row
-    try {
-      const raw = localStorage.getItem('currentCashSession')
-      return raw ? JSON.parse(raw) : null
-    } catch {
-      return null
-    }
-  } catch {
-    try {
-      const raw = localStorage.getItem('currentCashSession')
-      return raw ? JSON.parse(raw) : null
-    } catch {
-      return null
-    }
-  }
+    const raw = localStorage.getItem('currentCashSession')
+    const cur = raw ? JSON.parse(raw) : null
+    if (cur && !cur.closed_at) return cur
+  } catch {}
+  return null
 }
 
 export async function listSessions(limit = 50) {

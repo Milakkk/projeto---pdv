@@ -6,10 +6,11 @@ import ToastProvider from './components/feature/ToastProvider';
 import { seedCatalogIfEmpty } from '@/offline/bootstrap/catalog.seed';
 import ErrorBoundary from './components/base/ErrorBoundary'
 import { ensureDeviceProfile, getDeviceProfile } from '@/offline/services/deviceProfileService'
+import * as kdsService from '@/offline/services/kdsService'
 
 // Componente Wrapper para lidar com o redirecionamento inicial
 function AppWrapper() {
-  const { isAuthenticated } = useAuth();
+  useAuth();
   
   useEffect(() => {
     try {
@@ -46,81 +47,100 @@ function AppWrapper() {
         }
         const hubUrl = (import.meta as any)?.env?.VITE_LAN_HUB_URL || 'http://localhost:4000'
         const secret = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || ''
-        const wsUrl = hubUrl.replace(/^http/, 'ws').replace(/\/$/, '') + `/realtime${secret ? `?token=${encodeURIComponent(secret)}` : ''}`
+        if (!secret) return
+        const wsUrl = hubUrl.replace(/^http/, 'ws').replace(/\/$/, '') + `/realtime?token=${encodeURIComponent(secret)}`
         ws = new WebSocket(wsUrl)
+        const dispatchStorage = (key: string, newValue: string, oldValue: string | null) => {
+          try {
+            const ev = new StorageEvent('storage', { key, newValue, oldValue, url: window.location.href, storageArea: window.localStorage })
+            window.dispatchEvent(ev)
+          } catch {}
+        }
         const applyEvent = (e: any) => {
           const table = String(e.table || '')
           const row = e.row || null
           if (table === 'cash_sessions' && row && row.id) {
             try {
-              const cur = JSON.parse(localStorage.getItem('currentCashSession') || 'null')
+              const oldCur = localStorage.getItem('currentCashSession')
+              const cur = JSON.parse(oldCur || 'null')
               if (!cur || cur.id === row.id || !cur.closed_at) {
-                localStorage.setItem('currentCashSession', JSON.stringify(row))
+                const next = JSON.stringify(row)
+                localStorage.setItem('currentCashSession', next)
+                dispatchStorage('currentCashSession', next, oldCur)
               }
-              const sessions = JSON.parse(localStorage.getItem('cashSessions') || '[]')
+              const oldSessions = localStorage.getItem('cashSessions')
+              const sessions = JSON.parse(oldSessions || '[]')
               const updated = [row, ...sessions.filter((s:any)=> s.id !== row.id)]
-              localStorage.setItem('cashSessions', JSON.stringify(updated))
+              const nextSessions = JSON.stringify(updated)
+              localStorage.setItem('cashSessions', nextSessions)
+              dispatchStorage('cashSessions', nextSessions, oldSessions)
             } catch {}
           } else if ((table === 'cash_movements' || table === 'cashMovements') && row && row.id) {
             try {
-              const movs = JSON.parse(localStorage.getItem('cashMovements') || '[]')
+              const oldMovs = localStorage.getItem('cashMovements')
+              const movs = JSON.parse(oldMovs || '[]')
               movs.push(row)
-              localStorage.setItem('cashMovements', JSON.stringify(movs))
-            } catch {}
-          } else if (table === 'orders' && row && row.id) {
-            try {
-              const list = JSON.parse(localStorage.getItem('orders') || '[]')
-              const idx = list.findIndex((o:any)=> o?.id === row.id)
-              if (idx >= 0) {
-                list[idx] = row
-                localStorage.setItem('orders', JSON.stringify(list))
-              } else {
-                localStorage.setItem('orders', JSON.stringify([row, ...list]))
-              }
+              const nextMovs = JSON.stringify(movs)
+              localStorage.setItem('cashMovements', nextMovs)
+              dispatchStorage('cashMovements', nextMovs, oldMovs)
             } catch {}
           } else if ((table === 'kds_tickets' || table === 'kdsTickets') && row && row.id) {
             try {
-              const raw = localStorage.getItem('kdsTickets')
-              const list = raw ? JSON.parse(raw) : []
+              const oldTk = localStorage.getItem('kdsTickets')
+              const list = oldTk ? JSON.parse(oldTk) : []
               const idx = list.findIndex((t:any)=> String(t.id) === String(row.id))
               if (idx >= 0) {
                 list[idx] = { ...list[idx], ...row }
-                localStorage.setItem('kdsTickets', JSON.stringify(list))
+                const next = JSON.stringify(list)
+                localStorage.setItem('kdsTickets', next)
+                dispatchStorage('kdsTickets', next, oldTk)
               } else {
-                localStorage.setItem('kdsTickets', JSON.stringify([row, ...list]))
+                const next = JSON.stringify([row, ...list])
+                localStorage.setItem('kdsTickets', next)
+                dispatchStorage('kdsTickets', next, oldTk)
               }
             } catch {}
           } else if (table === 'kds_operators' && row) {
             try {
               const ops = Array.isArray(row?.operators) ? row.operators : []
-              localStorage.setItem('kitchenOperators', JSON.stringify(ops))
+              const oldOps = localStorage.getItem('kitchenOperators')
+              const nextOps = JSON.stringify(ops)
+              localStorage.setItem('kitchenOperators', nextOps)
+              dispatchStorage('kitchenOperators', nextOps, oldOps)
             } catch {}
           } else if (table === 'kds_unit_operator' && row) {
             try {
               const key = `${row.orderId}:${row.itemId}:${row.unitId}`
-              const raw = localStorage.getItem('kdsUnitState')
-              const state = raw ? JSON.parse(raw) : {}
+              const oldState = localStorage.getItem('kdsUnitState')
+              const state = oldState ? JSON.parse(oldState) : {}
               const cur = state[key] || {}
               state[key] = { ...cur, operatorName: row.operatorName }
-              localStorage.setItem('kdsUnitState', JSON.stringify(state))
+              const nextState = JSON.stringify(state)
+              localStorage.setItem('kdsUnitState', nextState)
+              dispatchStorage('kdsUnitState', nextState, oldState)
             } catch {}
           } else if (table === 'kds_unit_status' && row) {
             try {
               const key = `${row.orderId}:${row.itemId}:${row.unitId}`
-              const raw = localStorage.getItem('kdsUnitState')
-              const state = raw ? JSON.parse(raw) : {}
+              const oldState = localStorage.getItem('kdsUnitState')
+              const state = oldState ? JSON.parse(oldState) : {}
               const cur = state[key] || {}
               const patch: any = { unitStatus: row.unitStatus }
               if (Array.isArray(row.completedObservations)) patch.completedObservations = row.completedObservations
               if (row.unitStatus === 'READY') patch.completedAt = new Date().toISOString()
               else patch.completedAt = undefined
               state[key] = { ...cur, ...patch }
-              localStorage.setItem('kdsUnitState', JSON.stringify(state))
+              const nextState = JSON.stringify(state)
+              localStorage.setItem('kdsUnitState', nextState)
+              dispatchStorage('kdsUnitState', nextState, oldState)
             } catch {}
           } else if (table === 'global_observations') {
             try {
               const obs = Array.isArray(row?.observations) ? row.observations : []
-              localStorage.setItem('globalObservations', JSON.stringify(obs))
+              const oldObs = localStorage.getItem('globalObservations')
+              const nextObs = JSON.stringify(obs)
+              localStorage.setItem('globalObservations', nextObs)
+              dispatchStorage('globalObservations', nextObs, oldObs)
             } catch {}
           }
         }
@@ -134,6 +154,7 @@ function AppWrapper() {
               for (const e of msg.events) {
                 applyEvent(e)
               }
+              try { kdsService.applyHubEvents(msg.events) } catch {}
             }
           } catch {}
         })
@@ -150,6 +171,7 @@ function AppWrapper() {
           const data = await res.json().catch(()=>({}))
           if (Array.isArray(data?.events)) {
             for (const e of data.events) applyEvent(e)
+            try { kdsService.applyHubEvents(data.events) } catch {}
           }
         } catch {}
       } catch {}

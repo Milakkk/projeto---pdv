@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as inventory from '@/offline/services/inventoryService'
 import * as productsService from '@/offline/services/productsService'
+import * as ordersService from '@/offline/services/ordersService'
 
 export default function EstoqueGerenciamentoPage() {
   const [orders, setOrders] = useState<any[]>([])
@@ -9,12 +10,24 @@ export default function EstoqueGerenciamentoPage() {
   const [prices, setPrices] = useState<any[]>([])
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem('orders')
-      const arr = raw ? JSON.parse(raw) : []
-      setOrders(Array.isArray(arr) ? arr : [])
-    } catch { setOrders([]) }
     ;(async () => {
+      try {
+        const rows = await ordersService.listOrders(500)
+        const delivered = (rows || []).filter((r:any)=> r.closed_at || String(r.status||'').toLowerCase()==='closed')
+        const out:any[] = []
+        for (const r of delivered) {
+          try {
+            const det = await ordersService.getOrderById(String(r.id))
+            const items = (det?.items || []).map((it:any)=> ({
+              id: String(it.id),
+              quantity: Number(it.qty ?? 1),
+              menuItem: { id: String(it.product_id ?? it.productId ?? '') },
+            }))
+            out.push({ id: String(r.id), status: 'DELIVERED', items })
+          } catch {}
+        }
+        setOrders(out)
+      } catch { setOrders([]) }
       const ing = await inventory.listIngredients()
       setIngredients(ing)
       const pr = await inventory.listPrices()
@@ -84,11 +97,11 @@ export default function EstoqueGerenciamentoPage() {
               <div key={ingId} className="py-2 flex items-center justify-between">
                 <div className="text-sm">{ingredients.find(i=>String(i.id)===String(ingId))?.name || ingId}</div>
                 <div className="text-sm">{data.qty.toFixed(3)} {data.unit}</div>
-                <div className="text-sm font-medium">R$ {(data.valueCents/100).toFixed(2)}</div>
+                <div className="text-sm font-medium">R$ {(data.valueCents/10000).toFixed(4)}</div>
               </div>
             ))}
             <div className="pt-3 mt-2 flex items-center justify-end border-t">
-              <div className="text-sm font-bold">Total: R$ {(totalValue/100).toFixed(2)}</div>
+              <div className="text-sm font-bold">Total: R$ {(totalValue/10000).toFixed(4)}</div>
             </div>
           </div>
         )}

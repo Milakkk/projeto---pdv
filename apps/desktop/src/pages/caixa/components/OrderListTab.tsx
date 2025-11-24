@@ -373,7 +373,11 @@ export default function OrderListTab({ orders, onMarkAsDelivered }: OrderListTab
                     const unitsPerItem = Math.max(1, di.menuItem.unitDeliveryCount || 1);
                     return acc + Math.max(1, di.quantity * unitsPerItem);
                   }, 0);
-                  const deliveredUnitsSum = order.items.reduce((acc, di) => acc + Math.max(0, di.directDeliveredUnitCount || 0), 0);
+                  const deliveredUnitsSum = order.items.reduce((acc, di) => {
+                    const units = Array.isArray(di.productionUnits) ? di.productionUnits : [];
+                    const deliveredPerItem = units.filter(u => !!u.deliveredAt || order.status === 'DELIVERED').length;
+                    return acc + deliveredPerItem;
+                  }, 0);
                   // Não mostrar parcial se o pedido estiver completamente entregue
                   const hasPartialDelivery = deliveredUnitsSum > 0 && deliveredUnitsSum < totalUnitsSum && order.status !== 'DELIVERED';
 
@@ -427,7 +431,9 @@ export default function OrderListTab({ orders, onMarkAsDelivered }: OrderListTab
                           {order.items.map((item, index) => {
                             const requiredOptions = extractRequiredOptions(item.observations);
                             const optionalObservations = extractOptionalObservations(item.observations);
-                            const deliveredCount = Math.max(0, item.directDeliveredUnitCount || 0);
+                            const deliveredCount = Array.isArray(item.productionUnits)
+                              ? item.productionUnits.filter(u => !!u.deliveredAt || order.status === 'DELIVERED').length
+                              : Math.max(0, item.directDeliveredUnitCount || 0);
                             const totalUnitsForItem = Math.max(1, item.quantity * Math.max(1, item.menuItem.unitDeliveryCount || 1));
                             const isItemFullyDelivered = deliveredCount >= totalUnitsForItem;
                             const isItemPartiallyDelivered = deliveredCount > 0 && deliveredCount < totalUnitsForItem;
@@ -476,14 +482,13 @@ export default function OrderListTab({ orders, onMarkAsDelivered }: OrderListTab
                                   {((item.productionUnits && item.productionUnits.length > 0) ? item.productionUnits : Array.from({ length: totalUnitsForItem }).map((_, idx) => ({ unitId: `direct-${idx}`, completedAt: undefined, operatorName: undefined, unitStatus: undefined as any }))).map((unit: any, unitIndex: number) => {
                                     const isUnitReady = unit.unitStatus === 'READY';
                                     const deliveredTimesArr = (item as any).directDeliveredUnitTimes || [];
-                                    // Para itens de cozinha, considerar entrega por unidade se houver timestamp; senão, entregue quando o pedido está DELIVERED
-                                    const isUnitDelivered = !!deliveredTimesArr[unitIndex] || (order.status === 'DELIVERED');
+                                    const isUnitDelivered = !!unit.deliveredAt || !!deliveredTimesArr[unitIndex] || (order.status === 'DELIVERED');
                                     // Exibir horário de entrega:
                                     // - Para itens de entrega direta: quando a unidade está entregue, usar timestamp da unidade ou fallback do pedido
                                     // - Para itens de cozinha: quando o pedido inteiro está entregue, usar order.deliveredAt
                                     const shouldShowDeliveredUnitTime = isUnitDelivered;
                                     const deliveredDate = shouldShowDeliveredUnitTime
-                                      ? (deliveredTimesArr[unitIndex] || (order.status === 'DELIVERED' && order.deliveredAt ? new Date(order.deliveredAt) : undefined))
+                                      ? (unit.deliveredAt ? new Date(unit.deliveredAt) : (deliveredTimesArr[unitIndex] || (order.status === 'DELIVERED' && order.deliveredAt ? new Date(order.deliveredAt) : undefined)))
                                       : undefined;
                                     const deliveredTimeUnit = deliveredDate
                                       ? new Date(deliveredDate).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })

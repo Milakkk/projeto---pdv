@@ -146,7 +146,7 @@ export default function CaixaPage() {
   }, []);
   
   // Acessando orders e savedCarts
-  const [orders, setOrders] = useLocalStorage<Order[]>('orders', []);
+  const [orders, setOrders] = useState<Order[]>([]);
   const [, setSavedCarts] = useLocalStorage<SavedCart[]>('savedCarts', []);
   
   // Estados para Modais
@@ -169,7 +169,7 @@ export default function CaixaPage() {
 
   const quickSearchRef = useRef<HTMLInputElement>(null);
   const navScopeRef = useRef<HTMLDivElement>(null);
-  const previousOrdersRef = useRef<Order[]>(orders);
+  const previousOrdersRef = useRef<Order[]>([]);
 
   const { isOnline, addPendingAction } = useOffline();
 
@@ -188,7 +188,7 @@ export default function CaixaPage() {
   // Pedidos da sessão atual (apenas os vinculados à sessão operacional aberta)
   const sessionOrders = useMemo(() => {
     if (!operationalSession || operationalSession.status !== 'OPEN') return [] as Order[];
-    return orders.filter(o => o.operationalSessionId === operationalSession.id);
+    return orders.filter(o => (o.operationalSessionId === operationalSession.id) || !o.operationalSessionId);
   }, [orders, operationalSession]);
   
   // Pedidos ativos (NEW, PREPARING, READY) exclusivos da sessão atual
@@ -283,7 +283,8 @@ export default function CaixaPage() {
             active: true,
             isPromo: true,
           }
-          const finalCategories = [...baseCategories, promoCategory]
+          const withoutDupPromo = baseCategories.filter(cat => cat.id !== 'promo-combos')
+          const finalCategories = [...withoutDupPromo, promoCategory]
           setCategories(finalCategories);
           // Fallback para itens do armazenamento local quando o banco estiver vazio
           const finalMenuItems = (mappedMenuItems && mappedMenuItems.length > 0) ? mappedMenuItems : menuItemsLS;
@@ -451,6 +452,93 @@ export default function CaixaPage() {
     return () => { mounted = false; clearInterval(timer); };
   }, [setOrders])
 
+  // Pull periódico de pedidos do SQLite para refletir mudanças entre janelas
+  useEffect(() => {
+    let mounted = true;
+    const pullOrders = async () => {
+      try {
+        const detailed = await ordersService.listOrdersDetailed(200);
+        if (!mounted) return;
+        setOrders(prev => {
+          const map: Record<string, Order> = {};
+          for (const o of prev) map[String(o.id)] = o;
+          for (const d of (detailed || [])) {
+            const r: any = d.order;
+            const id = String(r.id);
+            const existing = map[id];
+            const rawStatus = String(r.status || '').toLowerCase();
+            const status: Order['status'] = r.closed_at
+              ? 'DELIVERED'
+              : rawStatus === 'closed'
+              ? 'DELIVERED'
+              : rawStatus === 'cancelled'
+              ? 'CANCELLED'
+              : existing?.status || 'NEW';
+            const parsedSessionId = r.operational_session_id ? String(r.operational_session_id) : undefined;
+            const unitStates = (d as any).unitStates || {}
+            const items = (d.items || []).map((it: any) => {
+              const qty = Number(it.qty ?? it.quantity ?? 1)
+              const itemId = String(it.id)
+              const units = Array.from({ length: Math.max(1, qty) }, (_, idx) => {
+                const unitId = `${itemId}-${idx+1}`
+                const u = unitStates[`${itemId}:${unitId}`] || {}
+                return {
+                  unitId,
+                  unitStatus: u.unitStatus ?? 'PENDING',
+                  operatorName: u.operatorName ?? undefined,
+                  completedObservations: Array.isArray(u.completedObservations) ? u.completedObservations : [],
+                  completedAt: u.completedAt ?? undefined,
+                  deliveredAt: u.deliveredAt ?? undefined,
+                }
+              })
+              return {
+                id: itemId,
+                menuItem: {
+                  id: String(it.product_id ?? it.productId ?? String(it.id)),
+                  name: String(it.product_name ?? 'Item'),
+                  price: Math.max(0, Number(it.unit_price_cents ?? it.unitPriceCents ?? 0) / 100),
+                  sla: 0,
+                  categoryId: String(it.category_id ?? ''),
+                  observations: [],
+                  active: true,
+                } as any,
+                quantity: qty,
+                unitPrice: Math.max(0, Number(it.unit_price_cents ?? it.unitPriceCents ?? 0) / 100),
+                productionUnits: units,
+              }
+            }) as any;
+            const payments = d.payments || [];
+            const paid = (payments || []).reduce((s: number, p: any) => s + Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100), 0);
+            const breakdown = (payments || []).length > 1 ? Object.fromEntries((payments || []).map((p: any) => [String(p.method).toUpperCase(), Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100)])) : undefined;
+            const method = (payments || []).length > 1 ? 'MÚLTIPLO' : ((payments || [])[0]?.method ? String((payments || [])[0].method).toUpperCase() : '');
+            const times = (d as any).phaseTimes || {}
+            map[id] = {
+              id,
+              pin: (d.details?.pin || existing?.pin || id),
+              password: (d.details?.password || existing?.password || ''),
+              items,
+              total: paid > 0 ? paid : Math.max(0, Number(r.total_cents ?? 0) / 100),
+              paymentMethod: breakdown ? 'MÚLTIPLO' : (method || 'Não informado'),
+              paymentBreakdown: breakdown,
+              status,
+              createdAt: r.opened_at ? new Date(r.opened_at) : (existing?.createdAt || new Date()),
+              updatedAt: r.updated_at ? new Date(r.updated_at) : (times.preparingStart ? new Date(times.preparingStart) : existing?.updatedAt),
+              readyAt: times.readyAt ? new Date(times.readyAt) : existing?.readyAt,
+              deliveredAt: r.closed_at ? new Date(r.closed_at) : (times.deliveredAt ? new Date(times.deliveredAt) : existing?.deliveredAt),
+              slaMinutes: existing?.slaMinutes ?? 0,
+              createdBy: existing?.createdBy ?? '',
+              operationalSessionId: existing?.operationalSessionId ?? parsedSessionId,
+            } as any;
+          }
+          return Object.values(map);
+        });
+      } catch {}
+    };
+    pullOrders();
+    const timer = setInterval(pullOrders, 3000);
+    return () => { mounted = false; clearInterval(timer); };
+  }, [setOrders])
+
   useEffect(() => {
     let mounted = true
     const hubUrl = (() => {
@@ -465,15 +553,22 @@ export default function CaixaPage() {
         const dp = await getDeviceProfile()
         const unitId = dp?.unitId || 'default'
         const deviceId = dp?.deviceId || crypto.randomUUID()
-        const wsUrl = hubUrl.replace(/^http/, 'ws') + `/realtime?token=${encodeURIComponent(secret || '')}`
-        const ws = new WebSocket(wsUrl)
-        ws.addEventListener('open', () => {
-          ws.send(JSON.stringify({ unit_id: unitId, device_id: deviceId }))
-        })
-        ws.addEventListener('message', (ev) => {
+        if (!secret) return
+        const wsUrl = hubUrl.replace(/^http/, 'ws') + `/realtime?token=${encodeURIComponent(secret)}`
+        let attempt = 0
+        let reconnectTimer: any = null
+        const connect = () => {
           if (!mounted) return
+          attempt++
+          const ws = new WebSocket(wsUrl)
+          ws.addEventListener('open', () => {
+            ws.send(JSON.stringify({ unit_id: unitId, device_id: deviceId }))
+          })
+          ws.addEventListener('message', (ev) => {
+            if (!mounted) return
           let events: any[] = []
           try { const msg = JSON.parse(String((ev as MessageEvent).data)); if (msg?.type==='events') events = msg.events || [] } catch {}
+          try { (async()=>{ await kdsService.applyHubEvents(events) })() } catch {}
           const tickets = events.filter((e:any)=> String(e.table)==='kdsTickets' && (e.row || e.rows))
           if (tickets.length){
             const mapToOrderStatus = (s:string)=> s==='ready'?'READY': s==='prep'?'PREPARING': s==='done'?'DELIVERED': 'NEW'
@@ -532,15 +627,22 @@ export default function CaixaPage() {
             })
           }
         })
-        ws.addEventListener('close', () => {
-          setTimeout(() => {
+          const scheduleReconnect = () => {
             if (!mounted) return
-            const ws2 = new WebSocket(wsUrl)
-            ws2.addEventListener('open', () => { ws2.send(JSON.stringify({ unit_id: unitId, device_id: deviceId })) })
-        ws2.addEventListener('message', (ev) => {
+            const delay = Math.min(30000, 1000 * Math.pow(2, Math.min(5, attempt)))
+            clearTimeout(reconnectTimer)
+            reconnectTimer = setTimeout(() => connect(), delay)
+          }
+          ws.addEventListener('error', () => { scheduleReconnect() })
+          ws.addEventListener('close', () => { scheduleReconnect() })
+        }
+        connect()
+        
+        const onMessage2 = (ev: MessageEvent) => {
               if (!mounted) return
               let events: any[] = []
               try { const msg = JSON.parse(String((ev as MessageEvent).data)); if (msg?.type==='events') events = msg.events || [] } catch {}
+              try { (async()=>{ await kdsService.applyHubEvents(events) })() } catch {}
               const tickets = events.filter((e:any)=> String(e.table)==='kdsTickets' && (e.row || e.rows))
               if (tickets.length){
                 const mapToOrderStatus = (s:string)=> s==='ready'?'READY': s==='prep'?'PREPARING': s==='done'?'DELIVERED': 'NEW'
@@ -598,9 +700,8 @@ export default function CaixaPage() {
                   return Object.values(map)
                 })
               }
-            })
-          }, 1000)
-        })
+            }
+        // handler unificado com backoff; removido ws2 duplicado
       } catch {}
     })()
     return () => { mounted = false }
@@ -687,6 +788,7 @@ export default function CaixaPage() {
   const handleAddToCart = (item: MenuItem, observations?: string, discountPercentage: number = 0) => {
     if (!isCashOpen) {
       displayAlert('Caixa Fechado', 'É necessário abrir o caixa para registrar vendas.', 'info');
+      setShowCashOpening(true);
       return;
     }
 
@@ -1304,7 +1406,7 @@ export default function CaixaPage() {
         {activeTab === 'orders' && (
           <div className="flex-1 overflow-y-auto">
             <OrderListTab
-              orders={sessionOrders}
+              orders={orders}
               onMarkAsDelivered={handleMarkAsDelivered}
             />
           </div>
@@ -1454,6 +1556,23 @@ export default function CaixaPage() {
                     });
                     return { ...o, items: newItems };
                   }));
+                  ;(async () => {
+                    try {
+                      const orderId = checklistOrder.id;
+                      for (const it of checklistOrder.items || []) {
+                        const totalUnits = Math.max(1, (it.quantity || 1) * Math.max(1, it.menuItem?.unitDeliveryCount || 1));
+                        const prevTimesRaw = Array.isArray((it as any).directDeliveredUnitTimes) ? (it as any).directDeliveredUnitTimes : [];
+                        const now = new Date();
+                        for (let i = 0; i < totalUnits; i++) {
+                          const key = `${it.id}-${i}`;
+                          const isChecked = !!checklistUnitChecks[key];
+                          const deliveredAt = isChecked ? (prevTimesRaw[i] ? new Date(prevTimesRaw[i]).toISOString() : now.toISOString()) : undefined;
+                          const unitId = `${it.id}-${i+1}`;
+                          await kdsService.setUnitDelivered(orderId, it.id, unitId, deliveredAt as any);
+                        }
+                      }
+                    } catch {}
+                  })()
                   ;(async () => {
                     try {
                       const envUrl = (import.meta as any)?.env?.VITE_LAN_HUB_URL

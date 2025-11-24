@@ -196,25 +196,23 @@ export default function RelatoriosPage() {
           if (categoriesOut.length) setCategories(categoriesOut);
           if (menuItemsOut.length) setMenuItems(menuItemsOut);
         }
-        const rows = await ordersService.listOrders();
+        const detailed = await ordersService.listOrdersDetailed();
         const out: Order[] = [];
-        for (const r of (rows || [])) {
-          let items: any[] = [];
-          let payments: any[] = [];
-          try {
-            const det = await ordersService.getOrderById(String(r.id));
-            items = det?.items || [];
-            payments = det?.payments || [];
-          } catch {}
+        for (const d of detailed) {
+          const r = d.order as any;
+          const items = d.items || [];
+          const payments = d.payments || [];
+          const pinVal = d.details?.pin;
+          const passVal = d.details?.password;
           const orderItems = (items || []).map((it: any) => {
             const pid = it.product_id ?? it.productId;
             const mi = pid ? productMap[String(pid)] : undefined;
             const menuItem: MenuItem = mi || {
               id: String(pid || String(it.id)),
-              name: mi?.name || 'Item',
+              name: String(it.product_name ?? mi?.name ?? 'Item'),
               price: Math.max(0, Number(it.unit_price_cents ?? it.unitPriceCents ?? 0) / 100),
               sla: 0,
-              categoryId: mi?.categoryId || '',
+              categoryId: String(it.category_id ?? mi?.categoryId ?? ''),
               observations: [],
               active: true,
             };
@@ -231,8 +229,8 @@ export default function RelatoriosPage() {
           const method = (payments || []).length > 1 ? 'MÚLTIPLO' : ((payments || [])[0]?.method ? String((payments || [])[0].method).toUpperCase() : '');
           const ord: Order = {
             id: String(r.id),
-            pin: String(r.id),
-            password: '',
+            pin: pinVal || String(r.id),
+            password: passVal || '',
             items: orderItems,
             total: paid > 0 ? paid : Math.max(0, Number(r.total_cents ?? 0) / 100),
             paymentMethod: breakdown ? 'MÚLTIPLO' : (method || 'Não informado'),
@@ -258,6 +256,70 @@ export default function RelatoriosPage() {
       } catch {}
     })();
     return () => { stopped = true };
+  }, []);
+
+  // Atualização periódica dos pedidos via SQLite para refletir mudanças entre janelas
+  useEffect(() => {
+    let mounted = true;
+    const refresh = async () => {
+      try {
+        const detailed = await ordersService.listOrdersDetailed();
+        if (!mounted) return;
+        const out: Order[] = [];
+        for (const d of detailed) {
+          const r = d.order as any;
+          const items = d.items || [];
+          const payments = d.payments || [];
+          const pinVal = d.details?.pin;
+          const passVal = d.details?.password;
+          const paid = (payments || []).reduce((s: number, p: any) => s + Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100), 0);
+          const breakdown = (payments || []).length > 1 ? Object.fromEntries((payments || []).map((p: any) => [String(p.method).toUpperCase(), Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100)])) : undefined;
+          const method = (payments || []).length > 1 ? 'MÚLTIPLO' : ((payments || [])[0]?.method ? String((payments || [])[0].method).toUpperCase() : '');
+          const ord: Order = {
+            id: String(r.id),
+            pin: pinVal || String(r.id),
+            password: passVal || '',
+            items: (items || []).map((it: any) => ({
+              id: String(it.id),
+              menuItem: {
+                id: String(it.product_id ?? it.productId ?? String(it.id)),
+                name: String(it.product_name ?? 'Item'),
+                price: Math.max(0, Number(it.unit_price_cents ?? it.unitPriceCents ?? 0) / 100),
+                sla: 0,
+                categoryId: String(it.category_id ?? ''),
+                observations: [],
+                active: true,
+              } as any,
+              quantity: Number(it.qty ?? it.quantity ?? 1),
+              unitPrice: Math.max(0, Number(it.unit_price_cents ?? it.unitPriceCents ?? 0) / 100),
+              productionUnits: [],
+            })) as any,
+            total: paid > 0 ? paid : Math.max(0, Number(r.total_cents ?? 0) / 100),
+            paymentMethod: breakdown ? 'MÚLTIPLO' : (method || 'Não informado'),
+            paymentBreakdown: breakdown,
+            status:
+              r.closed_at
+                ? 'DELIVERED'
+                : String(r.status).toLowerCase() === 'closed' || String(r.status).toUpperCase() === 'DELIVERED'
+                ? 'DELIVERED'
+                : String(r.status).toLowerCase() === 'cancelled' || String(r.status).toUpperCase() === 'CANCELLED'
+                ? 'CANCELLED'
+                : 'NEW',
+            createdAt: r.opened_at ? new Date(r.opened_at) : new Date(),
+            updatedAt: r.updated_at ? new Date(r.updated_at) : undefined,
+            readyAt: r.ready_at ? new Date(r.ready_at) : undefined,
+            deliveredAt: r.closed_at ? new Date(r.closed_at) : undefined,
+            slaMinutes: 0,
+            createdBy: '',
+          } as any;
+          out.push(ord);
+        }
+        setOrders(out);
+      } catch {}
+    };
+    refresh();
+    const timer = setInterval(refresh, 5000);
+    return () => { mounted = false; clearInterval(timer); };
   }, []);
 
   if (!isAuthenticated) {

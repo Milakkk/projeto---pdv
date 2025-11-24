@@ -116,6 +116,7 @@ export const orders = sqliteTable("orders", {
     onDelete: "set null",
     onUpdate: "cascade",
   }),
+  operationalSessionId: text("operational_session_id"),
   status: text("status", { enum: ["open", "closed", "cancelled"] })
     .notNull()
     .default("open"),

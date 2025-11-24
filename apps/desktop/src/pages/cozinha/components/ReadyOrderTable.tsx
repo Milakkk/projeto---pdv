@@ -183,7 +183,11 @@ export default function ReadyOrderTable({ readyOrders, onUpdateStatus, onUpdateD
                   const unitsPerItem = Math.max(1, di.menuItem.unitDeliveryCount || 1);
                   return acc + Math.max(1, di.quantity * unitsPerItem);
                 }, 0);
-                const deliveredUnitsSum = order.items.reduce((acc, di) => acc + Math.max(0, di.directDeliveredUnitCount || 0), 0);
+                const deliveredUnitsSum = order.items.reduce((acc, di) => {
+                  const units = Array.isArray(di.productionUnits) ? di.productionUnits : [];
+                  const deliveredPerItem = units.filter(u => !!u.deliveredAt || order.status === 'DELIVERED').length;
+                  return acc + deliveredPerItem;
+                }, 0);
                 const isPartiallyDelivered = deliveredUnitsSum > 0 && deliveredUnitsSum < totalUnitsSum;
                 
                 return (
@@ -227,7 +231,9 @@ export default function ReadyOrderTable({ readyOrders, onUpdateStatus, onUpdateD
                         {order.items.map((item, index) => {
                           const requiredOptions = extractRequiredOptions(item.observations);
                           const optionalObservations = extractOptionalObservations(item.observations);
-                          const deliveredCountForItem = Math.max(0, item.directDeliveredUnitCount || 0);
+                          const deliveredCountForItem = Array.isArray(item.productionUnits)
+                            ? item.productionUnits.filter(u => !!u.deliveredAt || order.status === 'DELIVERED').length
+                            : Math.max(0, item.directDeliveredUnitCount || 0);
                           const totalUnitsForItem = Math.max(1, item.quantity * Math.max(1, item.menuItem.unitDeliveryCount || 1));
                           const isItemPartiallyDelivered = deliveredCountForItem > 0 && deliveredCountForItem < totalUnitsForItem;
                           
@@ -277,13 +283,13 @@ export default function ReadyOrderTable({ readyOrders, onUpdateStatus, onUpdateD
                                     : 'N/A';
                                   // Indicação de entrega por unidade: usar timestamp por índice quando existir; senão, entregue quando o pedido estiver DELIVERED
                                   const deliveredTimesArr = item.directDeliveredUnitTimes || [];
-                                  const isUnitDelivered = !!deliveredTimesArr[unitIndex] || (order.status === 'DELIVERED');
+                                  const isUnitDelivered = !!unit.deliveredAt || !!deliveredTimesArr[unitIndex] || (order.status === 'DELIVERED');
                                   // Exibir horário de entrega:
                                   // - Entrega direta: quando a unidade está entregue, usar timestamp por unidade ou fallback do pedido
                                   // - Itens de cozinha: quando o pedido inteiro está entregue, usar order.deliveredAt
                                   const shouldShowDeliveredTime = isUnitDelivered;
                                   const deliveredDate = shouldShowDeliveredTime
-                                    ? (deliveredTimesArr[unitIndex] || (order.status === 'DELIVERED' && order.deliveredAt ? new Date(order.deliveredAt) : undefined))
+                                    ? (unit.deliveredAt ? new Date(unit.deliveredAt) : (deliveredTimesArr[unitIndex] || (order.status === 'DELIVERED' && order.deliveredAt ? new Date(order.deliveredAt) : undefined)))
                                     : undefined;
                                   const deliveredTime = deliveredDate
                                     ? new Date(deliveredDate).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })

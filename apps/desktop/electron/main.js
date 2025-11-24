@@ -13,15 +13,27 @@ const IS_DEV = !app.isPackaged
 async function loadRenderer(win, route) {
   const targetRoute = typeof route === 'string' ? route : '/'
   if (IS_DEV) {
-    const { default: waitOn } = await import('wait-on')
-    await waitOn({ resources: [DEV_URL], timeout: 30000 })
-    // App usa HashRouter no Electron; usar hash para roteamento durante dev
-    const url = `${DEV_URL}#${targetRoute}`
-    await win.loadURL(url)
+    try {
+      const { default: waitOn } = await import('wait-on')
+      await waitOn({ resources: [DEV_URL], timeout: 30000 })
+      const url = `${DEV_URL}#${targetRoute}`
+      await win.loadURL(url)
+    } catch {
+      const html = encodeURIComponent(
+        `<!doctype html><html><head><meta charset="utf-8"><title>Dev server</title></head><body style="font-family:system-ui;padding:24px"><h2>Servidor de desenvolvimento não iniciado</h2><p>Tente executar <code>pnpm --filter desktop dev:desktop:both</code> ou <code>pnpm -C apps/desktop dev:both</code>.</p><p>Porta esperada: ${DEV_PORT}</p></body></html>`
+      )
+      await win.loadURL(`data:text/html,${html}`)
+    }
   } else {
-    const indexFile = path.join(__dirname, '../out/index.html')
-    // Em produção, carregar arquivo local com hash
-    await win.loadFile(indexFile, { hash: targetRoute.replace(/^\//, '') })
+    try {
+      const indexFile = path.join(__dirname, '../out/index.html')
+      await win.loadFile(indexFile, { hash: targetRoute.replace(/^\//, '') })
+    } catch {
+      const html = encodeURIComponent(
+        `<!doctype html><html><head><meta charset="utf-8"><title>Build ausente</title></head><body style="font-family:system-ui;padding:24px"><h2>Build não encontrado</h2><p>Execute <code>pnpm -C apps/desktop build</code> e tente novamente.</p></body></html>`
+      )
+      await win.loadURL(`data:text/html,${html}`)
+    }
   }
 }
 
@@ -181,7 +193,20 @@ app.whenReady().then(async () => {
     const w = BrowserWindow.getFocusedWindow()
     if (w) w.webContents.reloadIgnoringCache()
   })
-  const target = String(process.env.ELECTRON_WINDOW || process.env.LAUNCH_TARGET || '').trim().toLowerCase()
+  globalShortcut.register('CommandOrControl+Alt+R', () => {
+    try { app.relaunch({ args: ['--target=both'] }) } catch {}
+    try { app.exit(0) } catch {}
+  })
+  const argvTarget = (() => {
+    try {
+      const byEq = (process.argv || []).find(s => String(s).startsWith('--target='))
+      if (byEq) return String(byEq).split('=')[1]
+      const idx = (process.argv || []).indexOf('--target')
+      if (idx >= 0 && process.argv[idx + 1]) return String(process.argv[idx + 1])
+    } catch {}
+    return ''
+  })()
+  const target = String(process.env.ELECTRON_WINDOW || process.env.LAUNCH_TARGET || argvTarget).trim().toLowerCase()
   if (target === 'pdv') {
     openPdvWindow()
   } else if (target === 'kds') {
@@ -199,4 +224,11 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+ipcMain.handle('app:restart', (_event, tgt) => {
+  const next = String(typeof tgt === 'string' ? tgt : '').trim().toLowerCase()
+  try { app.relaunch({ args: next ? [`--target=${next}`] : [] }) } catch {}
+  try { app.exit(0) } catch {}
+  return true
 })

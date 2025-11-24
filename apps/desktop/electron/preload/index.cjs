@@ -12,5 +12,6 @@ contextBridge.exposeInMainWorld('api', {
     getDataPath: () => ipcRenderer.invoke('system:getDataPath'),
   },
   onEscape: (cb) => ipcRenderer.on('app:escape', () => cb && cb()),
-  closeWindow: () => ipcRenderer.invoke('close-focused-window')
+  closeWindow: () => ipcRenderer.invoke('close-focused-window'),
+  restart: (target) => ipcRenderer.invoke('app:restart', target)
 })

@@ -99,16 +99,23 @@ export default function CozinhaPage() {
         const dp = await getDeviceProfile()
         const unitId = dp?.unitId || 'default'
         const deviceId = dp?.deviceId || crypto.randomUUID()
-        const wsUrl = hubUrl.replace(/^http/, 'ws') + `/realtime?token=${encodeURIComponent(secret || '')}`
-        const ws = new WebSocket(wsUrl)
-        ws.addEventListener('open', () => {
-          ws.send(JSON.stringify({ unit_id: unitId, device_id: deviceId }))
-        })
-        ws.addEventListener('message', (ev) => {
+        if (!secret) return
+        const wsUrl = hubUrl.replace(/^http/, 'ws') + `/realtime?token=${encodeURIComponent(secret)}`
+        let attempt = 0
+        let reconnectTimer: any = null
+        const connect = () => {
           if (!mounted) return
+          attempt++
+          const ws = new WebSocket(wsUrl)
+          ws.addEventListener('open', () => {
+            ws.send(JSON.stringify({ unit_id: unitId, device_id: deviceId }))
+          })
+          ws.addEventListener('message', (ev) => {
+            if (!mounted) return
           let events: any[] = []
           try { const msg = JSON.parse(String((ev as MessageEvent).data)); if (msg?.type==='events') events = msg.events || [] } catch {}
           if (!Array.isArray(events) || events.length === 0) return
+          try { (async()=>{ await kdsService.applyHubEvents(events) })() } catch {}
           const tickets = events.filter((e:any)=> String(e.table)==='kdsTickets' && (e.row || e.rows))
           const ordersEv = events.filter((e:any)=> String(e.table)==='orders' && (e.row || e.rows))
           const phaseTimesEv = events.filter((e:any)=> String(e.table)==='kds_phase_times' && (e.row || e.rows))
@@ -174,41 +181,16 @@ export default function CozinhaPage() {
             })
           }
         })
-        ws.addEventListener('close', () => {
-          setTimeout(() => {
+          const scheduleReconnect = () => {
             if (!mounted) return
-            const ws2 = new WebSocket(wsUrl)
-            ws2.addEventListener('open', () => { ws2.send(JSON.stringify({ unit_id: unitId, device_id: deviceId })) })
-            ws2.addEventListener('message', (ev) => {
-              if (!mounted || !Array.isArray(events)) return
-              let events: any[] = []
-              try { const msg = JSON.parse(String((ev as MessageEvent).data)); if (msg?.type==='events') events = msg.events || [] } catch {}
-              const tickets = events.filter((e:any)=> String(e.table)==='kdsTickets' && (e.row || e.rows))
-              if (tickets.length){
-                const mapToOrderStatus = (s:string)=> s==='ready'?'READY': s==='prep'?'PREPARING': s==='done'?'DELIVERED': 'NEW'
-                const byIdStatus: Record<string,string> = {}
-                for (const e of tickets){
-                  const r = e.row || {}
-                  const id = String(r.order_id ?? r.orderId ?? r.id)
-                  const st = mapToOrderStatus(String(r.status ?? e.status ?? 'queued'))
-                  byIdStatus[id] = st
-                }
-                startTransition(() => {
-                  setOrders(prev => prev.map(o => {
-                    const oid = String(o.id)
-                    const st = byIdStatus[oid]
-                    if (!st) return o
-                    if (st==='DELIVERED') return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date(), updatedAt: o.updatedAt }
-                    if (st==='READY') return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
-                    if (st==='PREPARING') return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date(), readyAt: undefined }
-                    if (st==='NEW') return { ...o, status: 'NEW', updatedAt: undefined, readyAt: undefined }
-                    return o
-                  }))
-                })
-              }
-            })
-          }, 1000)
-        })
+            const delay = Math.min(30000, 1000 * Math.pow(2, Math.min(5, attempt)))
+            clearTimeout(reconnectTimer)
+            reconnectTimer = setTimeout(() => connect(), delay)
+          }
+          ws.addEventListener('error', () => { scheduleReconnect() })
+          ws.addEventListener('close', () => { scheduleReconnect() })
+        }
+        connect()
       } catch {}
     })()
     return () => { mounted = false }
@@ -233,6 +215,28 @@ export default function CozinhaPage() {
     });
     return Object.values(groups).sort((a, b) => a.name.localeCompare(b.name));
   }, [orders]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      startTransition(() => {
+        setOrders(prev => prev.map(o => {
+          try {
+            const raw = localStorage.getItem('kdsPhaseTimes')
+            const obj = raw ? JSON.parse(raw) : {}
+            const patch = obj[String(o.id)] || {}
+            return {
+              ...o,
+              createdAt: patch.newStart ? new Date(patch.newStart) : o.createdAt,
+              updatedAt: patch.preparingStart ? new Date(patch.preparingStart) : o.updatedAt,
+              readyAt: patch.readyAt ? new Date(patch.readyAt) : o.readyAt,
+              deliveredAt: patch.deliveredAt ? new Date(patch.deliveredAt) : o.deliveredAt,
+            }
+          } catch { return o }
+        }))
+      })
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [])
 
   // NOVO useEffect para a lógica de migração, executado apenas uma vez na montagem
   useEffect(() => {
@@ -398,7 +402,7 @@ export default function CozinhaPage() {
           const slaMinutes = items.reduce((sum: number, it: any) => sum + (Number(it.menuItem?.sla ?? 15) * Math.max(1, Number(it.quantity ?? 1))), 0)
           const details = getOrderDetails(String(t.order_id ?? t.orderId ?? t.id ?? ''))
           const ord: Order = {
-            id: String(t.order_id ?? t.orderId ?? t.id ?? Math.random().toString(36)),
+            id: String(t.order_id ?? t.orderId ?? ''),
             pin: String(t.pin ?? t.orderPin ?? details.pin ?? ''),
             password: String(t.password ?? details.password ?? ''),
             status: mapStatus(String(t.status ?? 'queued')),
@@ -415,7 +419,8 @@ export default function CozinhaPage() {
           ;(ord as any).ticketId = String(t.id ?? t.ticketId ?? ord.id)
           return ord
         }) as Order[];
-        const mergedOrders: Order[] = mappedOrders.map(o => {
+        const validOrders = mappedOrders.filter(o => o.id && String(o.id).trim().length > 0)
+        const merged = validOrders.map(o => {
           const prev = previousOrdersRef.current.find(po => po.id === o.id)
           const prevItems = prev?.items || []
           const createdAt = (() => {
@@ -428,13 +433,23 @@ export default function CozinhaPage() {
           })()
           const readyAt = o.readyAt ?? prev?.readyAt
           const deliveredAt = o.deliveredAt ?? prev?.deliveredAt
-          const items = (o.items && o.items.length > 0 ? o.items : prevItems)
-            .filter(it => !(it.skipKitchen || it.menuItem?.skipKitchen))
+          const items = (o.items && o.items.length > 0 ? o.items : prevItems).filter(it => !(it.skipKitchen || it.menuItem?.skipKitchen))
           const pin = (o.pin && String(o.pin).trim()) ? o.pin : (prev?.pin ?? '')
           const password = (o.password && String(o.password).trim()) ? o.password : (prev?.password ?? '')
           return { ...o, items, createdAt, updatedAt, readyAt, deliveredAt, pin, password }
         })
-        startTransition(() => setOrders(mergedOrders));
+        const rank = (s: Order['status']) => s==='DELIVERED'?3: s==='READY'?2: s==='PREPARING'?1: 0
+        const byId: Record<string, Order> = {}
+        for (const o of merged) {
+          const cur = byId[o.id]
+          if (!cur) { byId[o.id] = o; continue }
+          const lenCur = (cur.items || []).length
+          const lenNext = (o.items || []).length
+          if (lenNext > lenCur) { byId[o.id] = o; continue }
+          if (lenNext === lenCur && rank(o.status) > rank(cur.status)) { byId[o.id] = o }
+        }
+        const final = Object.values(byId).filter(o => (o.items || []).length > 0)
+        startTransition(() => setOrders(final));
       } catch (error) {
       }
     };
@@ -572,14 +587,22 @@ export default function CozinhaPage() {
         let deliveredTimes = Array.isArray(item.directDeliveredUnitTimes) ? [...item.directDeliveredUnitTimes] : [];
         const now = new Date();
         if (delta > 0) {
-          // Append timestamps for newly delivered units
           for (let i = 0; i < delta; i++) {
             deliveredTimes.push(now);
           }
         } else if (delta < 0) {
-          // Remove timestamps if delivery count decreased
           deliveredTimes = deliveredTimes.slice(0, Math.max(0, deliveredTimes.length + delta));
         }
+        try {
+          for (let i = 0; i < delivered; i++) {
+            const unitId = `${item.id}-${i+1}`;
+            kdsService.setUnitDelivered(orderId, item.id, unitId, (deliveredTimes[i] ? new Date(deliveredTimes[i]).toISOString() : now.toISOString()));
+          }
+          for (let i = delivered; i < totalUnits; i++) {
+            const unitId = `${item.id}-${i+1}`;
+            kdsService.setUnitDelivered(orderId, item.id, unitId, undefined as any);
+          }
+        } catch {}
         return { ...item, directDeliveredUnitCount: delivered, directDeliveredUnitTimes: deliveredTimes };
       });
       return { ...order, items: updatedItems };
@@ -1117,31 +1140,7 @@ export default function CozinhaPage() {
             </div>
           </div>
         </Modal>
-      </div>
+  </div>
     </>
   );
 }
-  
-  // Atualizador leve de tempos por fase para refletir mudanças imediatas na UI
-  useEffect(() => {
-    const interval = setInterval(() => {
-      startTransition(() => {
-        setOrders(prev => prev.map(o => {
-          try {
-            const raw = localStorage.getItem('kdsPhaseTimes')
-            const obj = raw ? JSON.parse(raw) : {}
-            const patch = obj[String(o.id)] || {}
-            return {
-              ...o,
-              createdAt: patch.newStart ? new Date(patch.newStart) : o.createdAt,
-              updatedAt: patch.preparingStart ? new Date(patch.preparingStart) : o.updatedAt,
-              readyAt: patch.readyAt ? new Date(patch.readyAt) : o.readyAt,
-              deliveredAt: patch.deliveredAt ? new Date(patch.deliveredAt) : o.deliveredAt,
-            }
-          } catch { return o }
-        }))
-      })
-    }, 1000)
-    return () => clearInterval(interval)
-  }, [])
-  

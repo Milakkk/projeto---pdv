@@ -12,6 +12,67 @@ function ensureDir(dir) {
 
 const userData = app.getPath('userData')
 ensureDir(userData)
+const sharedDir = path.join(userData, 'shared')
+ensureDir(sharedDir)
+const sharedDbPath = path.join(sharedDir, 'data.db')
+const sharedDb = new Database(sharedDbPath)
+ensureSchema(sharedDb)
+
+function migrateSessionsToShared(sqlite) {
+  try {
+    const getMeta = sqlite.prepare('SELECT value FROM sync_meta WHERE key = ?')
+    const meta = getMeta.get('shared_migration_v1')
+    const flag = String(meta?.value || '')
+    if (flag === 'done') return
+    const sessionsDir = path.join(userData, 'sessions')
+    if (!fs.existsSync(sessionsDir)) {
+      const upsertMeta = sqlite.prepare('INSERT INTO sync_meta (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at')
+      upsertMeta.run('shared_migration_v1', 'done')
+      return
+    }
+    const parts = fs.readdirSync(sessionsDir).filter(p => fs.existsSync(path.join(sessionsDir, p, 'data.db')))
+    const tables = [
+      'units',
+      'stations',
+      'device_profile',
+      'categories',
+      'products',
+      'orders',
+      'order_items',
+      'payments',
+      'kds_tickets',
+      'kds_unit_states',
+      'cash_sessions',
+      'cash_movements',
+      'saved_carts',
+      'kitchen_operators',
+      'global_observations',
+      'counters',
+      'sync_log',
+      'sync_meta',
+      'checklist_masters',
+      'checklist_items',
+      'checklist_schedules',
+      'checklist_executions',
+      'checklist_execution_items',
+      'procedures',
+      'tasks'
+    ]
+    for (const part of parts) {
+      const srcPath = path.join(sessionsDir, part, 'data.db')
+      const attachName = 'src_' + String(part).replace(/[^a-zA-Z0-9_]+/g, '_')
+      try { sqlite.exec(`ATTACH DATABASE '${srcPath.replace(/'/g, "''")}' AS ${attachName}`) } catch {}
+      for (const t of tables) {
+        try { sqlite.exec(`INSERT OR IGNORE INTO ${t} SELECT * FROM ${attachName}.${t}`) } catch {}
+      }
+      try { sqlite.exec(`DETACH DATABASE ${attachName}`) } catch {}
+    }
+    const upsertMeta = sqlite.prepare('INSERT INTO sync_meta (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at')
+    upsertMeta.run('shared_migration_v1', 'done')
+  } catch {}
+}
+
+migrateSessionsToShared(sharedDb)
 
 // Múltiplas sessões/partições: um banco por partição
 const dbCache = new Map()
@@ -21,16 +82,11 @@ function sanitizePartition(partition) {
   return p.length ? p.replace(/[^a-zA-Z0-9_-]+/g, '_') : 'default'
 }
 
-function getDb(partition) {
-  const key = sanitizePartition(partition)
+function getDb(_partition) {
+  const key = 'shared'
   if (dbCache.has(key)) return dbCache.get(key)
-  const dir = path.join(userData, 'sessions', key)
-  ensureDir(dir)
-  const dbPath = path.join(dir, 'data.db')
-  const sqlite = new Database(dbPath)
-  ensureSchema(sqlite)
-  dbCache.set(key, sqlite)
-  return sqlite
+  dbCache.set(key, sharedDb)
+  return sharedDb
 }
 
 export function runForPartition(partition, sql, params = []) {
@@ -119,6 +175,7 @@ function ensureSchema(sqlite) {
   exec(`CREATE TABLE IF NOT EXISTS orders (
     id TEXT PRIMARY KEY,
     unit_id TEXT,
+    operational_session_id TEXT,
     status TEXT NOT NULL DEFAULT 'open',
     total_cents INTEGER NOT NULL DEFAULT 0,
     opened_at TEXT,
@@ -168,6 +225,39 @@ function ensureSchema(sqlite) {
   );`)
   exec(`CREATE INDEX IF NOT EXISTS ix_kds_order ON kds_tickets(order_id);`)
   exec(`CREATE INDEX IF NOT EXISTS ix_kds_unit_status ON kds_tickets(unit_id, status);`)
+
+  exec(`CREATE TABLE IF NOT EXISTS kds_phase_times (
+    order_id TEXT PRIMARY KEY,
+    new_start TEXT,
+    preparing_start TEXT,
+    ready_at TEXT,
+    delivered_at TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );`)
+
+  exec(`CREATE TABLE IF NOT EXISTS kds_unit_states (
+    id TEXT PRIMARY KEY,
+    order_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    unit_id TEXT NOT NULL,
+    operator_name TEXT,
+    unit_status TEXT,
+    completed_observations_json TEXT,
+    completed_at TEXT,
+    delivered_at TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    version INTEGER NOT NULL DEFAULT 1,
+    pending_sync INTEGER NOT NULL DEFAULT 0
+  );`)
+  exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_kds_unit_key ON kds_unit_states(order_id, item_id, unit_id);`)
+  exec(`ALTER TABLE kds_unit_states ADD COLUMN delivered_at TEXT`)
+
+  exec(`CREATE TABLE IF NOT EXISTS orders_details (
+    order_id TEXT PRIMARY KEY,
+    pin TEXT,
+    password TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );`)
 
   exec(`CREATE TABLE IF NOT EXISTS cash_sessions (
     id TEXT PRIMARY KEY,
@@ -389,6 +479,8 @@ function ensureSchema(sqlite) {
   exec(`CREATE INDEX IF NOT EXISTS ix_recipe_history_prod ON recipe_history(product_id);`)
 
   try { seedInventoryFromPrecosTxt(sqlite) } catch {}
+  try { migrateIngredientPriceScale(sqlite) } catch {}
+  try { migrateOperationalSessionColumn(sqlite) } catch {}
 }
 
 function seedInventoryFromPrecosTxt(sqlite) {
@@ -440,5 +532,42 @@ function seedInventoryFromPrecosTxt(sqlite) {
       try { insertPrice.run(priceId, String(ingId), unit, cents, now) } catch {}
     }
     try { console.log('[seed] ingredientes e preços importados de preços.txt') } catch {}
+  } catch {}
+}
+
+function migrateIngredientPriceScale(sqlite) {
+  try {
+    const getMeta = sqlite.prepare('SELECT value FROM sync_meta WHERE key = ?')
+    const meta = getMeta.get('ingredient_price_scale')
+    const current = String(meta?.value || '')
+    if (current === '10000') return
+    const countRow = sqlite.prepare('SELECT COUNT(1) AS c FROM ingredient_prices').get()
+    const hasRows = Number(countRow?.c || 0) > 0
+    if (!hasRows) {
+      const upsertMeta = sqlite.prepare('INSERT INTO sync_meta (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at')
+      upsertMeta.run('ingredient_price_scale', '10000')
+      return
+    }
+    const updatePrices = sqlite.prepare('UPDATE ingredient_prices SET price_per_unit_cents = price_per_unit_cents * 100')
+    try { updatePrices.run() } catch {}
+    const updateHistoryOld = sqlite.prepare('UPDATE ingredient_price_history SET old_price_cents = old_price_cents * 100 WHERE old_price_cents IS NOT NULL')
+    try { updateHistoryOld.run() } catch {}
+    const updateHistoryNew = sqlite.prepare('UPDATE ingredient_price_history SET new_price_cents = new_price_cents * 100 WHERE new_price_cents IS NOT NULL')
+    try { updateHistoryNew.run() } catch {}
+    const upsertMeta = sqlite.prepare('INSERT INTO sync_meta (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at')
+    try { upsertMeta.run('ingredient_price_scale', '10000') } catch {}
+  } catch {}
+}
+
+function migrateOperationalSessionColumn(sqlite) {
+  try {
+    const rows = sqlite.prepare("PRAGMA table_info('orders')").all()
+    const hasCol = Array.isArray(rows) && rows.some(r => String(r.name) === 'operational_session_id')
+    if (hasCol) return
+    try { sqlite.exec("ALTER TABLE orders ADD COLUMN operational_session_id TEXT") } catch {}
+    try {
+      const upsertMeta = sqlite.prepare("INSERT INTO sync_meta (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at")
+      upsertMeta.run('orders_operational_session_v1', 'done')
+    } catch {}
   } catch {}
 }

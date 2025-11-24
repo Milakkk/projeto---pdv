@@ -29,21 +29,38 @@ const lanHubUrl: string | undefined = (() => {
 })()
 const lanSecret: string | undefined = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || undefined
 
+let lastPushFailAt = 0
 async function pushLanEvents(events: any[]) {
+  if (!lanSecret) return
+  const nowMs = Date.now()
+  if (lastPushFailAt && nowMs - lastPushFailAt < 15000) return
   try {
     const unitDefault = 'default'
     const enriched = (Array.isArray(events) ? events : []).map((e:any)=> ({ ...e, unit_id: e?.unit_id ?? unitDefault }))
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (lanSecret) headers['Authorization'] = `Bearer ${lanSecret}`
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${lanSecret}` }
     await fetch(`${lanHubUrl.replace(/\/$/, '')}/push`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ events: enriched }),
     })
-  } catch {}
+  } catch {
+    lastPushFailAt = nowMs
+  }
 }
 
-function getPhaseTimes(orderId: string): any {
+async function getPhaseTimes(orderId: string): Promise<any> {
+  try {
+    const res = await query('SELECT * FROM kds_phase_times WHERE order_id = ?', [orderId])
+    const row = (res?.rows ?? [])[0]
+    if (row) {
+      return {
+        newStart: row.new_start ?? row.newStart,
+        preparingStart: row.preparing_start ?? row.preparingStart,
+        readyAt: row.ready_at ?? row.readyAt,
+        deliveredAt: row.delivered_at ?? row.deliveredAt,
+      }
+    }
+  } catch {}
   try {
     const raw = localStorage.getItem('kdsPhaseTimes')
     const obj = raw ? JSON.parse(raw) : {}
@@ -52,15 +69,189 @@ function getPhaseTimes(orderId: string): any {
 }
 
 async function setPhaseTime(orderId: string, patch: any) {
+  const now = new Date().toISOString()
   try {
-    const raw = localStorage.getItem('kdsPhaseTimes')
-    const obj = raw ? JSON.parse(raw) : {}
-    const cur = obj[String(orderId)] || {}
-    const next = { ...cur, ...patch }
-    obj[String(orderId)] = next
-    localStorage.setItem('kdsPhaseTimes', JSON.stringify(obj))
-  } catch {}
+    await query(
+      'INSERT INTO kds_phase_times (order_id, new_start, preparing_start, ready_at, delivered_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(order_id) DO UPDATE SET new_start=COALESCE(excluded.new_start, new_start), preparing_start=COALESCE(excluded.preparing_start, preparing_start), ready_at=COALESCE(excluded.ready_at, ready_at), delivered_at=COALESCE(excluded.delivered_at, delivered_at), updated_at=excluded.updated_at',
+      [
+        orderId,
+        patch?.newStart ?? null,
+        patch?.preparingStart ?? null,
+        patch?.readyAt ?? null,
+        patch?.deliveredAt ?? null,
+        now,
+      ],
+    )
+  } catch {
+    try {
+      const raw = localStorage.getItem('kdsPhaseTimes')
+      const obj = raw ? JSON.parse(raw) : {}
+      const cur = obj[String(orderId)] || {}
+      const next = { ...cur, ...patch }
+      obj[String(orderId)] = next
+      localStorage.setItem('kdsPhaseTimes', JSON.stringify(obj))
+    } catch {}
+  }
   try { await pushLanEvents([{ table: 'kds_phase_times', row: { orderId, ...patch } }]) } catch {}
+}
+
+async function persistUnitStateDb(orderId: string, itemId: string, unitId: string, patch: any) {
+  const id = `${orderId}:${itemId}:${unitId}`
+  const now = new Date().toISOString()
+  const operatorName = patch?.operatorName ?? null
+  const unitStatus = patch?.unitStatus ?? null
+  const completedObservationsJson = Array.isArray(patch?.completedObservations)
+    ? JSON.stringify(patch.completedObservations)
+    : null
+  const completedAt = patch?.completedAt ?? null
+  const deliveredAt = patch?.deliveredAt ?? null
+  try {
+    await query(
+      'INSERT INTO kds_unit_states (id, order_id, item_id, unit_id, operator_name, unit_status, completed_observations_json, completed_at, delivered_at, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET operator_name=COALESCE(excluded.operator_name, operator_name), unit_status=COALESCE(excluded.unit_status, unit_status), completed_observations_json=COALESCE(excluded.completed_observations_json, completed_observations_json), completed_at=COALESCE(excluded.completed_at, completed_at), delivered_at=COALESCE(excluded.delivered_at, delivered_at), updated_at=excluded.updated_at, pending_sync=excluded.pending_sync',
+      [id, orderId, itemId, unitId, operatorName, unitStatus, completedObservationsJson, completedAt, deliveredAt, now, 1, 1],
+    )
+  } catch {
+    try {
+      const raw = localStorage.getItem('kdsUnitState')
+      const state = raw ? JSON.parse(raw) : {}
+      const key = `${orderId}:${itemId}:${unitId}`
+      const current = state[key] || {}
+      const next = { ...current, ...patch }
+      state[key] = next
+      localStorage.setItem('kdsUnitState', JSON.stringify(state))
+    } catch {}
+  }
+}
+
+async function loadUnitStatesForOrder(orderId: string): Promise<Record<string, any>> {
+  const map: Record<string, any> = {}
+  try {
+    const res = await query('SELECT * FROM kds_unit_states WHERE order_id = ?', [orderId])
+    for (const r of (res?.rows ?? [])) {
+      const key = `${String(r.order_id ?? r.orderId)}:${String(r.item_id ?? r.itemId)}:${String(r.unit_id ?? r.unitId)}`
+      map[key] = {
+        operatorName: r.operator_name ?? r.operatorName ?? undefined,
+        unitStatus: r.unit_status ?? r.unitStatus ?? undefined,
+        completedObservations: (() => { try { const arr = JSON.parse(String(r.completed_observations_json ?? 'null')); return Array.isArray(arr) ? arr : [] } catch { return [] } })(),
+        completedAt: r.completed_at ?? r.completedAt ?? undefined,
+      }
+    }
+    return map
+  } catch {
+    try {
+      const raw = localStorage.getItem('kdsUnitState')
+      const state = raw ? JSON.parse(raw) : {}
+      return state || {}
+    } catch { return {} }
+  }
+}
+
+function mergeUnitFromMap(stateMap: Record<string, any>, orderId: string, itemId: string, unit: any) {
+  const key = `${orderId}:${itemId}:${unit.unitId}`
+  const s = stateMap[key] || null
+  if (!s) return unit
+  const out = { ...unit }
+  if (s.operatorName) out.operatorName = s.operatorName
+  if (s.unitStatus) out.unitStatus = s.unitStatus
+  if (Array.isArray(s.completedObservations)) out.completedObservations = s.completedObservations
+  if (s.unitStatus === 'READY') out.completedAt = out.completedAt || s.completedAt || new Date().toISOString()
+  if (s.deliveredAt) out.deliveredAt = s.deliveredAt
+  return out
+}
+
+export async function applyHubEvents(events: any[]) {
+  const arr = Array.isArray(events) ? events : []
+  if (!arr.length) return
+  const now = new Date().toISOString()
+  for (const e of arr) {
+    const table = String(e?.table || '')
+    const row = e?.row || {}
+    if (table === 'kdsTickets') {
+      const id = String(row.id || '')
+      if (!id) continue
+      const orderId = row.order_id ?? row.orderId ?? null
+      const unitId = row.unit_id ?? row.unitId ?? null
+      const status = row.status ?? 'queued'
+      const station = row.station ?? null
+      const updatedAt = row.updated_at ?? row.updatedAt ?? now
+      try {
+        await query(
+          'INSERT INTO kds_tickets (id, order_id, unit_id, status, station, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET order_id=excluded.order_id, unit_id=excluded.unit_id, status=excluded.status, station=excluded.station, updated_at=excluded.updated_at, pending_sync=excluded.pending_sync',
+          [id, orderId, unitId, status, station, updatedAt, 1, 0],
+        )
+      } catch {}
+    } else if (table === 'orders') {
+      const id = String(row.id || '')
+      if (!id) continue
+      const incomingStatus = row.status ?? null
+      const total = row.total_cents ?? row.totalCents ?? null
+      const openedAt = row.opened_at ?? row.openedAt ?? null
+      const deliveredAt = row.deliveredAt ?? row.delivered_at ?? null
+      const closedAtRaw = row.closed_at ?? row.closedAt ?? null
+      const deviceId = row.device_id ?? row.deviceId ?? null
+      const unitId = row.unit_id ?? row.unitId ?? null
+      const notes = row.notes ?? null
+      const updatedAt = row.updated_at ?? row.updatedAt ?? now
+      const statusStr = String(incomingStatus || '').toUpperCase()
+      const dbStatus = statusStr === 'DELIVERED' ? 'closed' : statusStr === 'CANCELLED' ? 'cancelled' : (incomingStatus ?? null)
+      const dbClosedAt = dbStatus === 'closed' ? (deliveredAt ?? closedAtRaw ?? updatedAt) : closedAtRaw
+      try {
+        await query(
+          'INSERT INTO orders (id, status, total_cents, opened_at, closed_at, device_id, unit_id, notes, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET status=COALESCE(excluded.status, status), total_cents=COALESCE(excluded.total_cents, total_cents), opened_at=COALESCE(excluded.opened_at, opened_at), closed_at=COALESCE(excluded.closed_at, closed_at), device_id=COALESCE(excluded.device_id, device_id), unit_id=COALESCE(excluded.unit_id, unit_id), notes=COALESCE(excluded.notes, notes), updated_at=excluded.updated_at, pending_sync=excluded.pending_sync',
+          [id, dbStatus, total, openedAt, dbClosedAt, deviceId, unitId, notes, updatedAt, 1, 0],
+        )
+        const pin = row.pin ?? null
+        const password = row.password ?? null
+        if (pin || password) {
+          await query(
+            'INSERT INTO orders_details (order_id, pin, password, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(order_id) DO UPDATE SET pin=COALESCE(excluded.pin, pin), password=COALESCE(excluded.password, password), updated_at=excluded.updated_at',
+            [id, pin, password, updatedAt],
+          )
+        }
+      } catch {}
+    } else if (table === 'cash_sessions') {
+      const id = String(row.id || '')
+      if (!id) continue
+      const openedAt = row.opened_at ?? row.openedAt ?? null
+      const closedAt = row.closed_at ?? row.closedAt ?? null
+      const openedBy = row.opened_by ?? row.openedBy ?? null
+      const closedBy = row.closed_by ?? row.closedBy ?? null
+      const openingAmount = row.opening_amount_cents ?? row.openingAmountCents ?? null
+      const closingAmount = row.closing_amount_cents ?? row.closingAmountCents ?? null
+      const updatedAt = row.updated_at ?? row.updatedAt ?? now
+      try {
+        await query(
+          'INSERT INTO cash_sessions (id, opened_at, closed_at, opened_by, closed_by, opening_amount_cents, closing_amount_cents, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET opened_at=COALESCE(excluded.opened_at, opened_at), closed_at=COALESCE(excluded.closed_at, closed_at), opened_by=COALESCE(excluded.opened_by, opened_by), closed_by=COALESCE(excluded.closed_by, closed_by), opening_amount_cents=COALESCE(excluded.opening_amount_cents, opening_amount_cents), closing_amount_cents=COALESCE(excluded.closing_amount_cents, closing_amount_cents), updated_at=excluded.updated_at, pending_sync=excluded.pending_sync',
+          [id, openedAt, closedAt, openedBy, closedBy, openingAmount, closingAmount, updatedAt, 1, 0],
+        )
+      } catch {}
+    } else if (table === 'cash_movements') {
+      const id = String(row.id || '')
+      if (!id) continue
+      const sessionId = row.session_id ?? row.sessionId ?? null
+      const type = row.type ?? null
+      const reason = row.reason ?? null
+      const amount = row.amount_cents ?? row.amountCents ?? null
+      const createdAt = row.created_at ?? row.createdAt ?? null
+      const updatedAt = row.updated_at ?? row.updatedAt ?? now
+      try {
+        await query(
+          'INSERT INTO cash_movements (id, session_id, type, reason, amount_cents, created_at, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET session_id=COALESCE(excluded.session_id, session_id), type=COALESCE(excluded.type, type), reason=COALESCE(excluded.reason, reason), amount_cents=COALESCE(excluded.amount_cents, amount_cents), created_at=COALESCE(excluded.created_at, created_at), updated_at=excluded.updated_at, pending_sync=excluded.pending_sync',
+          [id, sessionId, type, reason, amount, createdAt, updatedAt, 1, 0],
+        )
+      } catch {}
+    } else if (table === 'kds_phase_times') {
+      const orderId = String(row.orderId || row.order_id || '')
+      if (!orderId) continue
+      const patch: any = {
+        newStart: row.newStart ?? null,
+        preparingStart: row.preparingStart ?? null,
+        readyAt: row.readyAt ?? null,
+        deliveredAt: row.deliveredAt ?? null,
+      }
+      try { await setPhaseTime(orderId, patch) } catch {}
+    }
+  }
 }
 
 export async function enqueueTicket(params: { orderId: UUID; station?: string | null }) {
@@ -89,9 +280,11 @@ export async function enqueueTicket(params: { orderId: UUID; station?: string | 
 export async function setTicketStatus(id: UUID, status: 'queued' | 'prep' | 'ready' | 'done') {
   const now = new Date().toISOString()
   let orderId: string | undefined
+  let targetTicketId: string | undefined
   try {
     const r = await query('SELECT order_id FROM kds_tickets WHERE id = ?', [id])
     orderId = r?.rows && r.rows[0]?.order_id ? String(r.rows[0].order_id) : undefined
+    targetTicketId = orderId ? String(id) : undefined
   } catch {}
   if (!orderId) {
     try {
@@ -99,6 +292,18 @@ export async function setTicketStatus(id: UUID, status: 'queued' | 'prep' | 'rea
       const arr = raw ? JSON.parse(raw) : []
       const tk = (Array.isArray(arr) ? arr : []).find((t:any)=> String(t.id)===String(id))
       orderId = tk?.order_id || tk?.orderId
+      targetTicketId = tk?.id ? String(tk.id) : undefined
+    } catch {}
+  }
+  // Fallback: tratar 'id' como orderId e localizar o ticket correspondente
+  if (!orderId) {
+    try {
+      const r2 = await query('SELECT id, order_id FROM kds_tickets WHERE order_id = ? ORDER BY datetime(updated_at) DESC LIMIT 1', [id])
+      const row = r2?.rows && r2.rows[0]
+      if (row) {
+        orderId = String(row.order_id)
+        targetTicketId = String(row.id)
+      }
     } catch {}
   }
   if (orderId) {
@@ -110,13 +315,14 @@ export async function setTicketStatus(id: UUID, status: 'queued' | 'prep' | 'rea
     } catch {}
   }
   try {
-    await query('UPDATE kds_tickets SET status = ?, updated_at = ?, pending_sync = 1 WHERE id = ?', [status, now, id])
+    const ticketIdForUpdate = targetTicketId || id
+    await query('UPDATE kds_tickets SET status = ?, updated_at = ?, pending_sync = 1 WHERE id = ?', [status, now, ticketIdForUpdate])
     if (status === 'done') {
       try {
-        const res = await query('SELECT order_id FROM kds_tickets WHERE id = ?', [id])
-        const orderId = res?.rows && res.rows[0]?.order_id
-        if (orderId) {
-          await query('UPDATE orders SET status = ?, closed_at = ?, updated_at = ?, pending_sync = 1 WHERE id = ?', ['closed', now, now, orderId])
+        const res = await query('SELECT order_id FROM kds_tickets WHERE id = ?', [ticketIdForUpdate])
+        const oid = res?.rows && res.rows[0]?.order_id
+        if (oid) {
+          await query('UPDATE orders SET status = ?, closed_at = ?, updated_at = ?, pending_sync = 1 WHERE id = ?', ['closed', now, now, oid])
         }
       } catch {}
     }
@@ -124,42 +330,102 @@ export async function setTicketStatus(id: UUID, status: 'queued' | 'prep' | 'rea
     try {
       const raw = localStorage.getItem('kdsTickets')
       const arr = raw ? JSON.parse(raw) : []
-      const updated = arr.map((t:any)=> t.id===id ? { ...t, status, updated_at: now } : t)
+      const updated = arr.map((t:any)=> (String(t.id)===(targetTicketId||id)) ? { ...t, status, updated_at: now } : t)
       localStorage.setItem('kdsTickets', JSON.stringify(updated))
-
-      const mapToOrderStatus = (s:string)=> s==='done'?'closed': s==='ready'?'READY': s==='prep'?'PREPARING': 'NEW'
-      try {
-        const rawOrders = localStorage.getItem('orders')
-        const orders = rawOrders ? JSON.parse(rawOrders) : []
-        const tk = (Array.isArray(arr)?arr:[]).find((t:any)=> String(t.id)===String(id))
-        const orderId = tk?.order_id || tk?.orderId
-        const updOrders = (Array.isArray(orders)?orders:[]).map((o:any)=> {
-          if (String(o.id)===String(orderId)) {
-            const nextStatus = mapToOrderStatus(String(status))
-            const out:any = { ...o, status: nextStatus }
-            if (nextStatus==='PREPARING' && !o.updated_at) out.updated_at = now
-            if (nextStatus==='READY') out.readyAt = now
-            if (nextStatus!=='READY') out.readyAt = undefined
-            if (nextStatus==='closed') { out.closed_at = now; out.updated_at = now }
-            return out
-          }
-          return o
-        })
-        localStorage.setItem('orders', JSON.stringify(updOrders))
-      } catch {}
     } catch {}
   }
-  try { await pushLanEvents([{ table: 'kdsTickets', row: { id, status, updated_at: now } }]) } catch {}
+  try {
+    const events: any[] = [{ table: 'kdsTickets', row: { id: (targetTicketId||id), order_id: orderId, status, updated_at: now } }]
+    if (orderId) {
+      const mapToOrderStatus = (s:string)=> s==='done'?'DELIVERED': s==='ready'?'READY': s==='prep'?'PREPARING': 'NEW'
+      const ordRow: any = { id: orderId, status: mapToOrderStatus(String(status)), updatedAt: now }
+      if (status === 'ready') ordRow.readyAt = now
+      if (status === 'done') ordRow.deliveredAt = now
+      events.push({ table: 'orders', row: ordRow })
+    }
+    await pushLanEvents(events)
+  } catch {}
 }
 
 export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 'done') {
   try {
     const res = await query('SELECT * FROM kds_tickets WHERE status = ?', [status])
     const tickets = Array.isArray(res?.rows) ? res.rows : []
+  if ((tickets?.length ?? 0) === 0) {
+    try {
+      const rawTk = localStorage.getItem('kdsTickets')
+      const lsTickets = rawTk ? JSON.parse(rawTk) : []
+      const filtered = Array.isArray(lsTickets) ? lsTickets.filter((t:any)=> String(t.status)===String(status)) : []
+      if (filtered.length) {
+        const resList = [] as any[]
+        for (const t of filtered) {
+          const times = await getPhaseTimes(String(t.order_id || t.orderId))
+          const resItems = await query('SELECT oi.*, p.name as product_name, p.category_id as category_id FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ?', [String(t.order_id || t.orderId)])
+          let items = (resItems?.rows ?? []).map((it:any) => ({
+            id: String(it.id),
+            quantity: Number(it.qty ?? 1),
+            skipKitchen: false,
+            menuItem: {
+              id: String(it.product_id ?? ''),
+              name: String(it.product_name ?? 'Item'),
+              unitDeliveryCount: 1,
+              categoryId: String(it.category_id ?? ''),
+            },
+            productionUnits: Array.from({ length: Math.max(1, Number(it.qty ?? 1)) }, (_, idx) => ({
+              unitId: `${String(it.id)}-${idx+1}`,
+              unitStatus: 'PENDING',
+              operatorName: undefined,
+              completedObservations: [],
+              completedAt: undefined,
+            })),
+          }))
+          try {
+            const unitMap = await loadUnitStatesForOrder(String(t.order_id || t.orderId))
+            items = items.map((it:any)=> ({
+              ...it,
+              productionUnits: (Array.isArray(it.productionUnits)? it.productionUnits : []).map((u:any)=> mergeUnitFromMap(unitMap, String(t.order_id || t.orderId), String(it.id), u))
+            }))
+          } catch {}
+          resList.push({ ...t, items, createdAt: times?.newStart || t.createdAt, updatedAt: times?.preparingStart || t.updatedAt, readyAt: times?.readyAt || t.readyAt, deliveredAt: times?.deliveredAt || t.deliveredAt })
+        }
+        return resList
+      }
+      const statusParam = status
+      const rows = await query('SELECT id, opened_at, updated_at, closed_at FROM orders WHERE closed_at IS NULL ORDER BY datetime(updated_at) DESC LIMIT 200')
+      const out = [] as any[]
+      for (const r of (rows?.rows ?? [])) {
+        const id = String(r.id)
+        const times = await getPhaseTimes(id)
+        const st = times?.readyAt ? 'ready' : (times?.preparingStart ? 'prep' : 'queued')
+        if (st !== statusParam) continue
+        const resItems = await query('SELECT oi.*, p.name as product_name, p.category_id as category_id FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ?', [id])
+        const items = (resItems?.rows ?? []).map((it:any) => ({
+          id: String(it.id),
+          quantity: Number(it.qty ?? 1),
+          skipKitchen: false,
+          menuItem: {
+            id: String(it.product_id ?? ''),
+            name: String(it.product_name ?? 'Item'),
+            unitDeliveryCount: 1,
+            categoryId: String(it.category_id ?? ''),
+          },
+          productionUnits: Array.from({ length: Math.max(1, Number(it.qty ?? 1)) }, (_, idx) => ({
+            unitId: `${String(it.id)}-${idx+1}`,
+            unitStatus: 'PENDING',
+            operatorName: undefined,
+            completedObservations: [],
+            completedAt: undefined,
+          })),
+        }))
+        out.push({ id, order_id: id, status: st, items, createdAt: times?.newStart || r.opened_at, updatedAt: times?.preparingStart || r.updated_at, readyAt: times?.readyAt, deliveredAt: times?.deliveredAt })
+      }
+      return out
+    } catch {}
+  }
     const enriched = [] as any[]
     for (const t of tickets) {
       const ordId = t.order_id ?? t.orderId
-      const times = getPhaseTimes(String(ordId))
+      const times = await getPhaseTimes(String(ordId))
       const resItems = await query('SELECT oi.*, p.name as product_name, p.category_id as category_id FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ?', [ordId])
       const items = (resItems?.rows ?? []).map((it:any) => ({
         id: String(it.id),
@@ -180,27 +446,29 @@ export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 
         })),
       }))
       try {
-        const rawState = localStorage.getItem('kdsUnitState')
-        const state = rawState ? JSON.parse(rawState) : {}
-        const mergeUnit = (orderId:string, itemId:string, unit:any) => {
-          const key = `${orderId}:${itemId}:${unit.unitId}`
-          const s = state[key] || null
-          if (!s) return unit
-          const out = { ...unit }
-          if (s.operatorName) out.operatorName = s.operatorName
-          if (s.unitStatus) out.unitStatus = s.unitStatus
-          if (Array.isArray(s.completedObservations)) out.completedObservations = s.completedObservations
-          if (s.unitStatus === 'READY') out.completedAt = out.completedAt || new Date().toISOString()
-          return out
-        }
+        const unitMap = await loadUnitStatesForOrder(String(ordId))
         const mergedItems = items.map((it:any)=> ({
           ...it,
-          productionUnits: it.productionUnits.map((u:any)=> mergeUnit(String(ordId), String(it.id), u))
+          productionUnits: it.productionUnits.map((u:any)=> mergeUnitFromMap(unitMap, String(ordId), String(it.id), u))
         }))
-        enriched.push({ ...t, items: mergedItems, createdAt: times?.newStart || t.createdAt, updatedAt: times?.preparingStart || t.updatedAt, readyAt: times?.readyAt || t.readyAt, deliveredAt: times?.deliveredAt || t.deliveredAt })
-      } catch {
-        enriched.push({ ...t, items, createdAt: times?.newStart || t.createdAt, updatedAt: times?.preparingStart || t.updatedAt, readyAt: times?.readyAt || t.readyAt, deliveredAt: times?.deliveredAt || t.deliveredAt })
-      }
+        let pin: string | undefined
+        let password: string | undefined
+        try {
+          const dres = await query('SELECT pin, password FROM orders_details WHERE order_id = ?', [ordId])
+          const drow = (dres?.rows ?? [])[0]
+          if (drow) { pin = drow.pin ?? undefined; password = drow.password ?? undefined }
+        } catch {}
+        enriched.push({ ...t, pin, password, items: mergedItems, createdAt: times?.newStart || t.createdAt, updatedAt: times?.preparingStart || t.updatedAt, readyAt: times?.readyAt || t.readyAt, deliveredAt: times?.deliveredAt || t.deliveredAt })
+          } catch {
+            let pin: string | undefined
+            let password: string | undefined
+            try {
+              const dres = await query('SELECT pin, password FROM orders_details WHERE order_id = ?', [ordId])
+              const drow = (dres?.rows ?? [])[0]
+              if (drow) { pin = drow.pin ?? undefined; password = drow.password ?? undefined }
+            } catch {}
+            enriched.push({ ...t, pin, password, items, createdAt: times?.newStart || t.createdAt, updatedAt: times?.preparingStart || t.updatedAt, readyAt: times?.readyAt || t.readyAt, deliveredAt: times?.deliveredAt || t.deliveredAt })
+          }
     }
     return enriched
   } catch {
@@ -211,41 +479,44 @@ export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 
       if (filtered.length) {
         const res = [] as any[]
         for (const t of filtered) {
-          const ordRaw = localStorage.getItem('orders')
-          const orders = ordRaw ? JSON.parse(ordRaw) : []
-          const ord = Array.isArray(orders) ? orders.find((o:any)=> String(o.id)===String(t.order_id || t.orderId)) : null
-          const times = getPhaseTimes(String(t.order_id || t.orderId))
-          let items = Array.isArray(ord?.items) ? ord.items.filter((it:any)=> !(it.skipKitchen || it.menuItem?.skipKitchen)) : []
+          const times = await getPhaseTimes(String(t.order_id || t.orderId))
           try {
-            const rawState = localStorage.getItem('kdsUnitState')
-            const state = rawState ? JSON.parse(rawState) : {}
-            const mergeUnit = (orderId:string, itemId:string, unit:any) => {
-              const key = `${orderId}:${itemId}:${unit.unitId}`
-              const s = state[key] || null
-              if (!s) return unit
-              const out = { ...unit }
-              if (s.operatorName) out.operatorName = s.operatorName
-              if (s.unitStatus) out.unitStatus = s.unitStatus
-              if (Array.isArray(s.completedObservations)) out.completedObservations = s.completedObservations
-              if (s.unitStatus === 'READY') out.completedAt = out.completedAt || new Date().toISOString()
-              return out
-            }
-            items = items.map((it:any)=> ({
-              ...it,
-              productionUnits: (Array.isArray(it.productionUnits)? it.productionUnits : []).map((u:any)=> mergeUnit(String(t.order_id || t.orderId), String(it.id), u))
+            const rawItems = localStorage.getItem('order_items')
+            const arrItems = rawItems ? JSON.parse(rawItems) : []
+            const rows = (Array.isArray(arrItems) ? arrItems : []).filter((it:any)=> String(it.order_id)===String(t.order_id || t.orderId))
+            let items = rows.map((it:any)=> ({
+              id: String(it.id),
+              quantity: Number(it.qty ?? 1),
+              skipKitchen: false,
+              menuItem: {
+                id: String(it.product_id ?? ''),
+                name: 'Item',
+                unitDeliveryCount: 1,
+                categoryId: '',
+              },
+              productionUnits: Array.from({ length: Math.max(1, Number(it.qty ?? 1)) }, (_, idx) => ({
+                unitId: `${String(it.id)}-${idx+1}`,
+                unitStatus: 'PENDING',
+                operatorName: undefined,
+                completedObservations: [],
+                completedAt: undefined,
+              })),
             }))
-          } catch {}
-          res.push({ ...t, items, createdAt: times?.newStart || t.createdAt, updatedAt: times?.preparingStart || t.updatedAt, readyAt: times?.readyAt || t.readyAt, deliveredAt: times?.deliveredAt || t.deliveredAt })
+            try {
+              const unitMap = await loadUnitStatesForOrder(String(t.order_id || t.orderId))
+              items = items.map((it:any)=> ({
+                ...it,
+                productionUnits: (Array.isArray(it.productionUnits)? it.productionUnits : []).map((u:any)=> mergeUnitFromMap(unitMap, String(t.order_id || t.orderId), String(it.id), u))
+              }))
+            } catch {}
+            res.push({ ...t, items, createdAt: times?.newStart || t.createdAt, updatedAt: times?.preparingStart || t.updatedAt, readyAt: times?.readyAt || t.readyAt, deliveredAt: times?.deliveredAt || t.deliveredAt })
+          } catch {
+            res.push({ ...t, items: [], createdAt: times?.newStart || t.createdAt, updatedAt: times?.preparingStart || t.updatedAt, readyAt: times?.readyAt || t.readyAt, deliveredAt: times?.deliveredAt || t.deliveredAt })
+          }
         }
         return res
       }
-      const ordRaw = localStorage.getItem('orders')
-      const orders = ordRaw ? JSON.parse(ordRaw) : []
-      const mapStatus = (s:string)=> s==='READY'?'ready': s==='PREPARING'?'prep': 'queued'
-      const res = (Array.isArray(orders)?orders:[])
-        .filter((o:any)=> mapStatus(String(o.status||'NEW'))===status)
-        .map((o:any)=> ({ id: String(o.id), order_id: String(o.id), status: mapStatus(String(o.status||'NEW')), items: (Array.isArray(o.items)? o.items.filter((it:any)=> !(it.skipKitchen || it.menuItem?.skipKitchen)) : []), createdAt: getPhaseTimes(String(o.id))?.newStart || o.opened_at || o.createdAt, updatedAt: getPhaseTimes(String(o.id))?.preparingStart || o.updatedAt, readyAt: getPhaseTimes(String(o.id))?.readyAt || o.readyAt, deliveredAt: getPhaseTimes(String(o.id))?.deliveredAt || o.closed_at || o.deliveredAt }))
-      return res
+      return []
     } catch { return [] }
   }
 }
@@ -262,19 +533,23 @@ function persistUnitState(key: string, patch: any) {
 }
 
 export async function setUnitOperator(orderId: string, itemId: string, unitId: string, operatorName: string) {
-  const key = `${orderId}:${itemId}:${unitId}`
-  persistUnitState(key, { operatorName })
+  await persistUnitStateDb(orderId, itemId, unitId, { operatorName })
   try { await pushLanEvents([{ table: 'kds_unit_operator', row: { orderId, itemId, unitId, operatorName } }]) } catch {}
 }
 
 export async function setUnitStatus(orderId: string, itemId: string, unitId: string, unitStatus: 'PENDING' | 'READY', completedObservations?: string[]) {
-  const key = `${orderId}:${itemId}:${unitId}`
   const patch: any = { unitStatus }
   if (Array.isArray(completedObservations)) patch.completedObservations = completedObservations
   if (unitStatus === 'READY') patch.completedAt = new Date().toISOString()
   else patch.completedAt = undefined
-  persistUnitState(key, patch)
+  await persistUnitStateDb(orderId, itemId, unitId, patch)
   try { await pushLanEvents([{ table: 'kds_unit_status', row: { orderId, itemId, unitId, unitStatus, completedObservations } }]) } catch {}
+}
+
+export async function setUnitDelivered(orderId: string, itemId: string, unitId: string, deliveredAt?: string) {
+  const patch: any = { deliveredAt: deliveredAt ?? new Date().toISOString() }
+  await persistUnitStateDb(orderId, itemId, unitId, patch)
+  try { await pushLanEvents([{ table: 'kds_unit_delivered', row: { orderId, itemId, unitId, deliveredAt: patch.deliveredAt } }]) } catch {}
 }
 
 export async function broadcastOperators(operators: any[]) {

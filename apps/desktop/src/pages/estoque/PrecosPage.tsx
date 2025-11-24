@@ -25,7 +25,7 @@ export default function EstoquePrecosPage() {
     const name = formIngredientName.trim()
     if (!name || !form.unit || !form.price) return
     const normalized = form.price.replace(',', '.')
-    const cents = Math.max(0, Math.round(parseFloat(normalized) * 100))
+    const cents = Math.max(0, Math.round(parseFloat(normalized) * 10000))
     const existing = ingredients.find(i => String(i.name).toLowerCase() === name.toLowerCase())
     const ingredientId = existing ? String(existing.id) : await inventory.upsertIngredient({ name })
     await inventory.upsertPrice({ ingredientId, unit: form.unit, pricePerUnitCents: cents })
@@ -40,13 +40,13 @@ export default function EstoquePrecosPage() {
 
   const startEdit = (p: any) => {
     setEditingId(String(p.id))
-    setEditing({ unit: String(p.unit), price: String(((p.price_per_unit_cents ?? 0)/100).toFixed(2)) })
+    setEditing({ unit: String(p.unit), price: String(((p.price_per_unit_cents ?? 0)/10000).toFixed(4)) })
   }
   const cancelEdit = () => { setEditingId(''); setEditing({ unit: 'g', price: '' }) }
   const confirmEdit = async () => {
     if (!editingId) return
     const normalized = editing.price.replace(',', '.')
-    const cents = Math.max(0, Math.round(parseFloat(normalized) * 100))
+    const cents = Math.max(0, Math.round(parseFloat(normalized) * 10000))
     const target = prices.find((x:any)=> String(x.id)===String(editingId))
     if (!target) return
     await inventory.upsertPrice({ id: editingId, ingredientId: String(target.ingredient_id), unit: editing.unit, pricePerUnitCents: cents })
@@ -138,7 +138,7 @@ export default function EstoquePrecosPage() {
                 <div className="text-sm font-medium">{editingId===String(p.id) ? (
                   <Input value={editing.price} onChange={e=>setEditing({...editing, price: e.target.value})} />
                 ) : (
-                  <>R$ {((p.price_per_unit_cents ?? 0)/100).toFixed(2)}</>
+                  <>R$ {((p.price_per_unit_cents ?? 0)/10000).toFixed(4)}</>
                 )}</div>
                 <div className="text-xs text-gray-500">{String(p.updated_at || '').replace('T',' ').slice(0,19)}</div>
                 <div className="text-xs text-gray-500">{String((p.updated_by ?? '') || '').trim() || '—'}</div>
