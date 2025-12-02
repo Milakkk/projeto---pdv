@@ -174,8 +174,27 @@ export default function ConfiguracoesPage() {
   const [editingPayment, setEditingPayment] = useState<string>('');
   const [comboForm, setComboForm] = useState({ name: '', price: '', includedItemIds: [] as string[] });
 
+  // Estado para cozinhas (para atribuir categorias a cozinhas)
+  const [kitchens, setKitchens] = useState<{ id: string; name: string }[]>([]);
+
+  // Carregar cozinhas do banco de dados
+  useEffect(() => {
+    (async () => {
+      const api = (window as any)?.api;
+      if (!api?.db?.query) return;
+      try {
+        const result = await api.db.query('SELECT * FROM kitchens WHERE is_active = 1 ORDER BY display_order, name');
+        if (result?.rows) {
+          setKitchens(result.rows.map((k: any) => ({ id: k.id, name: k.name })));
+        }
+      } catch (err) {
+        console.error('Erro ao carregar cozinhas:', err);
+      }
+    })();
+  }, []);
+
   // Estados para formulários
-  const [categoryForm, setCategoryForm] = useState({ name: '', icon: 'ri-restaurant-line', integrationCode: '' });
+  const [categoryForm, setCategoryForm] = useState({ name: '', icon: 'ri-restaurant-line', integrationCode: '', kitchenIds: [] as string[] });
   const [iconSearchTerm, setIconSearchTerm] = useState('');
   const [itemForm, setItemForm] = useState({
     name: '',
@@ -203,7 +222,7 @@ export default function ConfiguracoesPage() {
 
 
   const resetForms = () => {
-    setCategoryForm({ name: '', icon: 'ri-restaurant-line', integrationCode: '' });
+    setCategoryForm({ name: '', icon: 'ri-restaurant-line', integrationCode: '', kitchenIds: [] });
     setItemForm({ name: '', price: '', sla: '', categoryId: '', observations: [], requiredModifierGroups: [], image: '', code: '', integrationCode: '', skipKitchen: false, allowPartialDelivery: true, unitDeliveryCount: '' });
     setPaymentForm('');
     setNewObservation('');
@@ -476,23 +495,41 @@ export default function ConfiguracoesPage() {
   };
 
 
-  const handleSaveCategory = () => {
+  const handleSaveCategory = async () => {
     if (!categoryForm.name.trim()) {
       alert('Nome da categoria é obrigatório');
       return;
     }
 
+    const api = (window as any)?.api;
+
     if (editingCategory) {
       setCategories(categories.map(cat => 
         cat.id === editingCategory.id 
-          ? { ...cat, name: categoryForm.name, icon: categoryForm.icon, integrationCode: categoryForm.integrationCode }
+          ? { ...cat, name: categoryForm.name, icon: categoryForm.icon, integrationCode: categoryForm.integrationCode, kitchenIds: categoryForm.kitchenIds.length > 0 ? categoryForm.kitchenIds : undefined }
           : cat
       ));
       productsService.upsertCategory({ id: String(editingCategory.id), name: categoryForm.name }).catch(() => {})
+      // Atualizar category_kitchens no banco (múltiplas cozinhas)
+      if (api?.db?.query) {
+        try {
+          // Remove associações antigas
+          await api.db.query('DELETE FROM category_kitchens WHERE category_id = ?', [editingCategory.id]);
+          // Insere novas associações
+          for (const kitchenId of categoryForm.kitchenIds) {
+            await api.db.query(
+              'INSERT INTO category_kitchens (category_id, kitchen_id, updated_at) VALUES (?, ?, ?)',
+              [editingCategory.id, kitchenId, new Date().toISOString()]
+            );
+          }
+        } catch (err) {
+          console.error('Erro ao atualizar cozinhas da categoria:', err);
+        }
+      }
     } else {
       productsService
         .upsertCategory({ name: categoryForm.name })
-        .then((newId) => {
+        .then(async (newId) => {
           const newCategory: Category = {
             id: String(newId),
             name: categoryForm.name,
@@ -500,8 +537,22 @@ export default function ConfiguracoesPage() {
             order: categories.length + 1,
             active: true,
             integrationCode: categoryForm.integrationCode,
+            kitchenIds: categoryForm.kitchenIds.length > 0 ? categoryForm.kitchenIds : undefined,
           }
           setCategories([...categories, newCategory])
+          // Atualizar category_kitchens no banco
+          if (api?.db?.query && categoryForm.kitchenIds.length > 0) {
+            try {
+              for (const kitchenId of categoryForm.kitchenIds) {
+                await api.db.query(
+                  'INSERT INTO category_kitchens (category_id, kitchen_id, updated_at) VALUES (?, ?, ?)',
+                  [newId, kitchenId, new Date().toISOString()]
+                );
+              }
+            } catch (err) {
+              console.error('Erro ao inserir cozinhas da categoria:', err);
+            }
+          }
         })
         .catch(() => {
           const newCategory: Category = {
@@ -511,6 +562,7 @@ export default function ConfiguracoesPage() {
             order: categories.length + 1,
             active: true,
             integrationCode: categoryForm.integrationCode,
+            kitchenIds: categoryForm.kitchenIds.length > 0 ? categoryForm.kitchenIds : undefined,
           }
           setCategories([...categories, newCategory])
         })
@@ -730,7 +782,15 @@ export default function ConfiguracoesPage() {
 
   const openEditCategory = (category: Category) => {
     setEditingCategory(category);
-    setCategoryForm({ name: category.name, icon: category.icon, integrationCode: category.integrationCode || '' });
+    // Prioriza kitchenIds, mas suporta kitchenId legado
+    const kitchenIds = (category as any).kitchenIds || 
+      ((category as any).kitchenId ? [(category as any).kitchenId] : []);
+    setCategoryForm({ 
+      name: category.name, 
+      icon: category.icon, 
+      integrationCode: category.integrationCode || '',
+      kitchenIds: kitchenIds
+    });
     setShowCategoryModal(true);
   };
 
@@ -1350,6 +1410,15 @@ export default function ConfiguracoesPage() {
                       <i className={`${category.icon} text-xl ${category.active ? 'text-amber-500' : 'text-gray-400'}`}></i>
                       <span className={`font-medium text-gray-900 ${!category.active ? 'line-through text-gray-500' : ''}`}>{category.name}</span>
                       <span className="text-sm text-gray-500">#{category.order}</span>
+                      {/* Mostrar cozinha(s) se atribuída(s) */}
+                      {((category as any).kitchenIds?.length > 0 || (category as any).kitchenId) && (
+                        <span className="text-xs text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <i className="ri-restaurant-line"></i>
+                          {(category as any).kitchenIds?.length > 0 
+                            ? `${(category as any).kitchenIds.length} cozinha(s)`
+                            : kitchens.find(k => k.id === (category as any).kitchenId)?.name || 'Cozinha'}
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center space-x-4">
                       {/* Toggle de Ativação */}
@@ -1947,6 +2016,54 @@ export default function ConfiguracoesPage() {
             onChange={(e) => setCategoryForm({ ...categoryForm, integrationCode: e.target.value })}
             placeholder="Somente números"
           />
+
+          {/* Seleção de Cozinhas (Múltiplas) */}
+          {kitchens.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <i className="ri-restaurant-line mr-1"></i>
+                Cozinhas que preparam esta categoria
+              </label>
+              <div className="border border-gray-300 rounded-lg p-3 max-h-40 overflow-y-auto space-y-2">
+                {kitchens.map(k => (
+                  <label 
+                    key={k.id}
+                    className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors ${
+                      categoryForm.kitchenIds.includes(k.id) 
+                        ? 'bg-amber-50 border border-amber-300' 
+                        : 'hover:bg-gray-50'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={categoryForm.kitchenIds.includes(k.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setCategoryForm({ 
+                            ...categoryForm, 
+                            kitchenIds: [...categoryForm.kitchenIds, k.id] 
+                          });
+                        } else {
+                          setCategoryForm({ 
+                            ...categoryForm, 
+                            kitchenIds: categoryForm.kitchenIds.filter(id => id !== k.id) 
+                          });
+                        }
+                      }}
+                      className="w-4 h-4 text-amber-600 border-gray-300 rounded focus:ring-amber-500"
+                    />
+                    <i className="ri-restaurant-2-line text-orange-500"></i>
+                    <span className="text-sm font-medium text-gray-700">{k.name}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                {categoryForm.kitchenIds.length === 0 
+                  ? '⚪ Nenhuma selecionada = Aparece em todas as cozinhas'
+                  : `🟢 ${categoryForm.kitchenIds.length} cozinha(s) selecionada(s)`}
+              </p>
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">

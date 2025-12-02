@@ -3,6 +3,7 @@ import { Navigate } from 'react-router-dom';
 // Removendo lazy para evitar travas de carregamento
 import LoginPage from '../pages/auth/LoginPage';
 import DashboardPage from '../pages/DashboardPage';
+import ModuleSelectorPage from '../pages/ModuleSelectorPage';
 import NotFoundPage from '../pages/NotFound';
 import SplashPage from '../pages/splash/page';
 import RoleSelectPage from '../pages/role/page';
@@ -17,6 +18,8 @@ import ChecklistPage from '../pages/checklist/page';
 import ProcedimentosPage from '../pages/procedimentos/page';
 import RHPage from '../pages/rh/page';
 import RHConfigPage from '../pages/rh/ConfigPage';
+import ClientePdvPage from '../pages/cliente-pdv/page';
+import AdmPage from '../pages/adm/page';
 // Dev pages para fallback
 import ProtectedRoute from '../components/auth/ProtectedRoute';
 const isExternalPreview = (typeof __IS_PREVIEW__ !== 'undefined' && __IS_PREVIEW__ === true)
@@ -29,7 +32,7 @@ const routes: RouteObject[] = [
   // Normaliza carregamento via file://index.html no Electron
   {
     path: '/index.html',
-    element: <Navigate to="/login" replace />
+    element: <Navigate to="/module-selector" replace />
   },
   {
     path: '/splash',
@@ -37,12 +40,22 @@ const routes: RouteObject[] = [
   },
   {
     path: '/role',
-    element: <RoleSelectPage />
+    element: <Navigate to="/module-selector" replace />
   },
   // Rota de Login
   {
     path: '/login',
     element: <LoginPage />
+  },
+  // Nova tela de seleção de módulos (página inicial)
+  {
+    path: '/module-selector',
+    element: <ModuleSelectorPage />
+  },
+  // PDV Cliente (sem navegação, tela limpa)
+  {
+    path: '/cliente-pdv',
+    element: <ClientePdvPage />
   },
   
   // Rotas Protegidas (Requer autenticação)
@@ -50,14 +63,20 @@ const routes: RouteObject[] = [
     path: '/',
     element: <ProtectedRoute />,
     children: [
-      // Rota Raiz -> Dashboard
+      // Rota Raiz -> Seleção de Módulos
       {
         index: true,
-        element: <DashboardPage />
+        element: <ModuleSelectorPage />
       },
       {
         path: 'dashboard',
-        element: <DashboardPage />
+        element: <Navigate to="/module-selector" replace />
+      },
+      
+      // Módulo ADM (Administração)
+      {
+        path: 'adm',
+        element: <AdmPage />
       },
       
       // Módulo Master (Permissão MASTER)
@@ -189,11 +208,13 @@ const routes: RouteObject[] = [
 
 export default routes;
 export const routesDev: RouteObject[] = [
-  { path: '/', element: <Navigate to="/role" replace /> },
+  { path: '/', element: <Navigate to="/module-selector" replace /> },
   { path: '/splash', element: <SplashPage /> },
-  { path: '/role', element: <RoleSelectPage /> },
+  { path: '/role', element: <Navigate to="/module-selector" replace /> },
+  { path: '/module-selector', element: <ModuleSelectorPage /> },
   { path: '/caixa', element: <CaixaPage /> },
   { path: '/cozinha', element: <CozinhaPage /> },
+  { path: '/cliente-pdv', element: <ClientePdvPage /> },
   { path: '*', element: <NotFoundPage /> },
 ]
 import EstoqueFichasPage from '../pages/estoque/FichasPage'

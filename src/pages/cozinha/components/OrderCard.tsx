@@ -338,304 +338,145 @@ function OrderCardComponent({
   const hasObservations = kitchenItems.some(item => item.observations);
   const isOrderReadyForNextStepStatus = isOrderReadyForNextStep;
 
+  // Estilos CSS rígidos para card ultra-compacto
+  const cardStyle: React.CSSProperties = {
+    overflow: 'hidden',
+    width: '100%',
+    maxWidth: '100%',
+    boxSizing: 'border-box',
+    backgroundColor: 'white',
+    borderRadius: '3px',
+    border: `1px solid ${isCurrentlyOverdue ? '#f87171' : '#d1d5db'}`,
+    fontSize: '9px',
+  };
+
+  const headerStyle: React.CSSProperties = {
+    padding: '2px 3px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '2px',
+    overflow: 'hidden',
+    backgroundColor: isCurrentlyOverdue ? '#fee2e2' : '#f3f4f6',
+    cursor: 'pointer',
+  };
+
+  const itemStyle = (isReady: boolean, isNew: boolean, assigned: boolean): React.CSSProperties => ({
+    borderRadius: '2px',
+    overflow: 'hidden',
+    backgroundColor: isNew 
+      ? (assigned ? '#3b82f6' : '#9ca3af')
+      : (isReady ? '#22c55e' : '#f59e0b'),
+    color: 'white',
+  });
+
   return (
     <>
-      <div className={`bg-white rounded-lg border-2 p-4 shadow-sm transition-all ${
-        isCurrentlyOverdue && (order.status === 'NEW' || order.status === 'PREPARING')
-          ? 'border-red-500 bg-red-50 shadow-lg ring-2 ring-red-200 animate-pulse' 
-          : 'border-gray-200'
-      }`}>
-        <div 
-          className="cursor-pointer pb-3" 
-          onClick={() => setIsCollapsed(prev => !prev)}
-        >
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center space-x-3 min-w-0">
-              <span className="text-xs font-medium text-gray-600">#{order.pin}</span>
-              <span className="bg-blue-500 text-white text-lg font-bold px-3 py-1 rounded-lg flex-shrink-0">
-                {order.password}
-              </span>
-              {assignedOperators.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  {assignedOperators.map(opName => (
-                    <span key={opName} className="text-xs font-medium bg-amber-300 text-amber-900 px-2 py-0.5 rounded-full">
-                      <i className="ri-user-line mr-1"></i>
-                      {opName}
-                    </span>
-                  ))}
-                </div>
-              )}
-              {order.customerWhatsApp && (
-                <span className="text-green-600 text-sm hidden sm:inline truncate">
-                  <i className="ri-whatsapp-line mr-1"></i>
-                  {order.customerWhatsApp}
-                </span>
-              )}
-            </div>
-            <i className={`ri-arrow-${isCollapsed ? 'down' : 'up'}-s-line text-xl text-gray-500 flex-shrink-0`}></i>
-          </div>
+      <div style={cardStyle}>
+        {/* Header: #PIN SENHA OP ▼ */}
+        <div style={headerStyle} onClick={() => setIsCollapsed(prev => !prev)}>
+          <span style={{ fontWeight: 'bold', color: '#374151' }}>#{order.pin}</span>
+          <span style={{ backgroundColor: '#2563eb', color: 'white', fontWeight: 'bold', padding: '0 2px', borderRadius: '2px' }}>{order.password}</span>
+          {assignedOperators.length > 0 && (
+            <span style={{ color: '#b45309', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '25px' }}>{assignedOperators[0]}</span>
+          )}
+          <span style={{ marginLeft: 'auto', color: '#9ca3af' }}>{isCollapsed ? '▼' : '▲'}</span>
+        </div>
 
-          <div className="flex items-center justify-between text-sm">
-            <div className="flex items-center space-x-3">
-              <div className="flex items-center space-x-1">
-                <i className="ri-time-line text-gray-500"></i>
-                <span className={`font-bold ${isCurrentlyOverdue ? 'text-red-600' : 'text-blue-600'}`}>
-                  {timeToDisplay}
-                </span>
-              </div>
-              <div className="text-gray-500">
-                SLA: {formatTimeDisplay(order.slaMinutes)}
-              </div>
-              {directItems.length > 0 && (
-                <button
-                  type="button"
-                  onClick={(ev) => {
-                    ev.stopPropagation();
-                    setShowDirectDeliveryModal(true);
-                  }}
-                  className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-700 border border-purple-200 hover:bg-purple-200 hover:text-purple-800"
-                  title={'Ver Entrega Direta'}
-                >
-                  <i className="ri-truck-line mr-1"></i>
-                  {`Entrega Direta (${directItems.length})`}
-                </button>
-              )}
-            </div>
-            {(order.status === 'NEW' || order.status === 'PREPARING' || order.status === 'READY') && (
-              <span className={`text-white text-xs font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${
-                isCurrentlyOverdue ? 'bg-red-500' : 'bg-green-500'
-              }`}>
-                {isCurrentlyOverdue ? 'ATRASADO' : 'NO PRAZO'}
-              </span >
-            )}
-          </div>
+        {/* Timer: 00:05 [OK] */}
+        <div style={{ padding: '1px 3px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #e5e7eb' }}>
+          <span style={{ fontWeight: 'bold', color: isCurrentlyOverdue ? '#dc2626' : '#2563eb' }}>{timeToDisplay}</span>
+          <span style={{ backgroundColor: isCurrentlyOverdue ? '#dc2626' : '#22c55e', color: 'white', fontWeight: 'bold', padding: '0 2px', borderRadius: '2px' }}>
+            {isCurrentlyOverdue ? '!' : '✓'}
+          </span>
         </div>
         
+        {/* Conteúdo expandido */}
         {!isCollapsed && (
-          <div className="pt-3 border-t border-gray-200">
+          <div style={{ padding: '2px 3px', borderTop: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            {/* Operadores (apenas para NEW) */}
             {operators.length > 0 && !isOperatorAssignmentDisabled && (
-              <div className="mb-4">
-                <label className="text-xs font-medium text-gray-600 block mb-2">Atribuir a todas as unidades</label>
-                <div className="flex flex-wrap gap-2">
-                  {operators.map(op => (
-                    <Button
-                      key={op.id}
-                      size="sm"
-                      variant={allUnitsOperator === op.name ? 'primary' : 'secondary'}
-                      className={`text-xs px-2 py-1 ${
-                        allUnitsOperator === op.name 
-                          ? '!bg-amber-500 !text-white !font-semibold hover:!bg-amber-600'
-                          : ''
-                      }`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const newOperatorName = allUnitsOperator === op.name ? '' : op.name;
-                        onAssignOperatorToAll(order.id, newOperatorName);
-                      }}
-                    >
-                      {op.name}
-                    </Button>
-                  ))}
-                </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1px', marginBottom: '2px' }}>
+                {operators.map(op => (
+                  <button
+                    key={op.id}
+                    type="button"
+                    style={{ 
+                      fontSize: '8px', 
+                      padding: '0 3px', 
+                      borderRadius: '2px', 
+                      border: 'none', 
+                      cursor: 'pointer',
+                      backgroundColor: allUnitsOperator === op.name ? '#f59e0b' : '#e5e7eb',
+                      color: allUnitsOperator === op.name ? 'white' : '#4b5563',
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onAssignOperatorToAll(order.id, allUnitsOperator === op.name ? '' : op.name);
+                    }}
+                  >
+                    {op.name}
+                  </button>
+                ))}
               </div>
             )}
 
-            <div className="space-y-3 mb-4">
+            {/* Itens */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
               {kitchenItems.map((item) => {
-                const categoryName = categoryMap[item.menuItem.categoryId] || 'Sem Categoria';
                 const isSingleUnit = item.quantity === 1;
-                const isItemExpanded = expandedItemsRef.current[item.id]; // Usar o estado real de expansão
+                const isItemExpanded = expandedItemsRef.current[item.id];
                 const totalUnits = item.productionUnits.length;
                 const readyUnits = item.productionUnits.filter(unit => unit.unitStatus === 'READY').length;
                 const pendingUnits = totalUnits - readyUnits;
                 const isItemReady = pendingUnits === 0;
                 const assignedUnits = item.productionUnits.filter(unit => !!unit.operatorName).length;
-                const assignedPendingUnits = totalUnits - assignedUnits;
-                const requiredOptions = extractRequiredOptions(item.observations);
-                const optionalObservations = extractOptionalObservations(item.observations);
-                const hasObservationsItem = requiredOptions.length > 0 || optionalObservations.length > 0;
                 const allChecklistItems = getAllChecklistItems(item.observations);
                 
-              return (
-                <div key={item.id} className={`border-l-4 pl-3 p-2 rounded-r-lg transition-colors border-amber-400`}>
-                  <div 
-                    className={`font-medium flex items-center justify-between cursor-pointer p-2 rounded-lg border transition-colors text-white ${
-                      order.status === 'NEW' 
-                        ? (assignedUnits === totalUnits ? 'bg-blue-500 hover:bg-blue-600 border-blue-500' : 'bg-gray-500 hover:bg-gray-600 border-gray-500')
-                        : (isItemReady ? 'bg-green-500 hover:bg-green-600 border-green-500' : 'bg-amber-500 hover:bg-amber-600 border-amber-500')
-                    }`}
-                    onClick={() => toggleItemCollapse(item.id)} // Corrigido para expandir/recolher o item
-                  >
-                    <div className="flex-1 min-w-0 pr-2 flex items-center">
-                      <span className="mx-1 text-amber-100 text-xs font-normal">[{categoryName}]</span>
-                      <span className="text-sm">{item.menuItem.name}</span>
-                      <span className="text-xs text-amber-100 ml-2">({item.quantity} {item.quantity === 1 ? 'unid.' : 'unid.'})</span>
-                      {/* Ícone de entrega direta por item removido conforme solicitação */}
-                      {order.status === 'NEW' ? (
-                        assignedUnits === totalUnits ? (
-                          <i className="ri-user-check-line text-white ml-3 text-base" title="Todas as unidades atribuídas"></i>
-                        ) : (
-                          <span className="text-xs font-bold bg-white text-gray-600 px-2 py-0.5 rounded-full ml-3 flex-shrink-0">
-                            {assignedPendingUnits} PENDENTE{assignedPendingUnits > 1 ? 'S' : ''}
-                          </span>
-                        )
-                      ) : (
-                        isItemReady ? (
-                          <i className="ri-check-double-line text-white ml-3 text-base" title="Todas as unidades prontas"></i>
-                        ) : (
-                          <span className="text-xs font-bold bg-white text-amber-600 px-2 py-0.5 rounded-full ml-3 flex-shrink-0">
-                            {pendingUnits} PENDENTE{pendingUnits > 1 ? 'S' : ''}
-                          </span>
-                        )
+                return (
+                  <div key={item.id} style={itemStyle(isItemReady, order.status === 'NEW', assignedUnits === totalUnits)}>
+                    <div 
+                      style={{ display: 'flex', alignItems: 'center', padding: '1px 3px', cursor: 'pointer', overflow: 'hidden' }}
+                      onClick={() => toggleItemCollapse(item.id)}
+                    >
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{item.menuItem.name}</span>
+                      <span style={{ flexShrink: 0, marginLeft: '2px' }}>x{item.quantity}</span>
+                      {!isItemReady && order.status !== 'NEW' && (
+                        <span style={{ backgroundColor: 'white', color: '#d97706', padding: '0 2px', borderRadius: '2px', marginLeft: '2px', flexShrink: 0 }}>{pendingUnits}P</span>
                       )}
-                      {!isItemExpanded && hasObservationsItem && (
-                        <i className="ri-alert-line text-white ml-2 text-base"></i>
-                      )}
+                      <span style={{ marginLeft: '2px', flexShrink: 0 }}>{isItemExpanded ? '▲' : '▼'}</span>
                     </div>
-                    <i className={`ri-arrow-${isItemExpanded ? 'up' : 'down'}-s-line text-xl text-white flex-shrink-0`}></i> {/* Seta dinâmica */}
-                  </div>
-                    
-                    {isItemExpanded && requiredOptions.length > 0 && (
-                      <div className="mt-2 bg-red-100 border border-red-300 rounded-lg p-3">
-                        <div className="flex items-start space-x-2">
-                          <i className="ri-checkbox-circle-line text-red-600 mt-0.5 flex-shrink-0"></i>
-                          <div className="flex-1">
-                            <div className="text-xs font-semibold text-red-800 uppercase tracking-wide mb-1">
-                              OPÇÕES:
-                            </div>
-                            <div className="text-sm font-medium text-red-900 leading-relaxed">
-                              {requiredOptions.map((obs, obsIndex) => (
-                                <div key={obsIndex} className="mb-1 last:mb-0">
-                                  • {obs}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                    
-                    {isItemExpanded && optionalObservations.length > 0 && (
-                      <div className="mt-2 bg-yellow-100 border border-yellow-300 rounded-lg p-3">
-                        <div className="flex items-start space-x-2">
-                          <i className="ri-alert-line text-yellow-600 mt-0.5 flex-shrink-0"></i>
-                          <div className="flex-1">
-                            <div className="text-xs font-semibold text-yellow-800 uppercase tracking-wide mb-1">
-                              OBSERVAÇÕES:
-                            </div>
-                            <div className="text-sm font-medium text-yellow-900 leading-relaxed">
-                              {optionalObservations.map((obs, obsIndex) => (
-                                <div key={obsIndex} className="mb-1 last:mb-0">
-                                  • {obs}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                    
+                      
                     {isItemExpanded && (
-                      <div className="mt-3 space-y-2 border-t pt-3">
-                        {!isSingleUnit && <h5 className="text-xs font-medium text-gray-700 mb-2">Rastreamento por Unidade:</h5>}
+                      <div style={{ backgroundColor: 'white', padding: '1px 3px' }}>
                         {(item.productionUnits || []).map((unit, unitIndex) => {
                           const isUnitReady = unit.unitStatus === 'READY';
-                          const unitOperator = unit.operatorName;
                           const allChecklistItemsUnit = getAllChecklistItems(item.observations);
                           const allChecklistCompleted = allChecklistItemsUnit.length === 0 || 
                             (unit.completedObservations && unit.completedObservations.length === allChecklistItemsUnit.length);
                           const disableReadyButton = !isUnitReady && allChecklistItemsUnit.length > 0 && !allChecklistCompleted;
 
                           return (
-                            <div key={unit.unitId} className={`p-2 rounded-lg border transition-colors ${isUnitReady ? 'bg-green-100 border-green-300' : 'bg-gray-50 border-gray-200'}`}>
-                              <div className="flex items-center justify-between">
-                                <span className="text-sm font-medium text-gray-700">
-                                  Unidade {isSingleUnit ? 'Única' : unitIndex + 1}: 
-                                  <span className={`ml-1 font-bold ${isUnitReady ? 'text-green-700' : 'text-gray-700'}`}>
-                                    {isUnitReady ? 'Pronto' : 'Pendente'}
-                                  </span>
-                                </span>
-                                {showUnitReadyButton && (
-                                  <Button
-                                    size="sm"
-                                    variant={isUnitReady ? 'success' : 'secondary'}
-                                    onClick={(e) => handleUnitReadyToggle(e, item.id, unit.unitId, !isUnitReady)}
-                                    className={`!text-xs !px-2 !py-1 ml-2 flex-shrink-0 ${isUnitReady ? '' : 'bg-green-50 text-green-600 hover:bg-green-100'}`}
-                                    title={isUnitReady ? 'Marcar como Pendente' : 'Marcar como Pronto'}
-                                    disabled={disableReadyButton}
-                                  >
-                                    <i className={`mr-1 ${isUnitReady ? 'ri-check-line' : 'ri-check-line'}`}></i>
-                                    {isUnitReady ? 'Pronto' : 'Pronto'}
-                                  </Button>
-                                )}
-                              </div>
-                              
-                              {allChecklistItemsUnit.length > 0 && (
-                                <div className="mt-3 pt-2 border-t border-gray-200 space-y-1">
-                                  <h6 className="text-xs font-medium text-gray-700 mb-2">Checklist de Conferência:</h6>
-                                  {allChecklistItemsUnit.map((obs, obsIndex) => {
-                                    const isChecked = unit.completedObservations?.includes(obs.label) || false;
-                                    return (
-                                      <label key={obsIndex} className="flex items-center space-x-2 text-xs text-gray-700 cursor-pointer">
-                                        <input
-                                          type="checkbox"
-                                          checked={isChecked}
-                                          onChange={(e) => handleObservationToggle(e, item.id, unit.unitId, obs.label, !isChecked)}
-                                          className={`rounded border-gray-300 text-amber-600 focus:ring-amber-500 ${obs.isRequired ? 'border-red-500' : ''}`}
-                                          disabled={isChecklistDisabled}
-                                        />
-                                        <span className={`${obs.isRequired ? 'font-bold text-red-700' : 'text-gray-700'}`}>
-                                          {obs.label}
-                                        </span>
-                                      </label>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                              
-                              <div className="mt-2 flex items-center space-x-2">
-                                <i className="ri-user-line text-gray-500 flex-shrink-0"></i>
-                                {isOperatorAssignmentDisabled ? (
-                                  unitOperator ? (
-                                    <span className="text-sm font-medium text-blue-700 bg-blue-100 px-2 py-1 rounded">
-                                      {unitOperator}
-                                    </span>
-                                  ) : (
-                                    <span className="text-sm text-gray-500">Não Atribuído</span>
-                                  )
-                                ) : (
-                                  operators.length > 0 ? (
-                                    <div className="flex flex-wrap gap-1 min-w-0">
-                                      {operators.map(op => (
-                                        <button
-                                          key={op.id}
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            if (order.status !== 'NEW') return;
-                                            const newOperatorName = unitOperator === op.name ? '' : op.name;
-                                            onAssignOperator(order.id, item.id, unit.unitId, newOperatorName);
-                                          }}
-                                          className={`px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap pointer-events-auto ${
-                                            unitOperator === op.name
-                                              ? 'bg-amber-300 !text-amber-900 !font-semibold hover:!bg-amber-400'
-                                              : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                                          }`}
-                                        >
-                                          {op.name}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  ) : (
-                                    <span className="text-xs text-gray-500">Nenhum operador</span>
-                                  )
-                                )}
-                              </div>
-                              
-                              {unit.completedAt && (
-                                <div className="mt-2 text-xs text-green-700 font-medium">
-                                  Concluído às: {new Date(unit.completedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                                </div>
+                            <div key={unit.unitId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1px 0' }}>
+                              <span style={{ color: isUnitReady ? '#16a34a' : '#6b7280' }}>
+                                {isSingleUnit ? 'Un' : `#${unitIndex + 1}`} {isUnitReady ? '✓' : '○'}
+                              </span>
+                              {showUnitReadyButton && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleUnitReadyToggle(e, item.id, unit.unitId, !isUnitReady)}
+                                  style={{ 
+                                    padding: '0 3px', 
+                                    borderRadius: '2px', 
+                                    border: 'none', 
+                                    cursor: disableReadyButton ? 'not-allowed' : 'pointer',
+                                    backgroundColor: isUnitReady ? '#22c55e' : '#dcfce7',
+                                    color: isUnitReady ? 'white' : '#15803d',
+                                    opacity: disableReadyButton ? 0.5 : 1,
+                                  }}
+                                  disabled={disableReadyButton}
+                                >
+                                  ✓
+                                </button>
                               )}
                             </div>
                           );
@@ -645,97 +486,72 @@ function OrderCardComponent({
                   </div>
                 );
               })}
-
-              {/* Removido: botão de toggle e lista informativa de entrega direta */}
             </div>
-
           </div>
         )}
 
-        {/* Modal informativo de itens de entrega direta (sempre renderizado, independente do colapso) */}
-        <Modal
-          isOpen={showDirectDeliveryModal}
-          onClose={() => setShowDirectDeliveryModal(false)}
-          title="Itens de Entrega Direta"
-          size="md"
-          overlayClassName="bg-transparent"
-        >
-          <div className="space-y-4">
-            <div className="space-y-2">
-              {directItems.map(di => (
-                <div key={di.id} className="flex items-center text-sm text-gray-800">
-                  <i className="ri-truck-line text-purple-600 mr-2"></i>
-                  {di.quantity}x {di.menuItem.name}
-                </div>
-              ))}
-            </div>
-            <div className="pt-2">
-              <Button variant="secondary" onClick={() => setShowDirectDeliveryModal(false)} className="w-full">Fechar</Button>
-            </div>
-          </div>
-        </Modal>
-
-        {(isActiveOrder || order.status === 'CANCELLED' || order.status === 'DELIVERED') ? (
-          <div className={`space-y-2 pt-4 border-t border-gray-200`}>
-            {order.status === 'CANCELLED' ? (
-              <div className="text-center">
-                <p className="text-sm text-red-600 font-medium">Cancelado</p>
-                {order.cancelReason && (
-                  <p className="text-xs text-red-500 mt-1">{order.cancelReason}</p>
-                )}
-              </div>
-            ) : order.status === 'DELIVERED' ? (
-              <div className="space-y-2">
-                <div className="text-center">
-                  <p className="text-sm text-green-600 font-medium">Entregue</p>
-                </div>
-                {showPreviousButton && (
-                  <Button
-                    variant="secondary"
-                    onClick={(e) => { e.stopPropagation(); onUpdateStatus(order.id, getPreviousStatus(order.status)!); }}
-                    className="w-full"
-                    size="sm"
-                  >
-                    Voltar
-                  </Button>
-                )}
-              </div>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {nextStatusAction && (
-                  <Button
-                    onClick={handleMainAction}
-                    className="flex-1 min-w-[45%]"
-                    size="sm"
-                    variant={getActionVariant(order.status)}
-                    disabled={(order.status === 'NEW' && (operators.length === 0 || !allUnitsAssignedStatus)) || (order.status === 'PREPARING' && !isOrderReadyForNextStepStatus)} 
-                  >
-                    {nextStatusAction}
-                  </Button>
-                )}
-                {showPreviousButton && (
-                  <Button
-                    variant="secondary"
-                    onClick={(e) => { e.stopPropagation(); onUpdateStatus(order.id, getPreviousStatus(order.status)!); }}
-                    className="flex-1 min-w-[45%]"
-                    size="sm"
-                  >
-                    {getPreviousStatusAction(order.status)}
-                  </Button>
-                )}
-                <Button
-                  variant="secondary"
-                  onClick={(e) => { e.stopPropagation(); setShowCancelModal(true); }}
-                  className="flex-1 min-w-[45%] bg-red-50 text-red-600 hover:bg-red-100"
-                  size="sm"
-                >
-                  Cancelar
-                </Button>
-              </div>
+        {/* Botões de ação */}
+        {isActiveOrder && order.status !== 'CANCELLED' && order.status !== 'DELIVERED' && (
+          <div style={{ display: 'flex', gap: '2px', padding: '2px 3px', borderTop: '1px solid #e5e7eb' }}>
+            {nextStatusAction && (
+              <button
+                type="button"
+                onClick={handleMainAction}
+                style={{ 
+                  flex: 1, 
+                  padding: '2px 0', 
+                  borderRadius: '2px', 
+                  border: 'none', 
+                  cursor: 'pointer',
+                  backgroundColor: order.status === 'PREPARING' ? '#22c55e' : '#3b82f6',
+                  color: 'white',
+                  fontWeight: 'bold',
+                  opacity: ((order.status === 'NEW' && (operators.length === 0 || !allUnitsAssignedStatus)) || (order.status === 'PREPARING' && !isOrderReadyForNextStepStatus)) ? 0.4 : 1,
+                }}
+                disabled={(order.status === 'NEW' && (operators.length === 0 || !allUnitsAssignedStatus)) || (order.status === 'PREPARING' && !isOrderReadyForNextStepStatus)} 
+              >
+                ✓ Pronto
+              </button>
             )}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setShowCancelModal(true); }}
+              style={{ 
+                flex: 1, 
+                padding: '2px 0', 
+                borderRadius: '2px', 
+                border: 'none', 
+                cursor: 'pointer',
+                backgroundColor: '#fee2e2',
+                color: '#dc2626',
+                fontWeight: 'bold',
+              }}
+            >
+              ✕
+            </button>
           </div>
-        ) : null}
+        )}
       </div>
+
+      {/* Modal de entrega direta */}
+      <Modal
+        isOpen={showDirectDeliveryModal}
+        onClose={() => setShowDirectDeliveryModal(false)}
+        title="Itens de Entrega Direta"
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="space-y-2">
+            {directItems.map(di => (
+              <div key={di.id} className="flex items-center text-sm text-gray-800">
+                <i className="ri-truck-line text-purple-600 mr-2"></i>
+                {di.quantity}x {di.menuItem.name}
+              </div>
+            ))}
+          </div>
+          <Button variant="secondary" onClick={() => setShowDirectDeliveryModal(false)} className="w-full">Fechar</Button>
+        </div>
+      </Modal>
 
       <Modal
         isOpen={showCancelModal}

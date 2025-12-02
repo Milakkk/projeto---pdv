@@ -65,6 +65,7 @@ function openWindowWithPartition(partitionId, initialRoute) {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
+    show: true, // Garantir que a janela seja mostrada
     webPreferences: {
       preload: path.join(__dirname, 'preload/index.cjs'),
       contextIsolation: true,
@@ -74,6 +75,11 @@ function openWindowWithPartition(partitionId, initialRoute) {
   })
   const targetPath = typeof initialRoute === 'string' ? initialRoute : '/'
   console.log(`[launcher] ${targetPath === '/cozinha' ? 'KDS' : targetPath === '/caixa' ? 'PDV' : 'APP'} -> partition=${partition}, url: ${DEV_URL}#${targetPath}`)
+  
+  // Garantir que a janela seja mostrada e focada
+  win.show()
+  win.focus()
+  
   win.webContents.on('did-finish-load', () => {
     if (IS_DEV) win.webContents.openDevTools({ mode: 'detach' })
     console.log('[renderer] loaded:', win.webContents.getURL())
@@ -84,14 +90,22 @@ function openWindowWithPartition(partitionId, initialRoute) {
   return win
 }
 
-// Abre janela PDV com sessão persistente própria e rota /caixa
-export function openPdvWindow() {
-  return openWindowWithPartition('persist:pdv', '/caixa')
+// PARTIÇÃO ÚNICA para todas as janelas (sincroniza localStorage)
+const SHARED_PARTITION = 'persist:app'
+
+// Abre janela principal na tela de seleção de módulos
+export function openMainWindow() {
+  return openWindowWithPartition(SHARED_PARTITION, '/module-selector')
 }
 
-// Abre janela KDS com sessão persistente própria e rota /cozinha
+// Abre janela PDV com sessão persistente compartilhada e rota /caixa
+export function openPdvWindow() {
+  return openWindowWithPartition(SHARED_PARTITION, '/caixa')
+}
+
+// Abre janela KDS com sessão persistente compartilhada e rota /cozinha
 export function openKdsWindow() {
-  return openWindowWithPartition('persist:kds', '/cozinha')
+  return openWindowWithPartition(SHARED_PARTITION, '/cozinha')
 }
 
 // Abre uma nova janela por módulo, usando partições adequadas quando aplicável
@@ -171,7 +185,7 @@ app.whenReady().then(async () => {
       }
     } catch {}
     const storages = ['appcache','cookies','filesystem','indexdb','localstorage','serviceworkers','shadercache','websql']
-    const parts = ['persist:pdv','persist:kds','persist:default']
+    const parts = ['persist:app','persist:pdv','persist:kds','persist:default']
     for (const part of parts) {
       try { await session.fromPartition(part).clearStorageData({ storages }) } catch {}
     }
@@ -207,15 +221,24 @@ app.whenReady().then(async () => {
     return ''
   })()
   const target = String(process.env.ELECTRON_WINDOW || process.env.LAUNCH_TARGET || argvTarget).trim().toLowerCase()
-  if (target === 'pdv') {
-    openPdvWindow()
-  } else if (target === 'kds') {
-    openKdsWindow()
+  console.log(`[main] Target recebido: "${target}"`)
+  
+  // Abrir janela baseado no target (todas usam a mesma partição compartilhada)
+  if (target === 'pdv' || target === 'caixa') {
+    openWindowWithPartition(SHARED_PARTITION, '/module-selector')
+    console.log(`[main] Janela PDV aberta (seleção de módulos)`)
+  } else if (target === 'kds' || target === 'cozinha') {
+    openWindowWithPartition(SHARED_PARTITION, '/module-selector')
+    console.log(`[main] Janela KDS aberta (seleção de módulos)`)
   } else if (target === 'both') {
-    openPdvWindow()
-    openKdsWindow()
+    // Abre 2 janelas na tela de seleção de módulos (mesma partição = dados sincronizados)
+    openWindowWithPartition(SHARED_PARTITION, '/module-selector')
+    setTimeout(() => openWindowWithPartition(SHARED_PARTITION, '/module-selector'), 500)
+    console.log(`[main] Abrindo 2 janelas (ambas em seleção de módulos, dados sincronizados)`)
   } else {
-    createWindow()
+    // Por padrão, abre a tela de seleção de módulos (5 opções)
+    openMainWindow()
+    console.log(`[main] Janela principal com seleção de módulos aberta`)
   }
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

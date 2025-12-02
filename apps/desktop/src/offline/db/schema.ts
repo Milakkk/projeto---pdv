@@ -55,6 +55,29 @@ export const deviceProfile = sqliteTable(
   (t) => ({ uxDevice: uniqueIndex("ux_device_profile_device").on(t.deviceId) }),
 );
 
+// Cozinhas (múltiplas cozinhas por loja)
+export const kitchens = sqliteTable(
+  "kitchens",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    unitId: text("unit_id").references(() => units.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    displayOrder: integer("display_order").default(0),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    version: integer("version").notNull().default(1),
+    pendingSync: integer("pending_sync", { mode: "boolean" })
+      .notNull()
+      .default(false),
+  },
+  (t) => ({
+    unitNameIdx: uniqueIndex("ux_kitchens_unit_name").on(t.unitId, t.name),
+  }),
+);
+
 // Catálogo
 export const categories = sqliteTable(
   "categories",
@@ -62,6 +85,10 @@ export const categories = sqliteTable(
     id: text("id").primaryKey(), // UUID
     name: text("name").notNull(),
     unitId: text("unit_id").references(() => units.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    kitchenId: text("kitchen_id").references(() => kitchens.id, {
       onDelete: "set null",
       onUpdate: "cascade",
     }),
@@ -209,6 +236,54 @@ export const kdsTickets = sqliteTable(
   }),
 );
 
+// Tempos das fases dos pedidos (não altera a tabela orders)
+export const kdsPhaseTimes = sqliteTable("kds_phase_times", {
+  orderId: text("order_id")
+    .primaryKey()
+    .references(() => orders.id, { onDelete: "cascade" }),
+  newStart: text("new_start"),
+  preparingStart: text("preparing_start"),
+  readyAt: text("ready_at"),
+  deliveredAt: text("delivered_at"),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+// Estados das unidades de produção
+export const kdsUnitStates = sqliteTable(
+  "kds_unit_states",
+  {
+    id: text("id").primaryKey(),
+    orderId: text("order_id")
+      .notNull()
+      .references(() => orders.id, { onDelete: "cascade" }),
+    itemId: text("item_id").notNull(),
+    unitId: text("unit_id").notNull(),
+    operatorName: text("operator_name"),
+    unitStatus: text("unit_status"),
+    completedObservationsJson: text("completed_observations_json"),
+    completedAt: text("completed_at"),
+    deliveredAt: text("delivered_at"),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    version: integer("version").notNull().default(1),
+    pendingSync: integer("pending_sync", { mode: "boolean" })
+      .notNull()
+      .default(false),
+  },
+  (t) => ({
+    uniqueKey: uniqueIndex("ux_kds_unit_key").on(t.orderId, t.itemId, t.unitId),
+  }),
+);
+
+// Detalhes adicionais dos pedidos (pin, password)
+export const ordersDetails = sqliteTable("orders_details", {
+  orderId: text("order_id")
+    .primaryKey()
+    .references(() => orders.id, { onDelete: "cascade" }),
+  pin: text("pin"),
+  password: text("password"),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
 // Caixa
 export const cashSessions = sqliteTable("cash_sessions", {
   id: text("id").primaryKey(),
@@ -329,6 +404,9 @@ export type OrderRow = typeof orders.$inferSelect;
 export type OrderItemRow = typeof orderItems.$inferSelect;
 export type PaymentRow = typeof payments.$inferSelect;
 export type KDSTicketRow = typeof kdsTickets.$inferSelect;
+export type KDSPhaseTimesRow = typeof kdsPhaseTimes.$inferSelect;
+export type KDSUnitStatesRow = typeof kdsUnitStates.$inferSelect;
+export type OrdersDetailsRow = typeof ordersDetails.$inferSelect;
 export type CashSessionRow = typeof cashSessions.$inferSelect;
 export type CashMovementRow = typeof cashMovements.$inferSelect;
 export type SavedCartRow = typeof savedCarts.$inferSelect;
@@ -338,17 +416,22 @@ export type CounterRow = typeof counters.$inferSelect;
 export type UnitRow = typeof units.$inferSelect;
 export type StationRow = typeof stations.$inferSelect;
 export type DeviceProfileRow = typeof deviceProfile.$inferSelect;
+export type KitchenRow = typeof kitchens.$inferSelect;
 
 export const ALL_TABLES = {
   units,
   stations,
   deviceProfile,
+  kitchens,
   categories,
   products,
   orders,
   orderItems,
   payments,
   kdsTickets,
+  kdsPhaseTimes,
+  kdsUnitStates,
+  ordersDetails,
   cashSessions,
   cashMovements,
   savedCarts,

@@ -18,15 +18,15 @@ export default function ProtectedRoute({ requiredPermission, isModuleRoute = fal
   }
 
   if (requiredPermission && !hasPermission(requiredPermission)) {
-    // Se não tiver a permissão necessária, redireciona para o dashboard
-    return <Navigate to="/dashboard" replace />;
+    // Se não tiver a permissão necessária, redireciona para seleção de módulos
+    return <Navigate to="/module-selector" replace />;
   }
 
   if (allowedRoles && allowedRoles.length) {
     const currentRoleName = role?.name ?? ''
     if (!allowedRoles.includes(currentRoleName)) {
       // RBAC: função atual não está na lista permitida
-      return <Navigate to="/dashboard" replace />
+      return <Navigate to="/module-selector" replace />
     }
   }
 

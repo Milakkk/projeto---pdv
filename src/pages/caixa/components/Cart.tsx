@@ -25,6 +25,9 @@ interface CartProps {
   onSaveOrders: (updater: (prevOrders: Order[]) => Order[]) => void; // Novo prop para setOrders
   operationalSession: OperationalSession | null; // NOVO PROP: Recebe o objeto completo
   onSetCashMovements: (updater: (prev: CashMovementType[]) => CashMovementType[]) => void; // NOVO PROP
+  categories: Category[]; // NOVO: Para validação de cozinha
+  onlineKitchenIds: string[]; // NOVO: IDs das cozinhas online
+  isKitchenOnline: (kitchenId: string) => boolean; // NOVO: Função para verificar se cozinha está online
 }
 
 // Definindo o tipo mínimo para a sessão de caixa ativa (lido via useLocalStorage no CaixaPage)
@@ -86,7 +89,7 @@ const parseObservations = (observationsString: string | undefined, item: OrderIt
 };
 
 
-export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, onUpdateObservations, onLoadCart, onSaveOrders, operationalSession, onSetCashMovements }: CartProps) {
+export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, onUpdateObservations, onLoadCart, onSaveOrders, operationalSession, onSetCashMovements, categories, onlineKitchenIds, isKitchenOnline }: CartProps) {
   const { user } = useAuth(); // Adicionado useAuth para obter o usuário logado
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [showLoadModal, setShowLoadModal] = useState(false);
@@ -112,6 +115,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
   const [selectedPayment, setSelectedPayment] = useState('');
   const [orderCounter, setOrderCounter] = useLocalStorage<number>('orderCounter', 1);
   const [orderPassword, setOrderPassword] = useState('');
+  const [discountPercent, setDiscountPercent] = useState('');
   // CORREÇÃO: Usando o tipo ActiveCashSession que inclui o ID
   const [cashSession] = useLocalStorage<ActiveCashSession | null>('currentCashSession', null);
   const [config] = useLocalStorage<any>('appConfig', { 
@@ -140,7 +144,9 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
   const [remainingAmount, setRemainingAmount] = useState(0);
   const [isMultiplePayment, setIsMultiplePayment] = useState(false);
 
-  const total = items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
+  const subtotal = items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
+  const discountValue = discountPercent ? (subtotal * parseFloat(discountPercent) / 100) : 0;
+  const total = subtotal - discountValue;
   const totalItems = items.reduce((sum, item) => sum + item.quantity, 0);
 
   // Calcular troco
@@ -172,7 +178,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
   const calculateRemainingAmount = useCallback(() => {
     const totalPaid = Object.values(paymentBreakdown).reduce((sum, amount) => sum + amount, 0);
     return Math.max(0, total - totalPaid);
-  }, [paymentBreakdown, total]);
+  }, [paymentBreakdown, total, discountPercent]);
 
 
   // Função para verificar se há opções obrigatórias não selecionadas nos itens do carrinho
@@ -386,14 +392,40 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
     setOrderPassword('');
     setAmountPaid('');
     setShowChangeCalculation(false);
+    setDiscountPercent('');
     resetMultiplePayment();
   };
 
   // Usando useCallback para memoizar a função de checkout e garantir que 'operationalSession' seja capturado
   const handleCheckout = useCallback(() => {
     // Recalcular paidAmount e total aqui para garantir que estamos usando os valores mais recentes
-    const currentTotal = items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
+    const currentSubtotal = items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
+    const currentDiscount = discountPercent ? (currentSubtotal * parseFloat(discountPercent) / 100) : 0;
+    const currentTotal = currentSubtotal - currentDiscount;
     const currentPaidAmount = parseFloat(amountPaid) || 0;
+
+    // Validação de cozinha online antes de prosseguir
+    const itemsWithOfflineKitchens: string[] = [];
+    items.forEach(item => {
+      const itemCategory = categories.find(c => c.id === item.menuItem.categoryId);
+      if (itemCategory && itemCategory.kitchenIds && itemCategory.kitchenIds.length > 0) {
+        // Verifica se pelo menos uma cozinha da categoria está online
+        const hasOnlineKitchen = itemCategory.kitchenIds.some(kid => isKitchenOnline(kid));
+        if (!hasOnlineKitchen) {
+          itemsWithOfflineKitchens.push(item.menuItem.name);
+        }
+      } else if (itemCategory && (!itemCategory.kitchenIds || itemCategory.kitchenIds.length === 0)) {
+        // Categoria sem cozinhas específicas - verifica se há alguma cozinha online
+        if (onlineKitchenIds.length === 0) {
+          itemsWithOfflineKitchens.push(item.menuItem.name);
+        }
+      }
+    });
+    
+    if (itemsWithOfflineKitchens.length > 0) {
+      alert(`Não é possível finalizar o pedido. Os seguintes itens pertencem a categorias cujas cozinhas não estão online:\n\n${itemsWithOfflineKitchens.join('\n')}\n\nPor favor, aguarde até que as cozinhas estejam online ou remova esses itens do carrinho.`);
+      return;
+    }
 
     // Se a validação centralizada falhar, disparamos o alerta específico e retornamos.
     if (isConfirmDisabled()) {
@@ -611,7 +643,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
     // Simular som de novo pedido
     const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8diJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7blmGgU7k9n1unEiBC13yO/eizEIHWq+8+OWT');
     audio.play().catch(() => {});
-  }, [items, isConfirmDisabled, orderPassword, isMultiplePayment, calculateRemainingAmount, isCashPayment, hasCashInBreakdown, paymentBreakdown, amountPaid, total, generateOrderPin, onSaveOrders, setOrderCounter, cashSession, onSetCashMovements, customerWhatsApp, selectedPayment, operationalSession, user]); // Adicionando user como dependência
+  }, [items, isConfirmDisabled, orderPassword, isMultiplePayment, calculateRemainingAmount, isCashPayment, hasCashInBreakdown, paymentBreakdown, amountPaid, total, discountPercent, generateOrderPin, onSaveOrders, setOrderCounter, cashSession, onSetCashMovements, customerWhatsApp, selectedPayment, operationalSession, user]); // Adicionando user como dependência
 
   // Função para lidar com ENTER no campo de senha
   const handlePasswordKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -1004,6 +1036,18 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
       {/* Total e checkout - fixo na parte inferior */}
       {items.length > 0 && (
         <div className="p-3 lg:p-4 border-t border-gray-200 flex-shrink-0 bg-white sticky bottom-0">
+          {discountPercent && parseFloat(discountPercent) > 0 && (
+            <div className="mb-2 space-y-1">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-600">Subtotal:</span>
+                <span className="text-gray-700">R$ {subtotal.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm text-red-600">
+                <span>Desconto ({discountPercent}%):</span>
+                <span>- R$ {discountValue.toFixed(2)}</span>
+              </div>
+            </div>
+          )}
           <div className="flex items-center justify-between mb-4">
             <span className="text-base lg:text-lg font-semibold text-gray-900">Total:</span>
             <span className="text-base lg:text-lg font-bold text-amber-600">R$ {total.toFixed(2)}</span>
@@ -1043,11 +1087,58 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
                   <span>R$ {(item.unitPrice * item.quantity).toFixed(2)}</span>
                 </div>
               ))}
+              {discountPercent && parseFloat(discountPercent) > 0 && (
+                <>
+                  <div className="border-t pt-2 flex justify-between text-sm">
+                    <span>Subtotal:</span>
+                    <span>R$ {subtotal.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm text-red-600">
+                    <span>Desconto ({discountPercent}%):</span>
+                    <span>- R$ {discountValue.toFixed(2)}</span>
+                  </div>
+                </>
+              )}
               <div className="border-t pt-2 flex justify-between font-medium">
                 <span>Total:</span>
                 <span className="text-amber-600">R$ {total.toFixed(2)}</span>
               </div>
             </div>
+          </div>
+
+          {/* Campo de Desconto */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Desconto global (%):
+            </label>
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min="0"
+                max="100"
+                step="0.01"
+                value={discountPercent}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (value === '' || (parseFloat(value) >= 0 && parseFloat(value) <= 100)) {
+                    setDiscountPercent(value);
+                  }
+                }}
+                placeholder="0"
+                className="flex-1"
+              />
+              <span className="text-amber-600 font-medium">%</span>
+              {discountPercent && parseFloat(discountPercent) > 0 && (
+                <span className="text-sm text-gray-600">
+                  = R$ {discountValue.toFixed(2)}
+                </span>
+              )}
+            </div>
+            {discountPercent && parseFloat(discountPercent) > 0 && (
+              <p className="text-xs text-gray-500 mt-1">
+                Desconto de {discountPercent}% aplicado ao total
+              </p>
+            )}
           </div>
 
           {/* Número do pedido */}

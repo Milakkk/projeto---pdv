@@ -148,6 +148,8 @@ export function startLanHub(opts: LanHubOptions = {}) {
   })
 
   const wss = new WebSocketServer({ server, path: '/realtime' })
+  const allClients = new Set<WebSocket>() // Todos os clientes para sync_storage
+  
   wss.on('connection', (ws, req) => {
     const url = parseUrl(req.url || '', true)
     const token = (url.query['token'] as string) || ''
@@ -156,18 +158,47 @@ export function startLanHub(opts: LanHubOptions = {}) {
       return
     }
     let unitId = ''
+    let deviceId = ''
+    
+    // Adiciona a lista de todos os clientes
+    allClients.add(ws)
+    
     ws.on('message', (raw) => {
       try {
-        const msg = JSON.parse(String(raw)) as { unit_id?: string; device_id?: string }
+        const msg = JSON.parse(String(raw)) as { 
+          unit_id?: string
+          device_id?: string
+          type?: string
+          event?: any
+        }
+        
+        // Eventos de sync_storage são propagados para todos os clientes
+        if (msg.type === 'sync_event' && msg.event) {
+          // Propaga para todos os outros clientes
+          const broadcastMsg = JSON.stringify({ type: 'sync_event', event: msg.event })
+          for (const client of allClients) {
+            if (client !== ws && client.readyState === WebSocket.OPEN) {
+              try {
+                client.send(broadcastMsg)
+              } catch {}
+            }
+          }
+          return
+        }
+        
+        // Lógica original para unit_id
         if (msg.unit_id && !unitId) {
           unitId = msg.unit_id
+          deviceId = msg.device_id || ''
           if (!clientsByUnit.has(unitId)) clientsByUnit.set(unitId, new Set())
           clientsByUnit.get(unitId)!.add(ws)
           ws.send(JSON.stringify({ type: 'hello', unit_id: unitId }))
         }
       } catch {}
     })
+    
     ws.on('close', () => {
+      allClients.delete(ws)
       if (unitId && clientsByUnit.has(unitId)) {
         clientsByUnit.get(unitId)!.delete(ws)
       }

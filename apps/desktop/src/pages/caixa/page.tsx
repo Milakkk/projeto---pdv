@@ -58,6 +58,11 @@ interface CashSessionHistory extends CashOpeningData {
   finalAmountInputMode?: 'total' | 'breakdown'; // Adicionado
 }
 
+interface Kitchen {
+  id: string;
+  name: string;
+}
+
 export default function CaixaPage() {
   const { user, store } = useAuth();
   const [categories, setCategories] = useLocalStorage<Category[]>('categories', []);
@@ -69,6 +74,10 @@ export default function CaixaPage() {
   const [cartItems, setCartItems] = useState<OrderItem[]>([]);
   const [quickSearchCode, setQuickSearchCode] = useState('');
   const [selectedItemIndex, setSelectedItemIndex] = useState(0);
+  
+  // Filtro de Cozinha
+  const [kitchens, setKitchens] = useState<Kitchen[]>([]);
+  const [selectedKitchenId, setSelectedKitchenId] = useLocalStorage<string | null>('pdv_selected_kitchen_id', null);
   
   // Estados de Sessão e Caixa
   const [operationalSession, setOperationalSession] = useLocalStorage<OperationalSession | null>('currentOperationalSession', null);
@@ -141,6 +150,22 @@ export default function CaixaPage() {
       } finally {
         // Marca como carregado para impedir que a UI indique "Caixa Fechado" antes de consultar o banco
         setCashLoaded(true);
+      }
+    })();
+  }, []);
+
+  // Carregar cozinhas do banco de dados
+  useEffect(() => {
+    (async () => {
+      const api = (window as any)?.api;
+      if (!api?.db?.query) return;
+      try {
+        const result = await api.db.query('SELECT * FROM kitchens WHERE is_active = 1 ORDER BY display_order, name');
+        if (result?.rows) {
+          setKitchens(result.rows.map((k: any) => ({ id: k.id, name: k.name })));
+        }
+      } catch (err) {
+        console.error('Erro ao carregar cozinhas:', err);
       }
     })();
   }, []);
@@ -537,6 +562,83 @@ export default function CaixaPage() {
     pullOrders();
     const timer = setInterval(pullOrders, 3000);
     return () => { mounted = false; clearInterval(timer); };
+  }, [setOrders])
+
+  // Listener para mudanças no banco de dados em tempo real (sincronização entre janelas)
+  useEffect(() => {
+    const api = (window as any)?.api
+    if (!api?.db?.onChange) return
+
+    const unsubscribe = api.db.onChange((event: any) => {
+      if (!event || !event.table) return
+      
+      const { table, operation } = event
+      
+      // Tabelas que afetam os pedidos
+      const relevantTables = ['orders', 'order_items', 'payments', 'kds_phase_times', 'kds_tickets', 'orders_details', 'kds_unit_states']
+      if (!relevantTables.includes(table)) return
+
+      // Recarregar pedidos quando houver mudanças relevantes
+      if (operation === 'insert' || operation === 'update' || operation === 'delete') {
+        // Pequeno delay para garantir que a transação foi commitada
+        setTimeout(async () => {
+          try {
+            const detailed = await ordersService.listOrdersDetailed(200)
+            const out: Order[] = []
+            for (const d of detailed) {
+              const r = d.order as any
+              const items = d.items || []
+              const payments = d.payments || []
+              const pinVal = d.details?.pin
+              const passVal = d.details?.password
+              const phaseTimes = d.phaseTimes || {}
+              const paid = (payments || []).reduce((s: number, p: any) => s + Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100), 0)
+              const breakdown = (payments || []).length > 1 ? Object.fromEntries((payments || []).map((p: any) => [String(p.method).toUpperCase(), Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100)])) : undefined
+              const method = (payments || []).length > 1 ? 'MÚLTIPLO' : ((payments || [])[0]?.method ? String((payments || [])[0].method).toUpperCase() : '')
+              const ord: Order = {
+                id: String(r.id),
+                pin: pinVal || '',
+                password: passVal || '',
+                items: (items || []).map((it: any) => ({
+                  id: String(it.id),
+                  quantity: Number(it.qty ?? 1),
+                  menuItem: {
+                    id: String(it.product_id ?? ''),
+                    name: String(it.product_name ?? 'Item'),
+                    price: Math.max(0, Number(it.unit_price_cents ?? 0) / 100),
+                    unitDeliveryCount: 1,
+                    categoryId: String(it.category_id ?? ''),
+                  },
+                  productionUnits: [],
+                  skipKitchen: false,
+                })),
+                total: Math.max(0, Number(r.total_cents ?? 0) / 100),
+                customerWhatsApp: undefined,
+                paymentMethod: method,
+                status: String(r.status).toUpperCase() === 'CLOSED' ? 'DELIVERED' : String(r.status).toUpperCase() === 'CANCELLED' ? 'CANCELLED' : 'NEW',
+                createdAt: r.opened_at ? new Date(r.opened_at) : new Date(),
+                readyAt: phaseTimes?.readyAt ? new Date(phaseTimes.readyAt) : undefined,
+                deliveredAt: phaseTimes?.deliveredAt ? new Date(phaseTimes.deliveredAt) : (r.closed_at ? new Date(r.closed_at) : undefined),
+                slaMinutes: 30,
+                createdBy: 'Sistema',
+                amountPaid: paid > 0 ? paid : undefined,
+                changeAmount: undefined,
+                updatedAt: phaseTimes?.preparingStart ? new Date(phaseTimes.preparingStart) : (r.updated_at ? new Date(r.updated_at) : undefined),
+                operationalSessionId: r.operational_session_id ? String(r.operational_session_id) : undefined,
+              }
+              out.push(ord)
+            }
+            setOrders(out)
+          } catch (err) {
+            console.warn('Erro ao recarregar pedidos após mudança no banco:', err)
+          }
+        }, 100)
+      }
+    })
+
+    return () => {
+      if (unsubscribe) unsubscribe()
+    }
   }, [setOrders])
 
   useEffect(() => {
@@ -1338,6 +1440,9 @@ export default function CaixaPage() {
                 selectedCategory={selectedCategory}
                 onSelectCategory={(id) => { setAutoSelectCategory(true); setSelectedCategory(id); }}
                 onReorderCategory={handleReorderCategory}
+                kitchens={kitchens}
+                selectedKitchenId={selectedKitchenId}
+                onKitchenChange={setSelectedKitchenId}
               />
             </div>
 

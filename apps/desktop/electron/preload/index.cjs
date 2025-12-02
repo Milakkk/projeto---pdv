@@ -6,6 +6,11 @@ console.log('[preload] loaded')
 contextBridge.exposeInMainWorld('api', {
   db: {
     query: (sql, params) => ipcRenderer.invoke('db:query', { sql, params }),
+    onChange: (callback) => {
+      const handler = (_event, data) => callback && callback(data)
+      ipcRenderer.on('db:change', handler)
+      return () => ipcRenderer.removeListener('db:change', handler)
+    },
   },
   system: {
     getLocalIp: () => ipcRenderer.invoke('system:getLocalIp'),

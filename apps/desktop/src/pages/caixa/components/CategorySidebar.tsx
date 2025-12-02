@@ -1,28 +1,70 @@
 import type { Category } from '../../../types';
 
+interface Kitchen {
+  id: string;
+  name: string;
+}
+
 interface CategorySidebarProps {
   categories: Category[];
   selectedCategory: string;
   onSelectCategory: (categoryId: string) => void;
   onReorderCategory: (categoryId: string, direction: 'up' | 'down') => void;
+  kitchens?: Kitchen[];
+  selectedKitchenId?: string | null;
+  onKitchenChange?: (kitchenId: string | null) => void;
 }
 
 export default function CategorySidebar({ 
   categories, 
   selectedCategory, 
   onSelectCategory, 
-  onReorderCategory 
+  onReorderCategory,
+  kitchens = [],
+  selectedKitchenId = null,
+  onKitchenChange
 }: CategorySidebarProps) {
-  const activeCategories = categories
+  // Filtrar categorias por cozinha selecionada
+  const filteredCategories = categories.filter(category => {
+    if (!selectedKitchenId) return true; // Mostrar todas se nenhuma cozinha selecionada
+    return (category as any).kitchenId === selectedKitchenId || !(category as any).kitchenId;
+  });
+
+  const activeCategories = filteredCategories
     .filter(category => (category.active ?? true))
     .sort((a, b) => a.order - b.order);
 
   return (
     <div className="w-64 bg-white border-r border-gray-200 h-full flex flex-col flex-shrink-0">
       
+      {/* Filtro de Cozinha */}
+      {kitchens.length > 0 && onKitchenChange && (
+        <div className="px-3 py-2 border-b border-gray-200 bg-gray-50">
+          <label className="block text-xs font-medium text-gray-500 mb-1">
+            <i className="ri-restaurant-line mr-1"></i>
+            Filtrar por Cozinha
+          </label>
+          <select
+            value={selectedKitchenId || ''}
+            onChange={(e) => onKitchenChange(e.target.value || null)}
+            className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
+          >
+            <option value="">Todas as Cozinhas</option>
+            {kitchens.map(k => (
+              <option key={k.id} value={k.id}>{k.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {/* Cabeçalho com altura uniforme para alinhamento entre colunas */}
-      <div className="h-16 px-4 border-b border-gray-200 flex items-center flex-shrink-0">
+      <div className="h-12 px-4 border-b border-gray-200 flex items-center flex-shrink-0">
         <h2 className="text-lg font-semibold text-gray-900">Categorias</h2>
+        {selectedKitchenId && (
+          <span className="ml-2 text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
+            Filtrado
+          </span>
+        )}
       </div>
       
       <div className="flex-1 min-h-0">

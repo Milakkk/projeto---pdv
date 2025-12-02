@@ -5,18 +5,24 @@ import { Module } from '../types';
 
 // Telas de Autenticação e Dashboard
 const LoginPage = lazy(() => import('../pages/auth/LoginPage'));
-const DashboardPage = lazy(() => import('../pages/DashboardPage.tsx'));
+const ModuleSelectorPage = lazy(() => import('../pages/home/ModuleSelectorPage')); // Nova tela inicial
+const DashboardPage = lazy(() => import('../pages/DashboardPage')); // Mantido para compatibilidade
 const NotFoundPage = lazy(() => import('../pages/NotFound'));
 
-// Módulos
+// Módulos Principais
 const CaixaPage = lazy(() => import('../pages/caixa/page'));
 const CozinhaPage = lazy(() => import('../pages/cozinha/page'));
 const ConfiguracoesPage = lazy(() => import('../pages/configuracoes/page'));
 const RelatoriosPage = lazy(() => import('../pages/relatorios/page'));
 const GerenciamentoCaixaPage = lazy(() => import('../pages/gerenciamento-caixa/page'));
-const MasterConfigPage = lazy(() => import('../pages/master/MasterConfigPage')); // Nova página Master
+const MasterConfigPage = lazy(() => import('../pages/master/MasterConfigPage'));
 
-// Novos Módulos
+// Novos Módulos de Menu
+const TarefasPopsPage = lazy(() => import('../pages/tarefas-pops/page')); // Submenu Tarefas/POPs
+const AdmPage = lazy(() => import('../pages/adm/page')); // Menu Administração
+const ClientePage = lazy(() => import('../pages/cliente/page')); // Totem Cliente
+
+// Módulos Operacionais
 const TarefasPage = lazy(() => import('../pages/tarefas/page'));
 const ChecklistPage = lazy(() => import('../pages/checklist/page'));
 const ProcedimentosPage = lazy(() => import('../pages/procedimentos/page'));
@@ -44,15 +50,42 @@ const routes: RouteObject[] = [
     path: '/',
     element: <ProtectedRoute />,
     children: [
-      // Rota Raiz -> Dashboard
+      // Rota Raiz -> Nova Tela de Seleção de Módulos
       {
         index: true,
-        element: <DashboardPage />
+        element: <ModuleSelectorPage />
       },
       {
         path: '/dashboard',
+        element: <ModuleSelectorPage />
+      },
+      // Mantém compatibilidade com antiga rota de dashboard
+      {
+        path: '/dashboard-old',
         element: <DashboardPage />
       },
+      
+      // ====== NOVOS MENUS DE NAVEGAÇÃO ======
+      
+      // Menu Tarefas & POPs
+      {
+        path: '/tarefas-pops',
+        element: <TarefasPopsPage />
+      },
+      
+      // Menu Administração
+      {
+        path: '/adm',
+        element: <AdmPage />
+      },
+      
+      // Totem Cliente (PDV Autoatendimento)
+      {
+        path: '/cliente',
+        element: <ClientePage />
+      },
+      
+      // ====== MÓDULOS ADMINISTRATIVOS ======
       
       // Módulo Master (Permissão MASTER)
       {
@@ -66,7 +99,7 @@ const routes: RouteObject[] = [
         ]
       },
 
-      // Módulos com Navegação (Renderiza Navigation e Outlet)
+      // ====== MÓDULOS OPERACIONAIS ======
       {
         path: '/',
         element: <ProtectedRoute isModuleRoute={true} />, 
@@ -77,7 +110,6 @@ const routes: RouteObject[] = [
             element: <ProtectedRoute requiredPermission={'CAIXA' as Module} />,
             children: [
               { index: true, element: <CaixaPage /> },
-              // Configurações movidas para o módulo CAIXA
               { path: '/caixa/configuracoes', element: <ConfiguracoesPage /> }
             ]
           },
@@ -91,7 +123,7 @@ const routes: RouteObject[] = [
             ]
           },
           
-          // Módulo GESTÃO
+          // Módulo GESTÃO - Relatórios
           {
             path: '/relatorios',
             element: <ProtectedRoute requiredPermission={'GESTAO' as Module} />,
@@ -99,6 +131,8 @@ const routes: RouteObject[] = [
               { index: true, element: <RelatoriosPage /> }
             ]
           },
+          
+          // Módulo GESTÃO - Gerenciamento de Caixa
           {
             path: '/gerenciamento-caixa',
             element: <ProtectedRoute requiredPermission={'GESTAO' as Module} />,
@@ -106,9 +140,8 @@ const routes: RouteObject[] = [
               { index: true, element: <GerenciamentoCaixaPage /> }
             ]
           },
-          // A rota /configuracoes foi removida daqui
           
-          // Novos Módulos Operacionais (Permissão TAREFAS, CHECKLIST, PROCEDIMENTOS)
+          // Módulo TAREFAS
           {
             path: '/tarefas',
             element: <ProtectedRoute requiredPermission={'TAREFAS' as Module} />,
@@ -116,6 +149,8 @@ const routes: RouteObject[] = [
               { index: true, element: <TarefasPage /> }
             ]
           },
+          
+          // Módulo CHECKLIST
           {
             path: '/checklist',
             element: <ProtectedRoute requiredPermission={'CHECKLIST' as Module} />,
@@ -123,6 +158,8 @@ const routes: RouteObject[] = [
               { index: true, element: <ChecklistPage /> }
             ]
           },
+          
+          // Módulo PROCEDIMENTOS
           {
             path: '/procedimentos',
             element: <ProtectedRoute requiredPermission={'PROCEDIMENTOS' as Module} />,
@@ -130,12 +167,34 @@ const routes: RouteObject[] = [
               { index: true, element: <ProcedimentosPage /> }
             ]
           },
+          
+          // Módulo RH
           {
             path: '/rh',
             element: <ProtectedRoute requiredPermission={'RH' as Module} />,
             children: [
               { index: true, element: <RHPage /> },
               { path: '/rh/config', element: <RHConfigPage /> }
+            ]
+          },
+          
+          // Placeholder para Estoque (futuro)
+          {
+            path: '/estoque',
+            element: <ProtectedRoute requiredPermission={'GESTAO' as Module} />,
+            children: [
+              { 
+                index: true, 
+                element: (
+                  <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+                    <div className="text-center">
+                      <i className="ri-archive-drawer-line text-6xl text-gray-300 mb-4"></i>
+                      <h2 className="text-xl font-semibold text-gray-600">Módulo de Estoque</h2>
+                      <p className="text-gray-500">Em desenvolvimento...</p>
+                    </div>
+                  </div>
+                )
+              }
             ]
           },
         ]

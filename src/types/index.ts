@@ -6,6 +6,8 @@ export interface Category {
   active: boolean;
   // Código de integração opcional (numérico, pode ficar vazio)
   integrationCode?: string;
+  // IDs das cozinhas associadas (vazio = todas as cozinhas)
+  kitchenIds?: string[];
 }
 
 // NOVO: Interface para grupos de modificadores obrigatórios (seleção única)

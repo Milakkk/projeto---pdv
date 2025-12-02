@@ -145,10 +145,24 @@ function ensureSchema(sqlite) {
   );`)
   exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_device_profile_device ON device_profile(device_id);`)
 
+  // Tabela de Cozinhas (múltiplas cozinhas por loja)
+  exec(`CREATE TABLE IF NOT EXISTS kitchens (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    unit_id TEXT,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    display_order INTEGER DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    version INTEGER NOT NULL DEFAULT 1,
+    pending_sync INTEGER NOT NULL DEFAULT 0
+  );`)
+  exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_kitchens_unit_name ON kitchens(unit_id, name);`)
+
   exec(`CREATE TABLE IF NOT EXISTS categories (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     unit_id TEXT,
+    kitchen_id TEXT,
     default_station TEXT,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     version INTEGER NOT NULL DEFAULT 1,
@@ -156,6 +170,8 @@ function ensureSchema(sqlite) {
   );`)
   exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_categories_name ON categories(name);`)
   exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_categories_unit_name ON categories(unit_id, name);`)
+  // Adicionar coluna kitchen_id se não existir (migração)
+  exec(`ALTER TABLE categories ADD COLUMN kitchen_id TEXT`)
 
   exec(`CREATE TABLE IF NOT EXISTS products (
     id TEXT PRIMARY KEY,

@@ -48,7 +48,7 @@ async function pushLanEvents(events: any[]) {
   }
 }
 
-async function getPhaseTimes(orderId: string): Promise<any> {
+export async function getPhaseTimes(orderId: string): Promise<any> {
   try {
     const res = await query('SELECT * FROM kds_phase_times WHERE order_id = ?', [orderId])
     const row = (res?.rows ?? [])[0]
@@ -123,7 +123,7 @@ async function persistUnitStateDb(orderId: string, itemId: string, unitId: strin
   }
 }
 
-async function loadUnitStatesForOrder(orderId: string): Promise<Record<string, any>> {
+export async function loadUnitStatesForOrder(orderId: string): Promise<Record<string, any>> {
   const map: Record<string, any> = {}
   try {
     const res = await query('SELECT * FROM kds_unit_states WHERE order_id = ?', [orderId])
@@ -193,13 +193,23 @@ export async function applyHubEvents(events: any[]) {
       const notes = row.notes ?? null
       const updatedAt = row.updated_at ?? row.updatedAt ?? now
       const statusStr = String(incomingStatus || '').toUpperCase()
-      const dbStatus = statusStr === 'DELIVERED' ? 'closed' : statusStr === 'CANCELLED' ? 'cancelled' : (incomingStatus ?? null)
-      const dbClosedAt = dbStatus === 'closed' ? (deliveredAt ?? closedAtRaw ?? updatedAt) : closedAtRaw
+      // Apenas atualizar status para fechamento (closed/cancelled), não para status intermediários
+      const dbStatus = statusStr === 'DELIVERED' ? 'closed' : statusStr === 'CANCELLED' ? 'cancelled' : null
+      const dbClosedAt = dbStatus === 'closed' || dbStatus === 'cancelled' ? (deliveredAt ?? closedAtRaw ?? updatedAt) : null
       try {
-        await query(
-          'INSERT INTO orders (id, status, total_cents, opened_at, closed_at, device_id, unit_id, notes, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET status=COALESCE(excluded.status, status), total_cents=COALESCE(excluded.total_cents, total_cents), opened_at=COALESCE(excluded.opened_at, opened_at), closed_at=COALESCE(excluded.closed_at, closed_at), device_id=COALESCE(excluded.device_id, device_id), unit_id=COALESCE(excluded.unit_id, unit_id), notes=COALESCE(excluded.notes, notes), updated_at=excluded.updated_at, pending_sync=excluded.pending_sync',
-          [id, dbStatus, total, openedAt, dbClosedAt, deviceId, unitId, notes, updatedAt, 1, 0],
-        )
+        // Se for fechamento, atualizar status e closed_at. Caso contrário, apenas inserir se não existir
+        if (dbStatus === 'closed' || dbStatus === 'cancelled') {
+          await query(
+            'INSERT INTO orders (id, status, total_cents, opened_at, closed_at, device_id, unit_id, notes, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET status=excluded.status, closed_at=excluded.closed_at, updated_at=excluded.updated_at, pending_sync=excluded.pending_sync',
+            [id, dbStatus, total, openedAt, dbClosedAt, deviceId, unitId, notes, updatedAt, 1, 0],
+          )
+        } else {
+          // Para status intermediários, apenas inserir se não existir (não atualizar opened_at nem status)
+          await query(
+            'INSERT INTO orders (id, status, total_cents, opened_at, closed_at, device_id, unit_id, notes, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET total_cents=COALESCE(excluded.total_cents, total_cents), notes=COALESCE(excluded.notes, notes), updated_at=excluded.updated_at, pending_sync=excluded.pending_sync',
+            [id, incomingStatus || 'open', total, openedAt, closedAtRaw, deviceId, unitId, notes, updatedAt, 1, 0],
+          )
+        }
         const pin = row.pin ?? null
         const password = row.password ?? null
         if (pin || password) {

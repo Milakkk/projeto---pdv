@@ -7,8 +7,9 @@ import UsersManager from './components/UsersManager';
 import RolesManager from './components/RolesManager';
 import StoresManager from './components/StoresManager';
 import StoreOperatingDays from './components/StoreOperatingDays';
+import KitchensManager from './components/KitchensManager';
 
-type MasterTab = 'users' | 'roles' | 'stores' | 'settings';
+type MasterTab = 'users' | 'roles' | 'stores' | 'kitchens' | 'settings';
 
 export default function MasterConfigPage() {
   const { user, store, role } = useAuth();
@@ -83,6 +84,13 @@ export default function MasterConfigPage() {
               Lojas
             </button>
             <button
+              className={`whitespace-nowrap py-4 px-1 border-b-2 text-sm font-medium ${activeTab === 'kitchens' ? 'border-amber-600 text-amber-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+              onClick={() => setActiveTab('kitchens')}
+            >
+              <i className="ri-restaurant-2-line mr-1"></i>
+              Cozinhas
+            </button>
+            <button
               className={`whitespace-nowrap py-4 px-1 border-b-2 text-sm font-medium ${activeTab === 'settings' ? 'border-amber-600 text-amber-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
               onClick={() => setActiveTab('settings')}
             >
@@ -100,6 +108,9 @@ export default function MasterConfigPage() {
         )}
         {activeTab === 'stores' && (
           <StoresManager />
+        )}
+        {activeTab === 'kitchens' && (
+          <KitchensManager />
         )}
         {activeTab === 'settings' && (
           <div className="bg-white p-6 rounded-lg border border-gray-200">
