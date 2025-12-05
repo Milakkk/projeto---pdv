@@ -1,5 +1,5 @@
 {
-  "buildCommand": "cd apps/desktop && pnpm install && pnpm build",
+  "buildCommand": "pnpm install && pnpm build",
   "outputDirectory": "apps/desktop/out",
   "installCommand": "pnpm install --frozen-lockfile",
   "framework": "vite",
