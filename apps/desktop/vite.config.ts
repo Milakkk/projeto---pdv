@@ -31,9 +31,9 @@ export default defineConfig({
       'i18next',
       '@supabase/supabase-js',
       'drizzle-orm',
-      'drizzle-orm/sqlite-core',
       'react-hot-toast'
     ],
+    exclude: ['drizzle-orm/sqlite-core', 'better-sqlite3'],
     force: true,
   },
   build: {
@@ -58,6 +58,8 @@ export default defineConfig({
       '@db': resolve(__dirname, '../../packages/db/src'),
       '@auth': resolve(__dirname, '../../packages/auth/src'),
       '@ui': resolve(__dirname, '../../packages/ui/src'),
+      // Stub para drizzle-orm/sqlite-core no navegador (não usado em produção web)
+      'drizzle-orm/sqlite-core': resolve(__dirname, './src/offline/db/sqlite-core-stub.ts'),
     },
     dedupe: ['react', 'react-dom']
   },
