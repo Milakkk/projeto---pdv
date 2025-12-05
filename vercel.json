@@ -1,6 +1,6 @@
 {
   "buildCommand": "pnpm install && pnpm build",
-  "outputDirectory": "apps/desktop/out",
+  "outputDirectory": "out",
   "installCommand": "pnpm install --frozen-lockfile",
   "framework": "vite",
   "rewrites": [
