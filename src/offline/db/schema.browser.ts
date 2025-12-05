@@ -1,0 +1,12 @@
+export const kitchens = {} as any
+export const categoryKitchens = {} as any
+export const kitchenOperators = {} as any
+export const appConfig = {} as any
+export const globalObservations = {} as any
+export const products = {} as any
+export const categories = {} as any
+export const orders = {} as any
+export const orderItems = {} as any
+export const payments = {} as any
+export const kdsTickets = {} as any
+export const kdsPhaseTimes = {} as any

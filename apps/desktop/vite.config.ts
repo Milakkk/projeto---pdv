@@ -41,7 +41,7 @@ export default defineConfig({
     outDir: 'out',
     emptyOutDir: true,
     rollupOptions: {
-      external: ['drizzle-orm', 'drizzle-orm/sqlite-core', 'better-sqlite3'],
+      external: ['better-sqlite3'],
       output: {
         manualChunks: {
           'react-vendor': ['react', 'react-dom', 'react-router-dom'],
@@ -58,6 +58,7 @@ export default defineConfig({
       '@db': resolve(__dirname, '../../packages/db/src'),
       '@auth': resolve(__dirname, '../../packages/auth/src'),
       '@ui': resolve(__dirname, '../../packages/ui/src'),
+      '@/offline/db/schema': resolve(__dirname, './src/offline/db/schema.browser.ts'),
       // Stub para drizzle-orm/sqlite-core no navegador (não usado em produção web)
       'drizzle-orm/sqlite-core': resolve(__dirname, './src/offline/db/sqlite-core-stub.ts'),
     },
