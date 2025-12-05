@@ -1,31 +1,18 @@
 // Stub para drizzle-orm/sqlite-core no ambiente navegador
-// Este arquivo substitui as importações de sqlite-core quando não está em Electron
+// Evita que o app quebre ao avaliar schemas em builds web.
 
-export const sqliteTable = () => {
-  throw new Error('sqliteTable não está disponível no navegador. Use Supabase.');
-};
+const chainable = () => ({
+  primaryKey() { return this },
+  notNull() { return this },
+  default() { return this },
+  references() { return this },
+});
 
-export const text = () => {
-  throw new Error('text não está disponível no navegador. Use Supabase.');
-};
-
-export const integer = () => {
-  throw new Error('integer não está disponível no navegador. Use Supabase.');
-};
-
-export const primaryKey = () => {
-  throw new Error('primaryKey não está disponível no navegador. Use Supabase.');
-};
-
-export const uniqueIndex = () => {
-  throw new Error('uniqueIndex não está disponível no navegador. Use Supabase.');
-};
-
-export const real = () => {
-  throw new Error('real não está disponível no navegador. Use Supabase.');
-};
-
-export const blob = () => {
-  throw new Error('blob não está disponível no navegador. Use Supabase.');
-};
+export const sqliteTable = (_name?: string, _cols?: any, _indexes?: any) => ({ id: undefined } as any);
+export const text = (_name?: string, _opts?: any) => chainable();
+export const integer = (_name?: string, _opts?: any) => chainable();
+export const real = (_name?: string, _opts?: any) => chainable();
+export const blob = (_name?: string, _opts?: any) => chainable();
+export const primaryKey = (_args?: any) => ({} as any);
+export const uniqueIndex = (_name?: string) => ({ on() { return {} as any } });
 
