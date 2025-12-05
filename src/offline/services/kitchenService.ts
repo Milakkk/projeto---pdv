@@ -1,6 +1,7 @@
 import { db } from '@/offline/db/client'
 import { kitchens, categoryKitchens, kitchenOperators } from '@/offline/db/schema'
 import { eq, and } from 'drizzle-orm'
+import { supabase } from '@/utils/supabase'
 
 type UUID = string
 
@@ -12,11 +13,48 @@ const uuid = () =>
 // ====== COZINHAS ======
 
 export async function listKitchens() {
-  if (!db) return []
+  // SEMPRE usa Supabase quando disponível
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('kitchens')
+        .select('*')
+        .order('display_order', { ascending: true })
+      
+      if (error) {
+        console.error('Erro ao buscar cozinhas do Supabase:', error)
+        throw error
+      }
+      
+      if (data) {
+        // Mapeia para o formato esperado
+        return data.map(k => ({
+          id: k.id,
+          name: k.name,
+          unitId: k.unit_id || null,
+          isActive: k.is_active ?? true,
+          displayOrder: k.display_order ?? 0,
+        }))
+      }
+      
+      return []
+    } catch (err) {
+      console.error('Erro ao buscar cozinhas do Supabase:', err)
+      throw err // Propaga o erro em vez de fazer fallback
+    }
+  }
+  
+  // Fallback apenas para Electron (DB local)
+  if (!db) {
+    console.warn('Supabase não disponível e DB local não disponível')
+    return []
+  }
+  
   try {
     const rows = await db.select().from(kitchens)
     return rows || []
-  } catch {
+  } catch (err) {
+    console.error('Erro ao buscar cozinhas do DB local:', err)
     return []
   }
 }
@@ -38,10 +76,81 @@ export async function upsertKitchen(payload: {
   isActive?: boolean
   displayOrder?: number
 }) {
-  if (!db) return payload.id ?? uuid()
-  
   const id = payload.id ?? uuid()
   const now = new Date().toISOString()
+  
+  console.log('[kitchenService] upsertKitchen chamado:', { id, name: payload.name, supabase: !!supabase })
+  
+  // SEMPRE usa Supabase quando disponível
+  if (supabase) {
+    try {
+      // Verifica se já existe
+      const { data: existing, error: selectError } = await supabase
+        .from('kitchens')
+        .select('id')
+        .eq('id', id)
+        .maybeSingle()
+      
+      if (selectError && selectError.code !== 'PGRST116') { // PGRST116 = not found (ok)
+        console.error('[kitchenService] Erro ao verificar cozinha existente:', selectError)
+        throw selectError
+      }
+      
+      const kitchenData = {
+        id,
+        name: payload.name,
+        unit_id: payload.unitId || null,
+        is_active: payload.isActive ?? true,
+        display_order: payload.displayOrder ?? 0,
+        updated_at: now,
+      }
+      
+      if (existing) {
+        // Update
+        console.log('[kitchenService] Atualizando cozinha existente:', id)
+        const { data, error } = await supabase
+          .from('kitchens')
+          .update(kitchenData)
+          .eq('id', id)
+          .select()
+        
+        if (error) {
+          console.error('[kitchenService] Erro ao atualizar cozinha no Supabase:', error)
+          throw new Error(`Erro ao atualizar: ${error.message} (code: ${error.code})`)
+        }
+        console.log('[kitchenService] Cozinha atualizada:', data)
+      } else {
+        // Insert
+        console.log('[kitchenService] Inserindo nova cozinha:', kitchenData)
+        const { data, error } = await supabase
+          .from('kitchens')
+          .insert({
+            ...kitchenData,
+            created_at: now,
+            version: 1,
+            pending_sync: false,
+          })
+          .select()
+        
+        if (error) {
+          console.error('[kitchenService] Erro ao inserir cozinha no Supabase:', error)
+          console.error('[kitchenService] Detalhes do erro:', JSON.stringify(error, null, 2))
+          throw new Error(`Erro ao inserir: ${error.message} (code: ${error.code || 'unknown'})`)
+        }
+        console.log('[kitchenService] Cozinha inserida:', data)
+      }
+      
+      return id
+    } catch (err: any) {
+      console.error('[kitchenService] Erro ao salvar cozinha no Supabase:', err)
+      throw err // Propaga o erro em vez de fazer fallback
+    }
+  }
+  
+  // Fallback apenas para Electron (DB local)
+  if (!db) {
+    throw new Error('Supabase não disponível e DB local não disponível')
+  }
   
   try {
     const existing = (await db.select().from(kitchens).where(eq(kitchens.id, id)))?.[0]
@@ -78,18 +187,42 @@ export async function upsertKitchen(payload: {
       .run()
     return id
   } catch (err) {
-    console.error('Erro ao salvar cozinha:', err)
-    return id
+    console.error('Erro ao salvar cozinha no DB local:', err)
+    throw err
   }
 }
 
 export async function deleteKitchen(id: UUID) {
-  if (!db) return false
+  // SEMPRE usa Supabase quando disponível
+  if (supabase) {
+    try {
+      const { error } = await supabase
+        .from('kitchens')
+        .delete()
+        .eq('id', id)
+      
+      if (error) {
+        console.error('Erro ao deletar cozinha do Supabase:', error)
+        throw error
+      }
+      return true
+    } catch (err) {
+      console.error('Erro ao deletar cozinha do Supabase:', err)
+      throw err // Propaga o erro em vez de fazer fallback
+    }
+  }
+  
+  // Fallback apenas para Electron (DB local)
+  if (!db) {
+    throw new Error('Supabase não disponível e DB local não disponível')
+  }
+  
   try {
     await db.delete(kitchens).where(eq(kitchens.id, id)).run()
     return true
-  } catch {
-    return false
+  } catch (err) {
+    console.error('Erro ao deletar cozinha do DB local:', err)
+    throw err
   }
 }
 

@@ -183,14 +183,14 @@ class SyncStorage {
     const serialized = JSON.stringify(value);
     localStorage.setItem(key, serialized);
     
-    // Salva no DB se disponível (Electron)
-    if (isDbAvailable && key === 'kitchens' && Array.isArray(value)) {
+    // Salva no Supabase/DB quando disponível
+    if (key === 'kitchens' && Array.isArray(value)) {
       try {
         for (const kitchen of value) {
           await kitchenService.upsertKitchen(kitchen);
         }
       } catch (err) {
-        console.warn('Erro ao salvar cozinhas no DB:', err);
+        console.warn('Erro ao salvar cozinhas no DB/Supabase:', err);
       }
     }
     
@@ -264,12 +264,12 @@ class SyncStorage {
     const current = this.getItem<T[]>(key, []);
     const updated = current.filter(item => getId(item) !== itemId);
     
-    // Remove do DB se disponível
-    if (isDbAvailable && key === 'kitchens') {
+    // Remove do Supabase/DB se disponível
+    if (key === 'kitchens') {
       try {
         await kitchenService.deleteKitchen(itemId);
       } catch (err) {
-        console.warn('Erro ao remover cozinha do DB:', err);
+        console.warn('Erro ao remover cozinha do DB/Supabase:', err);
       }
     }
     

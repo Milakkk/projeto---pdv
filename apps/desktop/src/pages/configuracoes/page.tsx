@@ -52,6 +52,236 @@ export default function ConfiguracoesPage() {
     })()
   }, [globalObservations])
 
+  // Carregar associações categoria-cozinha do Supabase
+  useEffect(() => {
+    const isElectron = typeof (window as any)?.api?.db?.query === 'function';
+    
+    if (isElectron) {
+      // Modo Electron - já carrega do banco local
+      return;
+    }
+
+    // Modo Navegador - carrega do Supabase
+    (async () => {
+      try {
+        const { supabase } = await import('../../utils/supabase');
+        if (!supabase) {
+          console.warn('[Configurações] Supabase não disponível para carregar associações categoria-cozinha');
+          return;
+        }
+
+        console.log('[Configurações] Carregando associações categoria-cozinha do Supabase...');
+        
+        const { data: associations, error } = await supabase
+          .from('category_kitchens')
+          .select('category_id, kitchen_id');
+
+        if (error) {
+          console.error('[Configurações] Erro ao carregar associações:', error);
+          return;
+        }
+
+        if (associations && associations.length > 0) {
+          // Agrupa por category_id
+          const kitchenIdsByCategory = associations.reduce((acc, assoc) => {
+            if (!acc[assoc.category_id]) {
+              acc[assoc.category_id] = [];
+            }
+            acc[assoc.category_id].push(assoc.kitchen_id);
+            return acc;
+          }, {} as Record<string, string[]>);
+
+          // Atualiza as categorias com os kitchenIds
+          setCategories(prevCategories => 
+            prevCategories.map(cat => ({
+              ...cat,
+              kitchenIds: kitchenIdsByCategory[cat.id] || undefined
+            }))
+          );
+
+          console.log('[Configurações] Associações categoria-cozinha carregadas:', Object.keys(kitchenIdsByCategory).length, 'categorias');
+        } else {
+          console.log('[Configurações] Nenhuma associação categoria-cozinha encontrada');
+        }
+      } catch (err) {
+        console.error('[Configurações] Erro ao carregar associações categoria-cozinha:', err);
+      }
+    })();
+  }, [setCategories]);
+
+  // Corrigir produtos sem categoria - reatribuir baseado no nome da categoria
+  useEffect(() => {
+    const isElectron = typeof (window as any)?.api?.db?.query === 'function';
+    
+    if (isElectron) {
+      // Modo Electron - já carrega do banco local
+      return;
+    }
+
+    // Modo Navegador - corrige produtos sem categoria
+    (async () => {
+      try {
+        const { supabase } = await import('../../utils/supabase');
+        if (!supabase) {
+          return;
+        }
+
+        console.log('[Configurações] 🔍 Verificando produtos sem categoria...');
+        
+        // Carrega produtos e categorias do Supabase
+        const [productsResult, categoriesResult] = await Promise.all([
+          supabase.from('products').select('id, name, category_id').eq('is_active', true),
+          supabase.from('categories').select('id, name')
+        ]);
+
+        if (productsResult.error || categoriesResult.error) {
+          console.error('[Configurações] Erro ao carregar produtos/categorias:', productsResult.error || categoriesResult.error);
+          return;
+        }
+
+        const products = productsResult.data || [];
+        const dbCategories = categoriesResult.data || [];
+        
+        console.log('[Configurações] Produtos carregados:', products.length);
+        console.log('[Configurações] Categorias carregadas:', dbCategories.length);
+        
+        // Cria mapa de categorias por nome (normalizado)
+        const normalizeName = (name: string) => name.toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        const categoryMapByName = new Map<string, string>();
+        dbCategories.forEach(cat => {
+          const normalized = normalizeName(cat.name);
+          if (!categoryMapByName.has(normalized)) {
+            categoryMapByName.set(normalized, cat.id);
+          }
+        });
+
+        // Carrega produtos do localStorage para pegar a categoria original pelo nome
+        const lsMenuItems = JSON.parse(localStorage.getItem('menuItems') || '[]');
+        const lsCategories = JSON.parse(localStorage.getItem('categories') || '[]');
+        
+        console.log('[Configurações] Produtos no localStorage:', lsMenuItems.length);
+        console.log('[Configurações] Categorias no localStorage:', lsCategories.length);
+        
+        // Encontra produtos sem categoria ou com categoria inválida
+        const productsToFix: Array<{ productId: string; productName: string; newCategoryId: string | null; categoryName: string }> = [];
+        
+        for (const product of products) {
+          const currentCategoryId = product.category_id;
+          
+          // Se não tem categoria ou a categoria não existe no Supabase
+          if (!currentCategoryId) {
+            // Tenta encontrar a categoria pelo nome do produto no localStorage
+            const lsProduct = lsMenuItems.find((p: any) => p.id === product.id || p.name === product.name);
+            if (lsProduct && lsProduct.categoryId) {
+              const oldCategory = lsCategories.find((c: any) => c.id === lsProduct.categoryId);
+              if (oldCategory && oldCategory.name) {
+                const normalized = normalizeName(oldCategory.name);
+                const newCategoryId = categoryMapByName.get(normalized);
+                if (newCategoryId) {
+                  productsToFix.push({ 
+                    productId: product.id, 
+                    productName: product.name,
+                    newCategoryId,
+                    categoryName: oldCategory.name
+                  });
+                  console.log(`[Configurações] 📝 Produto "${product.name}" será associado à categoria "${oldCategory.name}" (${newCategoryId})`);
+                }
+              }
+            }
+          } else {
+            // Verifica se a categoria existe
+            const categoryExists = dbCategories.some(c => c.id === currentCategoryId);
+            if (!categoryExists) {
+              console.log(`[Configurações] ⚠️ Produto "${product.name}" tem categoria inválida: ${currentCategoryId}`);
+              // Categoria não existe, tenta encontrar pelo nome
+              const lsProduct = lsMenuItems.find((p: any) => p.id === product.id || p.name === product.name);
+              if (lsProduct && lsProduct.categoryId) {
+                const oldCategory = lsCategories.find((c: any) => c.id === lsProduct.categoryId);
+                if (oldCategory && oldCategory.name) {
+                  const normalized = normalizeName(oldCategory.name);
+                  const newCategoryId = categoryMapByName.get(normalized);
+                  if (newCategoryId) {
+                    productsToFix.push({ 
+                      productId: product.id, 
+                      productName: product.name,
+                      newCategoryId,
+                      categoryName: oldCategory.name
+                    });
+                    console.log(`[Configurações] 📝 Produto "${product.name}" será reatribuído à categoria "${oldCategory.name}" (${newCategoryId})`);
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // Atualiza produtos no Supabase
+        if (productsToFix.length > 0) {
+          console.log(`[Configurações] 🔧 Corrigindo ${productsToFix.length} produtos sem categoria...`);
+          
+          for (const fix of productsToFix) {
+            const { error } = await supabase
+              .from('products')
+              .update({ category_id: fix.newCategoryId })
+              .eq('id', fix.productId);
+            
+            if (error) {
+              console.error(`[Configurações] ❌ Erro ao corrigir produto "${fix.productName}":`, error);
+            } else {
+              console.log(`[Configurações] ✅ Produto "${fix.productName}" corrigido → categoria "${fix.categoryName}"`);
+            }
+          }
+          
+          // Recarrega produtos e categorias
+          console.log('[Configurações] 🔄 Recarregando produtos e categorias...');
+          const [newProductsResult, newCategoriesResult] = await Promise.all([
+            productsService.listProducts(),
+            productsService.listCategories()
+          ]);
+          
+          const mappedCategories: Category[] = (newCategoriesResult || []).map((c: any, idx: number) => ({
+            id: c.id,
+            name: c.name,
+            icon: '',
+            order: idx,
+            active: true,
+          }));
+          
+          const mappedMenuItems: MenuItem[] = (newProductsResult || []).map((p: any) => {
+            const fromLs = lsMenuItems.find((mi: any) => mi.id === p.id || (mi.code && mi.code === p.sku));
+            return {
+              id: p.id,
+              name: p.name,
+              price: ((p.priceCents ?? p.price_cents ?? 0) as number) / 100,
+              sla: typeof fromLs?.sla === 'number' ? fromLs.sla : 15,
+              categoryId: (p.categoryId ?? p.category_id) as string,
+              observations: Array.isArray(fromLs?.observations) ? fromLs.observations : [],
+              requiredModifierGroups: Array.isArray(fromLs?.requiredModifierGroups) ? fromLs.requiredModifierGroups : [],
+              image: fromLs?.image,
+              active: Boolean(p.isActive ?? p.is_active ?? true),
+              code: p.sku ?? undefined,
+              skipKitchen: Boolean((fromLs as any)?.skipKitchen ?? false),
+              unitDeliveryCount: Math.max(1, Number((fromLs as any)?.unitDeliveryCount ?? 1)),
+              isPromo: Boolean((fromLs as any)?.isPromo ?? false),
+              comboItemIds: Array.isArray((fromLs as any)?.comboItemIds) ? (fromLs as any).comboItemIds : [],
+            };
+          });
+          
+          setCategories(mappedCategories);
+          setMenuItems(mappedMenuItems);
+          
+          console.log(`[Configurações] ✅ ${productsToFix.length} produtos corrigidos e dados recarregados`);
+          console.log('[Configurações] Categorias atualizadas:', mappedCategories.length);
+          console.log('[Configurações] Produtos atualizados:', mappedMenuItems.length);
+        } else {
+          console.log('[Configurações] ✅ Nenhum produto precisa de correção');
+        }
+      } catch (err) {
+        console.error('[Configurações] ❌ Erro ao corrigir produtos:', err);
+      }
+    })();
+  }, [setCategories, setMenuItems])
+
   // NOVOS ESTADOS PARA IMAGEM
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>('');
@@ -180,15 +410,44 @@ export default function ConfiguracoesPage() {
   // Carregar cozinhas do banco de dados
   useEffect(() => {
     (async () => {
-      const api = (window as any)?.api;
-      if (!api?.db?.query) return;
+      const isElectron = typeof (window as any)?.api?.db?.query === 'function';
+      
       try {
-        const result = await api.db.query('SELECT * FROM kitchens WHERE is_active = 1 ORDER BY display_order, name');
-        if (result?.rows) {
-          setKitchens(result.rows.map((k: any) => ({ id: k.id, name: k.name })));
+        if (isElectron) {
+          // Modo Electron - usa API local
+          const api = (window as any)?.api;
+          if (!api?.db?.query) return;
+          const result = await api.db.query('SELECT * FROM kitchens WHERE is_active = 1 ORDER BY display_order, name');
+          if (result?.rows) {
+            setKitchens(result.rows.map((k: any) => ({ id: k.id, name: k.name })));
+          }
+        } else {
+          // Modo Navegador - usa Supabase
+          const { supabase } = await import('../../utils/supabase');
+          if (!supabase) {
+            console.warn('[Configurações] Supabase não disponível para carregar cozinhas');
+            return;
+          }
+
+          const { data, error } = await supabase
+            .from('kitchens')
+            .select('id, name')
+            .eq('is_active', true)
+            .order('display_order', { ascending: true })
+            .order('name', { ascending: true });
+
+          if (error) {
+            console.error('[Configurações] Erro ao carregar cozinhas:', error);
+            return;
+          }
+
+          if (data) {
+            setKitchens(data.map(k => ({ id: k.id, name: k.name })));
+            console.log('[Configurações] Cozinhas carregadas:', data.length);
+          }
         }
       } catch (err) {
-        console.error('Erro ao carregar cozinhas:', err);
+        console.error('[Configurações] Erro ao carregar cozinhas:', err);
       }
     })();
   }, []);
@@ -502,75 +761,543 @@ export default function ConfiguracoesPage() {
     }
 
     const api = (window as any)?.api;
+    const isElectron = typeof api?.db?.query === 'function';
 
-    if (editingCategory) {
-      setCategories(categories.map(cat => 
+    try {
+      if (editingCategory) {
+      // Primeiro, salva a categoria no Supabase para garantir que tem UUID válido
+      let validCategoryId = editingCategory.id;
+      
+      try {
+        // Salva/atualiza a categoria e obtém o ID válido
+        console.log('[Configurações] Salvando categoria...', { 
+          idAntigo: editingCategory.id, 
+          nome: categoryForm.name 
+        });
+        
+        const savedId = await productsService.upsertCategory({ 
+          id: String(editingCategory.id), 
+          name: categoryForm.name 
+        });
+        
+        validCategoryId = savedId;
+        console.log('[Configurações] ✅ Categoria salva com ID válido:', validCategoryId);
+        console.log('[Configurações] ID antigo era:', editingCategory.id);
+        console.log('[Configurações] ID novo é:', validCategoryId);
+        
+        // Aguarda um pouco para garantir que a transação foi commitada no Supabase
+        if (!isElectron) {
+          console.log('[Configurações] Aguardando 1s para garantir commit no Supabase...');
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          // Verifica novamente se a categoria existe após o commit
+          const { supabase } = await import('../../utils/supabase');
+          if (supabase) {
+            const { data: verifyCategory, error: verifyError } = await supabase
+              .from('categories')
+              .select('id, name')
+              .eq('id', validCategoryId)
+              .maybeSingle();
+            
+            if (verifyError && verifyError.code !== 'PGRST116') {
+              console.error('[Configurações] ❌ Erro ao verificar categoria após commit:', verifyError);
+            } else if (!verifyCategory) {
+              console.error('[Configurações] ❌ Categoria ainda não encontrada após commit!');
+              // Tenta buscar pelo nome como fallback
+              const { data: categoryByName } = await supabase
+                .from('categories')
+                .select('id, name')
+                .eq('name', categoryForm.name)
+                .maybeSingle();
+              
+              if (categoryByName) {
+                console.log('[Configurações] ✅ Categoria encontrada pelo nome após commit:', categoryByName);
+                validCategoryId = categoryByName.id;
+              }
+            } else {
+              console.log('[Configurações] ✅ Categoria confirmada após commit:', verifyCategory);
+            }
+          }
+        }
+      } catch (err: any) {
+        console.error('[Configurações] Erro ao salvar categoria:', err);
+        const errorMsg = err?.message || String(err);
+        alert(`Erro ao salvar categoria:\n\n${errorMsg}\n\nVerifique o console (F12) para mais detalhes.`);
+        return;
+      }
+
+      // Atualiza a categoria na lista com o ID válido
+      const updatedCategories = categories.map(cat => 
         cat.id === editingCategory.id 
-          ? { ...cat, name: categoryForm.name, icon: categoryForm.icon, integrationCode: categoryForm.integrationCode, kitchenIds: categoryForm.kitchenIds.length > 0 ? categoryForm.kitchenIds : undefined }
+          ? { ...cat, id: validCategoryId, name: categoryForm.name, icon: categoryForm.icon, integrationCode: categoryForm.integrationCode, kitchenIds: categoryForm.kitchenIds.length > 0 ? categoryForm.kitchenIds : undefined }
           : cat
-      ));
-      productsService.upsertCategory({ id: String(editingCategory.id), name: categoryForm.name }).catch(() => {})
+      );
+      setCategories(updatedCategories);
+      
+      // Atualiza também o editingCategory para usar o ID válido
+      setEditingCategory({ ...editingCategory, id: validCategoryId });
+      
       // Atualizar category_kitchens no banco (múltiplas cozinhas)
-      if (api?.db?.query) {
-        try {
+      try {
+        if (isElectron && api?.db?.query) {
+          // Modo Electron - usa API local
           // Remove associações antigas
-          await api.db.query('DELETE FROM category_kitchens WHERE category_id = ?', [editingCategory.id]);
+          await api.db.query('DELETE FROM category_kitchens WHERE category_id = ?', [validCategoryId]);
           // Insere novas associações
           for (const kitchenId of categoryForm.kitchenIds) {
             await api.db.query(
               'INSERT INTO category_kitchens (category_id, kitchen_id, updated_at) VALUES (?, ?, ?)',
-              [editingCategory.id, kitchenId, new Date().toISOString()]
+              [validCategoryId, kitchenId, new Date().toISOString()]
             );
           }
-        } catch (err) {
-          console.error('Erro ao atualizar cozinhas da categoria:', err);
-        }
-      }
-    } else {
-      productsService
-        .upsertCategory({ name: categoryForm.name })
-        .then(async (newId) => {
-          const newCategory: Category = {
-            id: String(newId),
-            name: categoryForm.name,
-            icon: categoryForm.icon,
-            order: categories.length + 1,
-            active: true,
-            integrationCode: categoryForm.integrationCode,
-            kitchenIds: categoryForm.kitchenIds.length > 0 ? categoryForm.kitchenIds : undefined,
+        } else {
+          // Modo Navegador - usa Supabase
+          const { supabase } = await import('../../utils/supabase');
+          if (!supabase) {
+            console.warn('[Configurações] Supabase não disponível para salvar associações categoria-cozinha');
+            return;
           }
-          setCategories([...categories, newCategory])
-          // Atualizar category_kitchens no banco
-          if (api?.db?.query && categoryForm.kitchenIds.length > 0) {
-            try {
+
+          console.log('[Configurações] Atualizando associações categoria-cozinha no Supabase...');
+          console.log('[Configurações] Usando ID válido da categoria:', validCategoryId);
+          
+          // Remove associações antigas (tanto do ID antigo quanto do novo, se diferentes)
+          if (editingCategory.id !== validCategoryId) {
+            console.log('[Configurações] Removendo associações do ID antigo:', editingCategory.id);
+            await supabase
+              .from('category_kitchens')
+              .delete()
+              .eq('category_id', editingCategory.id);
+          }
+          
+          console.log('[Configurações] Deletando associações antigas para categoria:', validCategoryId);
+          const { error: deleteError, data: deleteData } = await supabase
+            .from('category_kitchens')
+            .delete()
+            .eq('category_id', validCategoryId)
+            .select();
+
+          if (deleteError) {
+            console.error('[Configurações] Erro ao deletar associações antigas:', deleteError);
+            console.error('[Configurações] Detalhes do erro:', {
+              code: deleteError.code,
+              message: deleteError.message,
+              details: deleteError.details,
+              hint: deleteError.hint
+            });
+            throw deleteError;
+          }
+          console.log('[Configurações] Associações antigas deletadas:', deleteData);
+
+          // Insere novas associações
+          if (categoryForm.kitchenIds.length > 0) {
+            // PRIMEIRO: Aguarda um pouco e verifica se a categoria realmente existe no Supabase
+            console.log('[Configurações] 🔍 Verificando se categoria existe no Supabase antes de criar associações...');
+            console.log('[Configurações] ID da categoria a verificar:', validCategoryId);
+            console.log('[Configurações] Nome da categoria:', categoryForm.name);
+            
+            // Aguarda um pouco para garantir que a categoria foi commitada
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Tenta encontrar pelo ID primeiro (com retry)
+            let categoryCheck = null;
+            let finalCategoryId = validCategoryId;
+            let attempts = 0;
+            const maxAttempts = 3;
+            
+            while (attempts < maxAttempts && !categoryCheck) {
+              const { data: categoryById, error: checkErrorById } = await supabase
+                .from('categories')
+                .select('id, name')
+                .eq('id', validCategoryId)
+                .maybeSingle();
+              
+              if (checkErrorById && checkErrorById.code !== 'PGRST116') {
+                console.error('[Configurações] ❌ Erro ao verificar categoria pelo ID:', checkErrorById);
+                throw new Error(`Erro ao verificar categoria: ${checkErrorById.message}`);
+              }
+              
+              if (categoryById) {
+                categoryCheck = categoryById;
+                console.log(`[Configurações] ✅ Categoria encontrada pelo ID após ${attempts + 1} tentativa(s):`, categoryCheck);
+                break;
+              }
+              
+              attempts++;
+              if (attempts < maxAttempts) {
+                console.log(`[Configurações] Categoria não encontrada, tentando novamente (${attempts + 1}/${maxAttempts})...`);
+                await new Promise(resolve => setTimeout(resolve, 500));
+              }
+            }
+            
+            // Se não encontrou pelo ID, tenta pelo nome
+            if (!categoryCheck) {
+              console.log('[Configurações] Categoria não encontrada pelo ID após múltiplas tentativas, buscando pelo nome...');
+              const { data: categoryByName, error: checkErrorByName } = await supabase
+                .from('categories')
+                .select('id, name')
+                .eq('name', categoryForm.name)
+                .maybeSingle();
+              
+              if (checkErrorByName && checkErrorByName.code !== 'PGRST116') {
+                console.error('[Configurações] ❌ Erro ao verificar categoria pelo nome:', checkErrorByName);
+                throw new Error(`Erro ao verificar categoria pelo nome: ${checkErrorByName.message}`);
+              }
+              
+              if (categoryByName) {
+                categoryCheck = categoryByName;
+                finalCategoryId = categoryByName.id;
+                console.log('[Configurações] ✅ Categoria encontrada pelo nome:', categoryCheck);
+                console.log(`[Configurações] Usando ID correto: ${finalCategoryId} (ao invés de ${validCategoryId})`);
+              } else {
+                console.error('[Configurações] ❌ Categoria não encontrada no Supabase!', {
+                  idProcurado: validCategoryId,
+                  nomeCategoria: categoryForm.name
+                });
+                throw new Error(`A categoria "${categoryForm.name}" (ID: ${validCategoryId}) não foi encontrada no Supabase. Tente salvar a categoria novamente.`);
+              }
+            }
+            
+            // Atualiza o validCategoryId para usar o ID correto
+            validCategoryId = finalCategoryId;
+            console.log('[Configurações] ✅ Categoria confirmada no Supabase:', categoryCheck);
+            console.log('[Configurações] ID final a ser usado:', validCategoryId);
+            
+            const newAssociations = categoryForm.kitchenIds.map(kitchenId => ({
+              category_id: validCategoryId,
+              kitchen_id: kitchenId,
+              updated_at: new Date().toISOString(),
+            })).filter(assoc => {
+              // Valida que tanto category_id quanto kitchen_id são UUIDs válidos
+              const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+              return uuidRegex.test(assoc.category_id) && uuidRegex.test(assoc.kitchen_id);
+            });
+
+            console.log('[Configurações] 📝 Preparando para inserir associações:', {
+              quantidade: newAssociations.length,
+              associações: newAssociations
+            });
+            
+            // Verifica se as cozinhas existem
+            for (const assoc of newAssociations) {
+              const { data: kitchenCheck, error: kitchenError } = await supabase
+                .from('kitchens')
+                .select('id, name')
+                .eq('id', assoc.kitchen_id)
+                .maybeSingle();
+              
+              if (kitchenError && kitchenError.code !== 'PGRST116') {
+                console.error(`[Configurações] ❌ Erro ao verificar cozinha ${assoc.kitchen_id}:`, kitchenError);
+              } else if (!kitchenCheck) {
+                console.error(`[Configurações] ❌ Cozinha não encontrada: ${assoc.kitchen_id}`);
+              } else {
+                console.log(`[Configurações] ✅ Cozinha confirmada: ${kitchenCheck.name} (${kitchenCheck.id})`);
+              }
+            }
+            
+            const { error: insertError, data: insertData } = await supabase
+              .from('category_kitchens')
+              .insert(newAssociations)
+              .select();
+
+            if (insertError) {
+              console.error('[Configurações] ❌ Erro ao inserir associações:', insertError);
+              console.error('[Configurações] Detalhes completos do erro:', {
+                code: insertError.code,
+                message: insertError.message,
+                details: insertError.details,
+                hint: insertError.hint,
+                categoryId: validCategoryId,
+                kitchenIds: categoryForm.kitchenIds
+              });
+              
+              // Se o erro for de foreign key, a categoria pode não existir ainda
+              if (insertError.code === '23503' || insertError.message?.includes('foreign key')) {
+                console.error('[Configurações] ❌ Erro de foreign key detectado');
+                console.log('[Configurações] ⏳ Aguardando 2s antes de retry...');
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                // Verifica novamente se a categoria existe
+                const { data: categoryCheck2, error: checkError2 } = await supabase
+                  .from('categories')
+                  .select('id, name')
+                  .eq('id', validCategoryId)
+                  .maybeSingle();
+                
+                if (!categoryCheck2) {
+                  throw new Error(`Categoria ainda não existe após retry. ID: ${validCategoryId}`);
+                }
+                
+                console.log('[Configurações] ✅ Categoria confirmada novamente antes do retry:', categoryCheck2);
+                
+                // Tenta inserir novamente
+                const { error: retryError, data: retryData } = await supabase
+                  .from('category_kitchens')
+                  .insert(newAssociations)
+                  .select();
+                
+                if (retryError) {
+                  console.error('[Configurações] ❌ Erro persistente após retry:', retryError);
+                  throw new Error(`Erro ao salvar associações após retry: ${retryError.message}`);
+                }
+                
+                console.log('[Configurações] ✅ Associações inseridas com sucesso após retry!', retryData);
+              } else {
+                throw insertError;
+              }
+            } else {
+              console.log('[Configurações] ✅ Associações categoria-cozinha criadas com sucesso!', insertData);
+            }
+          } else {
+            console.log('[Configurações] Nenhuma cozinha selecionada, apenas removendo associações antigas');
+          }
+        }
+      } catch (err: any) {
+        console.error('[Configurações] Erro ao atualizar cozinhas da categoria:', err);
+        let errorMessage = 'Erro desconhecido';
+        
+        if (err?.message) {
+          errorMessage = err.message;
+        } else if (err?.error?.message) {
+          errorMessage = err.error.message;
+        } else if (err?.details) {
+          errorMessage = err.details;
+        } else if (typeof err === 'string') {
+          errorMessage = err;
+        } else {
+          try {
+            errorMessage = JSON.stringify(err, null, 2);
+          } catch {
+            errorMessage = String(err);
+          }
+        }
+        
+        alert(`Erro ao salvar associações:\n\n${errorMessage}\n\nVerifique o console (F12) para mais detalhes.`);
+      }
+      
+      // Fecha o modal apenas se tudo deu certo
+      setShowCategoryModal(false);
+      setEditingCategory(null);
+      resetForms();
+    } else {
+      // Criar nova categoria
+      try {
+        console.log('[Configurações] Criando nova categoria...', { nome: categoryForm.name });
+        
+        const newId = await productsService.upsertCategory({ name: categoryForm.name });
+        console.log('[Configurações] ✅ Nova categoria criada com ID:', newId);
+        
+        // Aguarda um pouco para garantir que a categoria foi commitada no Supabase
+        const isElectron = typeof (window as any)?.api?.db?.query === 'function';
+        if (!isElectron) {
+          console.log('[Configurações] Aguardando 1s para garantir commit da categoria no Supabase...');
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          // Verifica se a categoria existe antes de criar associações
+          const { supabase } = await import('../../utils/supabase');
+          if (supabase) {
+            let attempts = 0;
+            let categoryExists = false;
+            while (attempts < 3 && !categoryExists) {
+              const { data, error } = await supabase
+                .from('categories')
+                .select('id')
+                .eq('id', newId)
+                .maybeSingle();
+              
+              if (error && error.code !== 'PGRST116') {
+                console.error('[Configurações] Erro ao verificar categoria:', error);
+                break;
+              }
+              
+              if (data) {
+                categoryExists = true;
+                console.log('[Configurações] ✅ Categoria confirmada no Supabase após', attempts + 1, 'tentativa(s)');
+                break;
+              }
+              
+              attempts++;
+              if (attempts < 3) {
+                console.log(`[Configurações] Categoria não encontrada, tentando novamente (${attempts + 1}/3)...`);
+                await new Promise(resolve => setTimeout(resolve, 500));
+              }
+            }
+            
+            if (!categoryExists) {
+              console.warn('[Configurações] ⚠️ Categoria não encontrada após 3 tentativas, mas continuando...');
+            }
+          }
+        }
+        
+        const newCategory: Category = {
+          id: String(newId),
+          name: categoryForm.name,
+          icon: categoryForm.icon,
+          order: categories.length + 1,
+          active: true,
+          integrationCode: categoryForm.integrationCode,
+          kitchenIds: categoryForm.kitchenIds.length > 0 ? categoryForm.kitchenIds : undefined,
+        }
+        setCategories([...categories, newCategory])
+        
+        // Atualizar category_kitchens no banco
+        if (categoryForm.kitchenIds.length > 0) {
+          try {
+            if (isElectron && (window as any)?.api?.db?.query) {
+              // Modo Electron - usa API local
               for (const kitchenId of categoryForm.kitchenIds) {
-                await api.db.query(
+                await (window as any).api.db.query(
                   'INSERT INTO category_kitchens (category_id, kitchen_id, updated_at) VALUES (?, ?, ?)',
                   [newId, kitchenId, new Date().toISOString()]
                 );
               }
-            } catch (err) {
-              console.error('Erro ao inserir cozinhas da categoria:', err);
-            }
-          }
-        })
-        .catch(() => {
-          const newCategory: Category = {
-            id: Date.now().toString(),
-            name: categoryForm.name,
-            icon: categoryForm.icon,
-            order: categories.length + 1,
-            active: true,
-            integrationCode: categoryForm.integrationCode,
-            kitchenIds: categoryForm.kitchenIds.length > 0 ? categoryForm.kitchenIds : undefined,
-          }
-          setCategories([...categories, newCategory])
-        })
-    }
+            } else {
+              // Modo Navegador - usa Supabase
+              const { supabase } = await import('../../utils/supabase');
+              if (!supabase) {
+                console.warn('[Configurações] Supabase não disponível para salvar associações categoria-cozinha');
+                return;
+              }
 
-    setShowCategoryModal(false);
-    setEditingCategory(null);
-    resetForms();
+              console.log('[Configurações] Criando associações categoria-cozinha no Supabase...');
+              console.log('[Configurações] Nova categoria ID:', newId);
+              console.log('[Configurações] Kitchen IDs:', categoryForm.kitchenIds);
+              
+              // Aguarda um pouco e verifica se a categoria existe antes de criar associações
+              await new Promise(resolve => setTimeout(resolve, 500));
+              
+              let categoryExists = false;
+              let attempts = 0;
+              const maxAttempts = 3;
+              
+              while (attempts < maxAttempts && !categoryExists) {
+                const { data: categoryCheck, error: checkError } = await supabase
+                  .from('categories')
+                  .select('id')
+                  .eq('id', newId)
+                  .maybeSingle();
+                
+                if (checkError && checkError.code !== 'PGRST116') {
+                  console.error('[Configurações] Erro ao verificar categoria:', checkError);
+                  break;
+                }
+                
+                if (categoryCheck) {
+                  categoryExists = true;
+                  console.log(`[Configurações] ✅ Categoria confirmada no Supabase após ${attempts + 1} tentativa(s)`);
+                  break;
+                }
+                
+                attempts++;
+                if (attempts < maxAttempts) {
+                  console.log(`[Configurações] Categoria não encontrada, tentando novamente (${attempts + 1}/${maxAttempts})...`);
+                  await new Promise(resolve => setTimeout(resolve, 500));
+                }
+              }
+              
+              if (!categoryExists) {
+                throw new Error(`A categoria não foi encontrada no Supabase após ${maxAttempts} tentativas. ID: ${newId}`);
+              }
+              
+              const newAssociations = categoryForm.kitchenIds.map(kitchenId => ({
+                category_id: newId,
+                kitchen_id: kitchenId,
+                updated_at: new Date().toISOString(),
+              })).filter(assoc => {
+                // Valida que tanto category_id quanto kitchen_id são UUIDs válidos
+                const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+                return uuidRegex.test(assoc.category_id) && uuidRegex.test(assoc.kitchen_id);
+              });
+
+              console.log('[Configurações] Dados a inserir:', newAssociations);
+              const { error: insertError, data: insertData } = await supabase
+                .from('category_kitchens')
+                .insert(newAssociations)
+                .select();
+
+              if (insertError) {
+                console.error('[Configurações] Erro ao inserir associações:', insertError);
+                console.error('[Configurações] Detalhes do erro:', {
+                  code: insertError.code,
+                  message: insertError.message,
+                  details: insertError.details,
+                  hint: insertError.hint
+                });
+                
+                // Se o erro for de foreign key, tenta novamente após aguardar mais
+                if (insertError.code === '23503' || insertError.message?.includes('foreign key')) {
+                  console.error('[Configurações] ❌ Erro de foreign key - aguardando e tentando novamente...');
+                  await new Promise(resolve => setTimeout(resolve, 1000));
+                  
+                  // Verifica novamente se a categoria existe
+                  const { data: categoryCheck2 } = await supabase
+                    .from('categories')
+                    .select('id')
+                    .eq('id', newId)
+                    .maybeSingle();
+                  
+                  if (!categoryCheck2) {
+                    throw new Error(`Categoria não encontrada após retry. ID: ${newId}`);
+                  }
+                  
+                  // Tenta inserir novamente
+                  const { error: retryError, data: retryData } = await supabase
+                    .from('category_kitchens')
+                    .insert(newAssociations)
+                    .select();
+                  
+                  if (retryError) {
+                    throw new Error(`Erro ao salvar associações após retry: ${retryError.message}`);
+                  }
+                  
+                  console.log('[Configurações] ✅ Associações inseridas com sucesso após retry!', retryData);
+                } else {
+                  throw insertError;
+                }
+              } else {
+                console.log('[Configurações] ✅ Associações categoria-cozinha criadas com sucesso!', insertData);
+              }
+            }
+          } catch (err: any) {
+            console.error('[Configurações] Erro ao inserir cozinhas da categoria:', err);
+            let errorMessage = 'Erro desconhecido';
+            
+            if (err?.message) {
+              errorMessage = err.message;
+            } else if (err?.error?.message) {
+              errorMessage = err.error.message;
+            } else if (err?.details) {
+              errorMessage = err.details;
+            } else if (typeof err === 'string') {
+              errorMessage = err;
+            } else {
+              try {
+                errorMessage = JSON.stringify(err, null, 2);
+              } catch {
+                errorMessage = String(err);
+              }
+            }
+            
+            alert(`Erro ao salvar associações:\n\n${errorMessage}\n\nVerifique o console (F12) para mais detalhes.`);
+          }
+        }
+      } catch (err: any) {
+        console.error('[Configurações] Erro ao criar categoria:', err);
+        const errorMsg = err?.message || String(err);
+        alert(`Erro ao criar categoria:\n\n${errorMsg}\n\nVerifique o console (F12) para mais detalhes.`);
+        return;
+      }
+      
+      // Fecha o modal apenas se tudo deu certo
+      setShowCategoryModal(false);
+      setEditingCategory(null);
+      resetForms();
+    }
+    } catch (err: any) {
+      console.error('[Configurações] Erro geral ao salvar categoria:', err);
+      const errorMsg = err?.message || String(err);
+      alert(`Erro ao salvar categoria:\n\n${errorMsg}\n\nVerifique o console (F12) para mais detalhes.`);
+    }
   };
 
   const handleSaveItem = () => {
@@ -780,11 +1507,32 @@ export default function ConfiguracoesPage() {
     setShowConfirmation(true);
   };
 
-  const openEditCategory = (category: Category) => {
-    setEditingCategory(category);
-    // Prioriza kitchenIds, mas suporta kitchenId legado
-    const kitchenIds = (category as any).kitchenIds || 
+  const openEditCategory = async (category: Category) => {
+    const isElectron = typeof (window as any)?.api?.db?.query === 'function';
+    let kitchenIds = (category as any).kitchenIds || 
       ((category as any).kitchenId ? [(category as any).kitchenId] : []);
+
+    // Se estiver no navegador, carrega os kitchenIds do Supabase
+    if (!isElectron) {
+      try {
+        const { supabase } = await import('../../utils/supabase');
+        if (supabase) {
+          const { data: associations, error } = await supabase
+            .from('category_kitchens')
+            .select('kitchen_id')
+            .eq('category_id', category.id);
+
+          if (!error && associations) {
+            kitchenIds = associations.map(a => a.kitchen_id);
+            console.log('[Configurações] KitchenIds carregados do Supabase para categoria:', category.name, kitchenIds);
+          }
+        }
+      } catch (err) {
+        console.error('[Configurações] Erro ao carregar kitchenIds do Supabase:', err);
+      }
+    }
+
+    setEditingCategory(category);
     setCategoryForm({ 
       name: category.name, 
       icon: category.icon, 

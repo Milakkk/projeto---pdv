@@ -6,7 +6,7 @@ import * as storeService from '@/offline/services/storeService'
 import * as ordersCompleteService from '@/offline/services/ordersCompleteService'
 import { db } from '@/offline/db/client'
 import { Order, OperationalSession, KitchenOperator } from '@/types'
-import { syncStorage } from '@/utils/syncStorage'
+import { supabase } from '@/utils/supabase'
 
 // Verifica se o SQLite está disponível
 const isDbAvailable = !!db
@@ -80,79 +80,64 @@ export interface Kitchen {
 }
 
 export function useKitchens() {
-  // Usa syncStorage para sincronização em tempo real entre navegadores
-  const initialKitchens = syncStorage.getItem<Kitchen[]>('kitchens', [])
-  const [kitchens, setKitchensState] = useState<Kitchen[]>(initialKitchens)
-  const [loading, setLoading] = useState(false)
+  const [kitchens, setKitchensState] = useState<Kitchen[]>([])
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     let mounted = true
     
     const load = async () => {
-      const timeout = setTimeout(() => {
-        if (mounted) setLoading(false)
-      }, 3000)
-      
-      // Carrega do DB se disponível (Electron) e sincroniza com syncStorage
-      if (isDbAvailable) {
-        try {
-          const dbKitchens = await kitchenService.listKitchens()
-          if (mounted) {
-            if (dbKitchens.length > 0) {
-              const mapped = dbKitchens.map(k => ({
-                id: k.id,
-                name: k.name,
-                unitId: k.unitId,
-                isActive: k.isActive ?? true,
-                displayOrder: k.displayOrder ?? 0,
-              }))
-              setKitchensState(mapped)
-              // Sincroniza com syncStorage para navegadores
-              await syncStorage.setItem('kitchens', mapped)
-            } else {
-              // Se DB vazio, tenta carregar do syncStorage (pode ter dados de navegador)
-              const stored = syncStorage.getItem<Kitchen[]>('kitchens', [])
-              if (stored.length > 0) {
-                setKitchensState(stored)
-                // Sincroniza de volta para o DB
-                for (const k of stored) {
-                  await kitchenService.upsertKitchen(k)
-                }
-              }
-            }
-          }
-        } catch (err) {
-          console.warn('Erro ao carregar cozinhas do DB:', err)
-          // Fallback para syncStorage
-          const stored = syncStorage.getItem<Kitchen[]>('kitchens', [])
-          if (mounted) {
-            setKitchensState(stored)
-          }
-        }
-      } else {
-        // No navegador, usa syncStorage
-        const stored = syncStorage.getItem<Kitchen[]>('kitchens', [])
+      try {
+        setLoading(true)
+        // SEMPRE carrega do Supabase/DB (nada de localStorage)
+        const dbKitchens = await kitchenService.listKitchens()
+        
         if (mounted) {
-          setKitchensState(stored)
+          const mapped = dbKitchens.map(k => ({
+            id: k.id,
+            name: k.name,
+            unitId: k.unitId,
+            isActive: k.isActive ?? true,
+            displayOrder: k.displayOrder ?? 0,
+          }))
+          setKitchensState(mapped)
+        }
+      } catch (err) {
+        console.error('Erro ao carregar cozinhas:', err)
+        if (mounted) {
+          setKitchensState([])
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false)
         }
       }
-      
-      clearTimeout(timeout)
-      if (mounted) setLoading(false)
     }
     
     load()
-
-    // Subscreve mudanças em tempo real
-    const unsubscribe = syncStorage.subscribe('kitchens', (newKitchens: Kitchen[]) => {
-      if (mounted && newKitchens) {
-        setKitchensState(newKitchens)
-      }
-    })
+    
+    // Subscreve mudanças em tempo real do Supabase (se disponível)
+    let subscription: any = null
+    if (supabase) {
+      subscription = supabase
+        .channel('kitchens-changes')
+        .on('postgres_changes', 
+          { event: '*', schema: 'public', table: 'kitchens' },
+          () => {
+            // Recarrega quando há mudanças
+            if (mounted) {
+              load()
+            }
+          }
+        )
+        .subscribe()
+    }
     
     return () => { 
       mounted = false
-      unsubscribe()
+      if (subscription) {
+        subscription.unsubscribe()
+      }
     }
   }, [])
 
@@ -160,39 +145,38 @@ export function useKitchens() {
     const id = crypto.randomUUID()
     const newKitchen = { ...kitchen, id }
     
-    // Salva no DB se disponível (Electron)
-    if (isDbAvailable) {
-      try {
-        await kitchenService.upsertKitchen(newKitchen)
-      } catch (err) {
-        console.warn('Erro ao salvar cozinha no DB:', err)
-      }
+    try {
+      console.log('[useKitchens] Tentando adicionar cozinha:', newKitchen)
+      
+      // SEMPRE salva no Supabase/DB (nada de localStorage)
+      await kitchenService.upsertKitchen(newKitchen)
+      
+      console.log('[useKitchens] Cozinha salva com sucesso, ID:', id)
+      
+      // Recarrega do banco para garantir sincronização
+      const updated = await kitchenService.listKitchens()
+      const mapped = updated.map(k => ({
+        id: k.id,
+        name: k.name,
+        unitId: k.unitId,
+        isActive: k.isActive ?? true,
+        displayOrder: k.displayOrder ?? 0,
+      }))
+      setKitchensState(mapped)
+      
+      return id
+    } catch (err: any) {
+      console.error('[useKitchens] Erro ao adicionar cozinha:', err)
+      throw new Error(err?.message || 'Erro ao salvar cozinha no banco de dados')
     }
-    
-    // Adiciona usando syncStorage (sincroniza em tempo real)
-    const success = syncStorage.addToArray('kitchens', newKitchen, (k: Kitchen) => k.id)
-    if (!success) {
-      throw new Error('Cozinha já existe')
-    }
-    
-    return id
   }, [])
 
-  // REMOVIDO: updateKitchen - não permite editar, apenas adicionar
-  // Se precisar atualizar, deve remover e adicionar novamente
-
   const deleteKitchen = useCallback(async (id: string) => {
-    // Remove do DB se disponível
-    if (isDbAvailable) {
-      try {
-        await kitchenService.deleteKitchen(id)
-      } catch (err) {
-        console.warn('Erro ao remover cozinha do DB:', err)
-      }
-    }
+    // SEMPRE remove do Supabase/DB (nada de localStorage)
+    await kitchenService.deleteKitchen(id)
     
-    // Remove usando syncStorage (sincroniza em tempo real)
-    syncStorage.removeFromArray('kitchens', id, (k: Kitchen) => k.id)
+    // Atualiza estado local
+    setKitchensState(prev => prev.filter(k => k.id !== id))
   }, [])
 
   return { 

@@ -1,9 +1,10 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useKitchens, Kitchen, useAppConfig } from '../../../hooks/useDatabase';
 import Button from '../../../components/base/Button';
 import Input from '../../../components/base/Input';
 import Modal from '../../../components/base/Modal';
 import ConfirmationModal from '../../../components/base/ConfirmationModal';
+import { testSupabaseKitchen } from '../../../utils/testSupabase';
 
 interface KitchensManagerProps {
   globalFilter: string;
@@ -17,6 +18,31 @@ export default function KitchensManager({ globalFilter }: KitchensManagerProps) 
   const [formData, setFormData] = useState({ name: '', isActive: true });
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [kitchenToDelete, setKitchenToDelete] = useState<Kitchen | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  
+  // Verifica conexão com Supabase
+  useEffect(() => {
+    const checkSupabase = async () => {
+      try {
+        const { supabase } = await import('../../../utils/supabase');
+        if (!supabase) {
+          setError('Supabase não configurado. Verifique as variáveis de ambiente.');
+          return;
+        }
+        // Testa conexão
+        const { error: testError } = await supabase.from('kitchens').select('id').limit(1);
+        if (testError) {
+          setError(`Erro de conexão: ${testError.message}`);
+        } else {
+          setError(null);
+        }
+      } catch (err: any) {
+        setError(`Erro ao verificar Supabase: ${err.message}`);
+      }
+    };
+    checkSupabase();
+  }, []);
   
   // Filtro de busca
   const filteredKitchens = useMemo(() => {
@@ -42,16 +68,26 @@ export default function KitchensManager({ globalFilter }: KitchensManagerProps) 
       return;
     }
     
+    setIsSaving(true);
+    setError(null);
+    
     try {
+      console.log('[KitchensManager] Salvando cozinha:', formData);
       await addKitchen({
         name: formData.name.trim(),
         isActive: formData.isActive,
         displayOrder: kitchens.length,
       });
+      console.log('[KitchensManager] Cozinha salva com sucesso!');
       setShowModal(false);
       setFormData({ name: '', isActive: true });
     } catch (err: any) {
-      alert(err.message || 'Erro ao adicionar cozinha');
+      console.error('[KitchensManager] Erro ao salvar:', err);
+      const errorMsg = err?.message || err?.toString() || 'Erro ao adicionar cozinha';
+      setError(errorMsg);
+      alert(`Erro ao adicionar cozinha:\n\n${errorMsg}\n\nVerifique:\n1. Console do navegador (F12)\n2. Variáveis de ambiente (.env)\n3. Políticas RLS no Supabase`);
+    } finally {
+      setIsSaving(false);
     }
   };
   
@@ -80,6 +116,19 @@ export default function KitchensManager({ globalFilter }: KitchensManagerProps) 
   
   return (
     <div className="space-y-6">
+      {/* Indicador de Erro */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <div className="flex items-center">
+            <i className="ri-error-warning-line text-red-600 text-xl mr-2"></i>
+            <div>
+              <h3 className="font-medium text-red-800">Erro de Conexão</h3>
+              <p className="text-sm text-red-600">{error}</p>
+            </div>
+          </div>
+        </div>
+      )}
+      
       {/* Cabeçalho */}
       <div className="flex items-center justify-between">
         <div>
@@ -88,9 +137,9 @@ export default function KitchensManager({ globalFilter }: KitchensManagerProps) 
             {kitchens.length} de {config.maxKitchens} cozinhas configuradas
           </p>
         </div>
-        <Button onClick={handleOpenNew} disabled={!canAddMore}>
+        <Button onClick={handleOpenNew} disabled={!canAddMore || isSaving}>
           <i className="ri-add-line mr-2"></i>
-          Nova Cozinha
+          {isSaving ? 'Salvando...' : 'Nova Cozinha'}
         </Button>
       </div>
       
@@ -196,22 +245,60 @@ export default function KitchensManager({ globalFilter }: KitchensManagerProps) 
         </ul>
       </div>
       
+      {/* Botão de Teste (apenas em desenvolvimento) */}
+      {import.meta.env.DEV && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs text-yellow-800 mb-1">
+                <strong>Debug:</strong> Teste a conexão com Supabase
+              </p>
+              <p className="text-xs text-yellow-700">
+                Ou execute no console (F12): <code className="bg-yellow-100 px-1 rounded">await testSupabaseKitchen()</code>
+              </p>
+            </div>
+            <Button 
+              size="sm" 
+              variant="secondary"
+              onClick={async () => {
+                console.log('🧪 Iniciando teste do Supabase...');
+                await testSupabaseKitchen();
+              }}
+            >
+              <i className="ri-bug-line mr-1"></i>
+              Testar Supabase
+            </Button>
+          </div>
+        </div>
+      )}
+      
       {/* Modal de Edição/Criação */}
       <Modal
         isOpen={showModal}
         onClose={() => {
           setShowModal(false);
           setFormData({ name: '', isActive: true });
+          setError(null);
         }}
         title="Nova Cozinha"
         size="sm"
       >
         <div className="space-y-4">
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded p-3">
+              <p className="text-sm text-red-800">
+                <i className="ri-error-warning-line mr-1"></i>
+                {error}
+              </p>
+            </div>
+          )}
+          
           <Input
             label="Nome da Cozinha *"
             value={formData.name}
             onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
             placeholder="Ex: Grill, Bebidas, Sobremesas..."
+            disabled={isSaving}
           />
           
           <div className="flex items-center justify-between">
@@ -244,8 +331,9 @@ export default function KitchensManager({ globalFilter }: KitchensManagerProps) 
             <Button 
               onClick={handleSave}
               className="flex-1"
+              disabled={isSaving}
             >
-              Criar
+              {isSaving ? 'Salvando...' : 'Criar'}
             </Button>
           </div>
         </div>

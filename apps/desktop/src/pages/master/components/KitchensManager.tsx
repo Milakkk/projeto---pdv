@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import Button from '../../../components/base/Button';
 import Input from '../../../components/base/Input';
+import { supabase } from '../../../utils/supabase';
+import { testSupabaseKitchen } from '../../../utils/testSupabase';
 
 interface Kitchen {
   id: string;
   name: string;
-  is_active: number;
+  is_active: number | boolean;
   display_order: number;
   updated_at: string;
 }
@@ -17,123 +19,326 @@ export default function KitchensManager() {
   const [editName, setEditName] = useState('');
   const [newKitchenName, setNewKitchenName] = useState('');
   const [showNewForm, setShowNewForm] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Verifica se está no Electron ou navegador
+  const isElectron = typeof (window as any)?.api?.db?.query === 'function';
 
   const loadKitchens = useCallback(async () => {
-    const api = (window as any)?.api;
-    if (!api?.db?.query) return;
-
     try {
       setLoading(true);
-      const result = await api.db.query('SELECT * FROM kitchens ORDER BY display_order, name');
-      if (result?.rows) {
-        setKitchens(result.rows);
+      setError(null);
+
+      if (isElectron) {
+        // Modo Electron - usa API local
+        const api = (window as any)?.api;
+        if (!api?.db?.query) {
+          setError('API do Electron não disponível');
+          return;
+        }
+        const result = await api.db.query('SELECT * FROM kitchens ORDER BY display_order, name');
+        if (result?.rows) {
+          setKitchens(result.rows);
+        }
+      } else {
+        // Modo Navegador - usa Supabase
+        if (!supabase) {
+          setError('Supabase não configurado. Verifique as variáveis de ambiente.');
+          return;
+        }
+
+        console.log('[KitchensManager] Carregando cozinhas do Supabase...');
+        console.log('[KitchensManager] URL:', supabase.supabaseUrl);
+        
+        try {
+          const { data, error: supabaseError } = await supabase
+            .from('kitchens')
+            .select('*')
+            .order('display_order', { ascending: true })
+            .order('name', { ascending: true });
+
+          if (supabaseError) {
+            console.error('[KitchensManager] Erro do Supabase:', supabaseError);
+            console.error('[KitchensManager] Código:', supabaseError.code);
+            console.error('[KitchensManager] Mensagem:', supabaseError.message);
+            console.error('[KitchensManager] Detalhes:', supabaseError.details);
+            console.error('[KitchensManager] Hint:', supabaseError.hint);
+            setError(`Erro ao carregar: ${supabaseError.message} (${supabaseError.code || 'sem código'})`);
+            throw supabaseError;
+          }
+
+          if (data) {
+            // Mapeia do formato Supabase para o formato esperado
+            const mapped = data.map(k => ({
+              id: k.id,
+              name: k.name,
+              is_active: k.is_active ? 1 : 0, // Converte boolean para number
+              display_order: k.display_order ?? 0,
+              updated_at: k.updated_at,
+            }));
+            console.log('[KitchensManager] Cozinhas carregadas:', mapped.length);
+            setKitchens(mapped);
+          }
+        } catch (fetchError: any) {
+          // Erro de rede (CORS, conexão, etc)
+          console.error('[KitchensManager] Erro de rede ao buscar cozinhas:', fetchError);
+          console.error('[KitchensManager] Tipo:', fetchError?.name);
+          console.error('[KitchensManager] Mensagem:', fetchError?.message);
+          console.error('[KitchensManager] Stack:', fetchError?.stack);
+          
+          if (fetchError?.message?.includes('Failed to fetch') || fetchError?.name === 'TypeError') {
+            setError('Erro de conexão com Supabase. Verifique: 1) URL está correta? 2) CORS habilitado? 3) Internet conectada?');
+          } else {
+            setError(`Erro: ${fetchError?.message || 'Erro desconhecido'}`);
+          }
+          throw fetchError;
+        }
       }
-    } catch (err) {
-      console.error('Erro ao carregar cozinhas:', err);
+    } catch (err: any) {
+      console.error('[KitchensManager] Erro geral ao carregar cozinhas:', err);
+      if (!error) { // Só atualiza se não tiver erro mais específico já definido
+        setError(err?.message || 'Erro ao carregar cozinhas');
+      }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isElectron]);
 
   useEffect(() => {
     loadKitchens();
 
-    // Escutar mudanças no DB
-    const api = (window as any)?.api;
-    if (api?.db?.onChange) {
-      const unsub = api.db.onChange((payload: any) => {
-        if (payload?.table === 'kitchens') {
-          loadKitchens();
-        }
-      });
-      return () => unsub?.();
+    // Escutar mudanças em tempo real
+    if (isElectron) {
+      // Electron - escuta mudanças via IPC
+      const api = (window as any)?.api;
+      if (api?.db?.onChange) {
+        const unsub = api.db.onChange((payload: any) => {
+          if (payload?.table === 'kitchens') {
+            loadKitchens();
+          }
+        });
+        return () => unsub?.();
+      }
+    } else if (supabase) {
+      // Navegador - escuta mudanças via Supabase Realtime
+      // Desabilitado temporariamente para evitar erros de conexão
+      // TODO: Reabilitar quando a conexão estiver estável
+      /*
+      try {
+        const subscription = supabase
+          .channel('kitchens-changes')
+          .on('postgres_changes', 
+            { event: '*', schema: 'public', table: 'kitchens' },
+            () => {
+              console.log('[KitchensManager] Mudança detectada, recarregando...');
+              loadKitchens();
+            }
+          )
+          .subscribe((status) => {
+            console.log('[KitchensManager] Status da subscription:', status);
+            if (status === 'CHANNEL_ERROR') {
+              console.error('[KitchensManager] Erro no canal Realtime');
+            }
+          });
+
+        return () => {
+          subscription.unsubscribe();
+        };
+      } catch (realtimeError) {
+        console.warn('[KitchensManager] Erro ao configurar Realtime (não crítico):', realtimeError);
+      }
+      */
     }
-  }, [loadKitchens]);
+  }, [loadKitchens, isElectron]);
 
   const handleCreate = async () => {
     if (!newKitchenName.trim()) return;
 
-    const api = (window as any)?.api;
-    if (!api?.db?.query) return;
-
     try {
-      const id = `kitchen-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      setError(null);
+      const id = crypto.randomUUID();
       const now = new Date().toISOString();
       const maxOrder = kitchens.reduce((max, k) => Math.max(max, k.display_order || 0), 0);
 
-      await api.db.query(
-        `INSERT INTO kitchens (id, name, is_active, display_order, updated_at, version, pending_sync) 
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [id, newKitchenName.trim(), 1, maxOrder + 1, now, 1, 1]
-      );
+      if (isElectron) {
+        // Modo Electron
+        const api = (window as any)?.api;
+        if (!api?.db?.query) {
+          setError('API do Electron não disponível');
+          return;
+        }
+        await api.db.query(
+          `INSERT INTO kitchens (id, name, is_active, display_order, updated_at, version, pending_sync) 
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [id, newKitchenName.trim(), 1, maxOrder + 1, now, 1, 1]
+        );
+      } else {
+        // Modo Navegador - Supabase
+        if (!supabase) {
+          setError('Supabase não configurado');
+          return;
+        }
+
+        console.log('[KitchensManager] Criando cozinha no Supabase:', { id, name: newKitchenName.trim() });
+        
+        const { data, error: insertError } = await supabase
+          .from('kitchens')
+          .insert({
+            id,
+            name: newKitchenName.trim(),
+            unit_id: null,
+            is_active: true,
+            display_order: maxOrder + 1,
+            created_at: now,
+            updated_at: now,
+            version: 1,
+            pending_sync: false,
+          })
+          .select();
+
+        if (insertError) {
+          console.error('[KitchensManager] Erro ao inserir:', insertError);
+          setError(`Erro ao criar: ${insertError.message} (code: ${insertError.code})`);
+          throw insertError;
+        }
+
+        console.log('[KitchensManager] Cozinha criada:', data);
+      }
 
       setNewKitchenName('');
       setShowNewForm(false);
       await loadKitchens();
-    } catch (err) {
-      console.error('Erro ao criar cozinha:', err);
+    } catch (err: any) {
+      console.error('[KitchensManager] Erro ao criar cozinha:', err);
+      setError(err?.message || 'Erro ao criar cozinha');
+      alert(`Erro ao criar cozinha:\n\n${err?.message || String(err)}\n\nVerifique o console (F12) para mais detalhes.`);
     }
   };
 
   const handleUpdate = async (id: string) => {
     if (!editName.trim()) return;
 
-    const api = (window as any)?.api;
-    if (!api?.db?.query) return;
-
     try {
+      setError(null);
       const now = new Date().toISOString();
-      await api.db.query(
-        `UPDATE kitchens SET name = ?, updated_at = ?, pending_sync = 1 WHERE id = ?`,
-        [editName.trim(), now, id]
-      );
+
+      if (isElectron) {
+        const api = (window as any)?.api;
+        if (!api?.db?.query) {
+          setError('API do Electron não disponível');
+          return;
+        }
+        await api.db.query(
+          `UPDATE kitchens SET name = ?, updated_at = ?, pending_sync = 1 WHERE id = ?`,
+          [editName.trim(), now, id]
+        );
+      } else {
+        if (!supabase) {
+          setError('Supabase não configurado');
+          return;
+        }
+        const { error: updateError } = await supabase
+          .from('kitchens')
+          .update({ name: editName.trim(), updated_at: now })
+          .eq('id', id);
+        
+        if (updateError) throw updateError;
+      }
 
       setEditingId(null);
       setEditName('');
       await loadKitchens();
-    } catch (err) {
-      console.error('Erro ao atualizar cozinha:', err);
+    } catch (err: any) {
+      console.error('[KitchensManager] Erro ao atualizar cozinha:', err);
+      setError(err?.message || 'Erro ao atualizar cozinha');
     }
   };
 
   const handleToggleActive = async (kitchen: Kitchen) => {
-    const api = (window as any)?.api;
-    if (!api?.db?.query) return;
-
     try {
+      setError(null);
       const now = new Date().toISOString();
-      const newStatus = kitchen.is_active ? 0 : 1;
-      await api.db.query(
-        `UPDATE kitchens SET is_active = ?, updated_at = ?, pending_sync = 1 WHERE id = ?`,
-        [newStatus, now, kitchen.id]
-      );
+      const currentStatus = typeof kitchen.is_active === 'boolean' ? kitchen.is_active : kitchen.is_active === 1;
+      const newStatus = !currentStatus;
+
+      if (isElectron) {
+        const api = (window as any)?.api;
+        if (!api?.db?.query) {
+          setError('API do Electron não disponível');
+          return;
+        }
+        await api.db.query(
+          `UPDATE kitchens SET is_active = ?, updated_at = ?, pending_sync = 1 WHERE id = ?`,
+          [newStatus ? 1 : 0, now, kitchen.id]
+        );
+      } else {
+        if (!supabase) {
+          setError('Supabase não configurado');
+          return;
+        }
+        const { error: updateError } = await supabase
+          .from('kitchens')
+          .update({ is_active: newStatus, updated_at: now })
+          .eq('id', kitchen.id);
+        
+        if (updateError) throw updateError;
+      }
+
       await loadKitchens();
-    } catch (err) {
-      console.error('Erro ao alterar status:', err);
+    } catch (err: any) {
+      console.error('[KitchensManager] Erro ao alterar status:', err);
+      setError(err?.message || 'Erro ao alterar status');
     }
   };
 
   const handleDelete = async (id: string) => {
     if (!confirm('Tem certeza que deseja excluir esta cozinha?')) return;
 
-    const api = (window as any)?.api;
-    if (!api?.db?.query) return;
-
     try {
-      // Remover associações com categorias
-      await api.db.query('UPDATE categories SET kitchen_id = NULL WHERE kitchen_id = ?', [id]);
-      // Excluir cozinha
-      await api.db.query('DELETE FROM kitchens WHERE id = ?', [id]);
+      setError(null);
+
+      if (isElectron) {
+        // Modo Electron
+        const api = (window as any)?.api;
+        if (!api?.db?.query) {
+          setError('API do Electron não disponível');
+          return;
+        }
+        await api.db.query('UPDATE categories SET kitchen_id = NULL WHERE kitchen_id = ?', [id]);
+        await api.db.query('DELETE FROM kitchens WHERE id = ?', [id]);
+      } else {
+        // Modo Navegador - Supabase
+        if (!supabase) {
+          setError('Supabase não configurado');
+          return;
+        }
+
+        console.log('[KitchensManager] Deletando cozinha do Supabase:', id);
+        
+        // Primeiro remove associações (se houver tabela category_kitchens)
+        const { error: deleteError } = await supabase
+          .from('kitchens')
+          .delete()
+          .eq('id', id);
+
+        if (deleteError) {
+          console.error('[KitchensManager] Erro ao deletar:', deleteError);
+          setError(`Erro ao deletar: ${deleteError.message}`);
+          throw deleteError;
+        }
+
+        console.log('[KitchensManager] Cozinha deletada com sucesso');
+      }
+
       await loadKitchens();
-    } catch (err) {
-      console.error('Erro ao excluir cozinha:', err);
+    } catch (err: any) {
+      console.error('[KitchensManager] Erro ao excluir cozinha:', err);
+      setError(err?.message || 'Erro ao excluir cozinha');
+      alert(`Erro ao excluir cozinha:\n\n${err?.message || String(err)}`);
     }
   };
 
   const handleMoveOrder = async (kitchen: Kitchen, direction: 'up' | 'down') => {
-    const api = (window as any)?.api;
-    if (!api?.db?.query) return;
-
     const currentIndex = kitchens.findIndex(k => k.id === kitchen.id);
     const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
 
@@ -143,17 +348,47 @@ export default function KitchensManager() {
     const now = new Date().toISOString();
 
     try {
-      await api.db.query(
-        'UPDATE kitchens SET display_order = ?, updated_at = ? WHERE id = ?',
-        [targetKitchen.display_order, now, kitchen.id]
-      );
-      await api.db.query(
-        'UPDATE kitchens SET display_order = ?, updated_at = ? WHERE id = ?',
-        [kitchen.display_order, now, targetKitchen.id]
-      );
+      setError(null);
+
+      if (isElectron) {
+        const api = (window as any)?.api;
+        if (!api?.db?.query) {
+          setError('API do Electron não disponível');
+          return;
+        }
+        await api.db.query(
+          'UPDATE kitchens SET display_order = ?, updated_at = ? WHERE id = ?',
+          [targetKitchen.display_order, now, kitchen.id]
+        );
+        await api.db.query(
+          'UPDATE kitchens SET display_order = ?, updated_at = ? WHERE id = ?',
+          [kitchen.display_order, now, targetKitchen.id]
+        );
+      } else {
+        if (!supabase) {
+          setError('Supabase não configurado');
+          return;
+        }
+        // Atualiza ambas as cozinhas
+        const { error: error1 } = await supabase
+          .from('kitchens')
+          .update({ display_order: targetKitchen.display_order, updated_at: now })
+          .eq('id', kitchen.id);
+        
+        if (error1) throw error1;
+
+        const { error: error2 } = await supabase
+          .from('kitchens')
+          .update({ display_order: kitchen.display_order, updated_at: now })
+          .eq('id', targetKitchen.id);
+        
+        if (error2) throw error2;
+      }
+
       await loadKitchens();
-    } catch (err) {
-      console.error('Erro ao reordenar:', err);
+    } catch (err: any) {
+      console.error('[KitchensManager] Erro ao reordenar:', err);
+      setError(err?.message || 'Erro ao reordenar');
     }
   };
 
@@ -171,6 +406,45 @@ export default function KitchensManager() {
 
   return (
     <div className="bg-white p-6 rounded-lg border border-gray-200">
+      {/* Indicador de Erro */}
+      {error && (
+        <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-4">
+          <div className="flex items-center">
+            <i className="ri-error-warning-line text-red-600 text-xl mr-2"></i>
+            <div>
+              <h3 className="font-medium text-red-800">Erro</h3>
+              <p className="text-sm text-red-600">{error}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Indicador de Modo e Botão de Teste */}
+      {import.meta.env.DEV && (
+        <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
+          <div className="flex items-center justify-between">
+            <div className="text-xs text-blue-700">
+              <strong>Modo:</strong> {isElectron ? 'Electron (DB Local)' : 'Navegador (Supabase)'}
+              {!isElectron && !supabase && ' ⚠️ Supabase não configurado!'}
+              {!isElectron && supabase && ' ✅ Supabase conectado'}
+            </div>
+            {!isElectron && (
+              <Button 
+                size="sm" 
+                variant="secondary"
+                onClick={async () => {
+                  console.log('🧪 Iniciando teste do Supabase...');
+                  await testSupabaseKitchen();
+                }}
+              >
+                <i className="ri-bug-line mr-1"></i>
+                Testar Supabase
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-6">
         <div>
           <h3 className="text-lg font-semibold text-gray-900">Gerenciar Cozinhas</h3>
@@ -178,7 +452,7 @@ export default function KitchensManager() {
             Configure as cozinhas disponíveis. Cada cozinha pode ter categorias de produtos associadas.
           </p>
         </div>
-        <Button onClick={() => setShowNewForm(true)}>
+        <Button onClick={() => setShowNewForm(true)} disabled={loading}>
           <i className="ri-add-line mr-2"></i>
           Nova Cozinha
         </Button>

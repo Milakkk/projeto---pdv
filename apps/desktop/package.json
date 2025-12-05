@@ -49,7 +49,7 @@
   "private": true,
   "main": "electron/main.js",
   "scripts": {
-    "build": "vite build",
+    "build": "cross-env NODE_ENV=production vite build",
     "dev:renderer": "vite --port 3010 --strictPort",
     "dev:main": "cross-env VITE_DEV_SERVER_PORT=3010 NODE_ENV=development electron ./electron/main.js",
     "dev:main:pdv": "cross-env VITE_DEV_SERVER_PORT=3010 ELECTRON_WINDOW=pdv NODE_ENV=development electron ./electron/main.js",

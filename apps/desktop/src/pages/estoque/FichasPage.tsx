@@ -4,6 +4,7 @@ import Button from '@/components/base/Button'
 import Modal from '@/components/base/Modal'
 import * as inventory from '@/offline/services/inventoryService'
 import * as productsService from '@/offline/services/productsService'
+import { importRecipesAndPrices } from '@/utils/importRecipes'
 
 export default function EstoqueFichasPage() {
   const [products, setProducts] = useState<any[]>([])
@@ -19,6 +20,9 @@ export default function EstoqueFichasPage() {
   const [expandedProductIds, setExpandedProductIds] = useState<Set<string>>(new Set())
   const [editingLineId, setEditingLineId] = useState<string>('')
   const [showDuplicateModal, setShowDuplicateModal] = useState(false)
+  const [isImporting, setIsImporting] = useState(false)
+  const [importLog, setImportLog] = useState<string[]>([])
+  const [showImportModal, setShowImportModal] = useState(false)
 
   const [newLine, setNewLine] = useState<{ ingredientId: string; quantity: string; unit: string }>({ ingredientId: '', quantity: '', unit: 'g' })
 
@@ -152,6 +156,14 @@ export default function EstoqueFichasPage() {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-bold">Fichas Técnicas</h1>
         <div className="flex gap-2">
+          <Button 
+            variant="secondary" 
+            onClick={() => setShowImportModal(true)}
+            disabled={isImporting}
+          >
+            <i className="ri-download-line mr-2"></i>
+            {isImporting ? 'Importando...' : 'Importar Dados'}
+          </Button>
           <Button variant={activeTab==='list'?'primary':'secondary'} onClick={()=>setActiveTab('list')}>Listar</Button>
           <Button variant={activeTab==='edit'?'primary':'secondary'} onClick={()=>setActiveTab('edit')}>Criar/Editar</Button>
         </div>
@@ -390,6 +402,100 @@ export default function EstoqueFichasPage() {
             <div className="flex justify-end gap-2">
               <Button variant="secondary" onClick={()=>setShowDuplicateModal(false)}>Cancelar</Button>
               <Button onClick={async ()=>{ setShowDuplicateModal(false); await addLine() }}>Adicionar</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {showImportModal && (
+        <Modal
+          isOpen={showImportModal}
+          onClose={() => {
+            if (!isImporting) {
+              setShowImportModal(false);
+              setImportLog([]);
+            }
+          }}
+          title="Importar Fichas Técnicas e Preços"
+          size="lg"
+        >
+          <div className="space-y-4">
+            <div className="text-sm text-gray-600">
+              Esta função irá importar ingredientes com preços e fichas técnicas dos produtos cadastrados.
+            </div>
+            
+            {importLog.length > 0 && (
+              <div className="bg-gray-50 border rounded p-3 max-h-96 overflow-y-auto">
+                <div className="text-xs font-mono space-y-1">
+                  {importLog.map((log, idx) => (
+                    <div key={idx} className="text-gray-700">{log}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button 
+                variant="secondary" 
+                onClick={() => {
+                  if (!isImporting) {
+                    setShowImportModal(false);
+                    setImportLog([]);
+                  }
+                }}
+                disabled={isImporting}
+              >
+                {isImporting ? 'Importando...' : 'Cancelar'}
+              </Button>
+              <Button
+                onClick={async () => {
+                  setIsImporting(true);
+                  setImportLog([]);
+                  
+                  try {
+                    await importRecipesAndPrices(
+                      inventory,
+                      productsService,
+                      (message) => {
+                        setImportLog(prev => [...prev, message]);
+                      }
+                    );
+                    
+                    // Recarrega dados
+                    const prods = await productsService.listProducts();
+                    setProducts(Array.isArray(prods) ? prods : []);
+                    const ing = await inventory.listIngredients();
+                    setIngredients(Array.isArray(ing) ? ing : []);
+                    const pr = await inventory.listPrices();
+                    setIngredientPrices(Array.isArray(pr) ? pr : []);
+                    
+                    const map: Record<string, any[]> = {};
+                    for (const p of (prods || [])) {
+                      const pid = String((p as any).id);
+                      try {
+                        map[pid] = await inventory.listRecipeByProduct(pid);
+                      } catch {
+                        map[pid] = [];
+                      }
+                    }
+                    setRecipesByProduct(map);
+                    
+                    setImportLog(prev => [...prev, '\n✅ Importação concluída! Recarregue a página para ver os dados atualizados.']);
+                    
+                    setTimeout(() => {
+                      setIsImporting(false);
+                      setShowImportModal(false);
+                      setImportLog([]);
+                    }, 2000);
+                  } catch (err: any) {
+                    setImportLog(prev => [...prev, `\n❌ Erro: ${err?.message || String(err)}`]);
+                    setIsImporting(false);
+                  }
+                }}
+                disabled={isImporting}
+              >
+                {isImporting ? 'Importando...' : 'Iniciar Importação'}
+              </Button>
             </div>
           </div>
         </Modal>

@@ -149,24 +149,212 @@ export async function setProductActive(id: UUID, isActive: boolean) {
 }
 
 export async function upsertCategory(params: { id?: UUID; name: string }) {
-  const id = params.id ?? uuid()
+  // Sempre gera um UUID válido para Supabase (não usa IDs antigos como "cat_xxx")
+  // Valida se o ID fornecido é um UUID válido
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  const id = params.id && uuidRegex.test(params.id)
+    ? params.id
+    : crypto.randomUUID()
+  
+  if (params.id && !uuidRegex.test(params.id)) {
+    console.warn(`[productsService] ID "${params.id}" não é um UUID válido, gerando novo UUID: ${id}`)
+  }
   const unitId = await getCurrentUnitId()
   const now = new Date().toISOString()
+  const isElectron = typeof (window as any)?.api?.db?.query === 'function'
+  
   try {
-    const found = await query('SELECT id, unit_id FROM categories WHERE LOWER(name) = LOWER(?) AND (unit_id = ? OR unit_id IS NULL)', [params.name, unitId ?? null])
-    const rows = found?.rows ?? []
-    const preferred = rows.find((r:any)=> String(r.unit_id||'') === String(unitId||'')) || rows[0]
-    const targetId = preferred?.id ? String(preferred.id) : null
-    if (targetId) {
-      await query('UPDATE categories SET name = ?, unit_id = ?, updated_at = ?, pending_sync = 1 WHERE id = ?', [params.name, unitId ?? null, now, targetId])
-      return targetId
+    if (isElectron) {
+      // Modo Electron - usa banco local
+      const found = await query('SELECT id, unit_id FROM categories WHERE LOWER(name) = LOWER(?) AND (unit_id = ? OR unit_id IS NULL)', [params.name, unitId ?? null])
+      const rows = found?.rows ?? []
+      const preferred = rows.find((r:any)=> String(r.unit_id||'') === String(unitId||'')) || rows[0]
+      const targetId = preferred?.id ? String(preferred.id) : null
+      if (targetId) {
+        await query('UPDATE categories SET name = ?, unit_id = ?, updated_at = ?, pending_sync = 1 WHERE id = ?', [params.name, unitId ?? null, now, targetId])
+        return targetId
+      }
+      await query(
+        'INSERT INTO categories (id, name, unit_id, default_station, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, unit_id=excluded.unit_id, default_station=excluded.default_station, updated_at=excluded.updated_at, version=excluded.version, pending_sync=excluded.pending_sync',
+        [id, params.name, unitId ?? null, null, now, 1, 1],
+      )
+      return id
+    } else {
+      // Modo Navegador - usa Supabase
+      const { supabase } = await import('../../utils/supabase')
+      if (!supabase) {
+        console.warn('[productsService] Supabase não disponível para salvar categoria')
+        throw new Error('Supabase não disponível')
+      }
+
+      console.log('[productsService] Salvando categoria no Supabase:', { id, name: params.name })
+      
+      // Verifica se já existe pelo ID
+      const { data: existingById, error: selectErrorById } = await supabase
+        .from('categories')
+        .select('id, name')
+        .eq('id', id)
+        .maybeSingle()
+
+      if (selectErrorById && selectErrorById.code !== 'PGRST116') {
+        console.error('[productsService] Erro ao verificar categoria existente pelo ID:', selectErrorById)
+        throw selectErrorById
+      }
+
+      // Se não encontrou pelo ID, tenta encontrar pelo nome
+      let existing = existingById;
+      let finalId = id;
+      
+      if (!existing) {
+        console.log('[productsService] Categoria não encontrada pelo ID, buscando pelo nome...');
+        const { data: existingByName, error: selectErrorByName } = await supabase
+          .from('categories')
+          .select('id, name')
+          .eq('name', params.name)
+          .maybeSingle();
+        
+        if (selectErrorByName && selectErrorByName.code !== 'PGRST116') {
+          console.error('[productsService] Erro ao buscar categoria pelo nome:', selectErrorByName);
+          throw selectErrorByName;
+        } else if (existingByName) {
+          console.log('[productsService] ✅ Categoria encontrada pelo nome:', existingByName);
+          existing = existingByName;
+          finalId = existing.id; // Usa o ID existente
+          console.log(`[productsService] Usando ID existente: ${finalId} (ao invés de ${id})`);
+        }
+      } else {
+        finalId = existing.id; // Garante que usa o ID encontrado
+      }
+
+      const categoryData = {
+        id: finalId,
+        name: params.name,
+        unit_id: unitId ?? null,
+        default_station: null,
+        updated_at: now,
+        version: 1,
+        pending_sync: false,
+      }
+
+      if (existing) {
+        // Atualiza categoria existente
+        console.log('[productsService] Atualizando categoria existente com ID:', finalId);
+        const { data: updatedData, error: updateError } = await supabase
+          .from('categories')
+          .update(categoryData)
+          .eq('id', finalId)
+          .select()
+        
+        if (updateError) {
+          console.error('[productsService] Erro ao atualizar categoria:', updateError)
+          throw updateError
+        }
+        
+        if (updatedData && updatedData.length > 0) {
+          console.log('[productsService] ✅ Categoria atualizada no Supabase:', updatedData[0])
+          // Aguarda um pouco e verifica se a categoria foi realmente atualizada
+          await new Promise(resolve => setTimeout(resolve, 300))
+          const { data: verifyData } = await supabase
+            .from('categories')
+            .select('id')
+            .eq('id', updatedData[0].id)
+            .maybeSingle()
+          if (verifyData) {
+            return updatedData[0].id
+          } else {
+            console.warn('[productsService] ⚠️ Categoria não encontrada após atualização, mas retornando ID:', finalId)
+            return finalId
+          }
+        } else {
+          console.warn('[productsService] ⚠️ Categoria atualizada mas não retornada. Verificando...')
+          // Aguarda e verifica se a categoria existe
+          await new Promise(resolve => setTimeout(resolve, 300))
+          const { data: verifyData } = await supabase
+            .from('categories')
+            .select('id')
+            .eq('id', finalId)
+            .maybeSingle()
+          if (verifyData) {
+            return finalId
+          } else {
+            throw new Error('Categoria não encontrada após atualização')
+          }
+        }
+      } else {
+        // Insere nova categoria
+        console.log('[productsService] Inserindo nova categoria com ID:', finalId);
+        const { data: insertedData, error: insertError } = await supabase
+          .from('categories')
+          .insert({
+            ...categoryData,
+            created_at: now,
+          })
+          .select()
+        
+        if (insertError) {
+          console.error('[productsService] Erro ao inserir categoria:', insertError)
+          console.error('[productsService] Detalhes:', {
+            code: insertError.code,
+            message: insertError.message,
+            details: insertError.details,
+            hint: insertError.hint
+          })
+          throw insertError
+        }
+        
+        if (insertedData && insertedData.length > 0) {
+          console.log('[productsService] ✅ Categoria inserida no Supabase com sucesso:', insertedData[0])
+          // Aguarda um pouco e verifica se a categoria foi realmente inserida
+          await new Promise(resolve => setTimeout(resolve, 300))
+          const { data: verifyData } = await supabase
+            .from('categories')
+            .select('id')
+            .eq('id', insertedData[0].id)
+            .maybeSingle()
+          if (verifyData) {
+            return insertedData[0].id
+          } else {
+            console.warn('[productsService] ⚠️ Categoria não encontrada após inserção, mas retornando ID:', finalId)
+            return finalId
+          }
+        } else {
+          console.warn('[productsService] ⚠️ Categoria inserida mas não retornada pelo .select(). Verificando...')
+          // Aguarda e verifica se a categoria existe
+          await new Promise(resolve => setTimeout(resolve, 300))
+          const { data: verifyData } = await supabase
+            .from('categories')
+            .select('id')
+            .eq('id', finalId)
+            .maybeSingle()
+          if (verifyData) {
+            return finalId
+          } else {
+            throw new Error('Categoria não encontrada após inserção')
+          }
+        }
+      }
     }
-  } catch {}
-  await query(
-    'INSERT INTO categories (id, name, unit_id, default_station, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, unit_id=excluded.unit_id, default_station=excluded.default_station, updated_at=excluded.updated_at, version=excluded.version, pending_sync=excluded.pending_sync',
-    [id, params.name, unitId ?? null, null, now, 1, 1],
-  )
-  return id
+  } catch (err: any) {
+    console.error('[productsService] Erro ao salvar categoria:', err)
+    // Fallback para localStorage se Supabase falhar
+    if (!isElectron) {
+      try {
+        const raw = localStorage.getItem('categories')
+        const arr = raw ? JSON.parse(raw) : []
+        const existing = arr.find((c: any) => c.id === id)
+        if (existing) {
+          existing.name = params.name
+          existing.updated_at = now
+        } else {
+          arr.push({ id, name: params.name, updated_at: now })
+        }
+        localStorage.setItem('categories', JSON.stringify(arr))
+        console.warn('[productsService] Categoria salva no localStorage como fallback')
+        return id
+      } catch {}
+    }
+    throw err
+  }
 }
 
 export async function deleteCategories(ids: string[]) {

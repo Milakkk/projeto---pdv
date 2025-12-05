@@ -1,13 +1,20 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react-swc'
 import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url))
+const rootDir = resolve(__dirname, '../..') // Raiz do projeto (2 níveis acima)
 
 const isPreview = process.env.IS_PREVIEW ? true : false
+const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1'
 const userBase = process.env.BASE_PATH
-// Base '/' para dev server HTTP; build para Electron usa file:// com hash
-const base = isPreview ? (userBase || '/') : '/'
+// Base '/' para produção/Vercel; build para Electron usa file:// com hash
+const base = isProduction ? '/' : (isPreview ? (userBase || '/') : '/')
 
 export default defineConfig({
+  envDir: rootDir, // Procura .env na raiz do projeto
+  envPrefix: 'VITE_',
   define: {
    __BASE_PATH__: JSON.stringify(base),
    __IS_PREVIEW__: JSON.stringify(isPreview)
@@ -30,11 +37,19 @@ export default defineConfig({
     force: true,
   },
   build: {
-    sourcemap: true,
+    sourcemap: false, // Desabilitar sourcemaps em produção para build mais rápido
     outDir: 'out',
+    emptyOutDir: true,
     rollupOptions: {
-      external: ['drizzle-orm', 'drizzle-orm/sqlite-core']
-    }
+      external: ['drizzle-orm', 'drizzle-orm/sqlite-core', 'better-sqlite3'],
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          'supabase-vendor': ['@supabase/supabase-js']
+        }
+      }
+    },
+    chunkSizeWarningLimit: 1000
   },
   resolve: {
     alias: {
