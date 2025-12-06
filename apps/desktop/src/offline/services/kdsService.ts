@@ -397,10 +397,11 @@ export async function setTicketStatus(id: UUID, status: 'queued' | 'prep' | 'rea
 
 export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 'done') {
   if (supabase) {
+    const map = { queued: 'NEW', prep: 'PREPARING', ready: 'READY', done: 'DELIVERED' } as Record<string,string>
     const { data } = await supabase
       .from('kds_tickets')
       .select('*')
-      .eq('status', status)
+      .eq('status', map[status])
     const tickets = data || []
     const enriched = [] as any[]
     for (const t of tickets) {
@@ -414,13 +415,13 @@ export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 
           .eq('order_id', ordId)
         items = (oi || []).map((it:any)=> ({
           id: String(it.id),
-          quantity: Number(it.qty ?? 1),
+          quantity: Number(it.quantity ?? it.qty ?? 1),
           skipKitchen: false,
-          menuItem: { id: String(it.product_id ?? ''), name: 'Item', unitDeliveryCount: 1, categoryId: String(it.category_id ?? '') },
+          menuItem: { id: String(it.product_id ?? ''), name: String(it.product_name ?? 'Item'), unitDeliveryCount: 1, categoryId: String(it.category_id ?? '') },
           productionUnits: Array.from({ length: Math.max(1, Number(it.qty ?? 1)) }, (_, idx) => ({ unitId: `${String(it.id)}-${idx+1}`, unitStatus: 'PENDING', operatorName: undefined, completedObservations: [], completedAt: undefined })),
         }))
       } catch {}
-      enriched.push({ ...t, items, createdAt: times?.newStart || t.opened_at, updatedAt: times?.preparingStart || t.updated_at, readyAt: times?.readyAt, deliveredAt: times?.deliveredAt })
+      enriched.push({ ...t, items, createdAt: times?.newStart || t.created_at, updatedAt: times?.preparingStart || t.updated_at, readyAt: times?.readyAt, deliveredAt: times?.deliveredAt })
     }
     return enriched
   }

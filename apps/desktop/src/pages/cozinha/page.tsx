@@ -108,7 +108,29 @@ export default function CozinhaPage() {
         const dp = await getDeviceProfile()
         const unitId = dp?.unitId || 'default'
         const deviceId = dp?.deviceId || crypto.randomUUID()
-        if (!secret) return
+        if (!secret) {
+          try {
+            const { supabase } = await import('../../utils/supabase')
+            if (supabase && mounted) {
+              const loadAll = async () => {
+                const queued = await kdsService.listTicketsByStatus('queued')
+                const prep = await kdsService.listTicketsByStatus('prep')
+                const ready = await kdsService.listTicketsByStatus('ready')
+                const done = await kdsService.listTicketsByStatus('done')
+                const all = [...queued, ...prep, ...ready, ...done]
+                startTransition(() => { setOrders(all as any) })
+              }
+              await loadAll()
+              const sub = supabase
+                .channel('kds_tickets_changes')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'kds_tickets' }, async () => { await loadAll() })
+                .subscribe()
+              const unsub = () => { try { sub.unsubscribe() } catch {} }
+              return () => { unsub() }
+            }
+          } catch {}
+          return
+        }
         const wsUrl = hubUrl.replace(/^http/, 'ws') + `/realtime?token=${encodeURIComponent(secret)}`
         let attempt = 0
         let reconnectTimer: any = null
