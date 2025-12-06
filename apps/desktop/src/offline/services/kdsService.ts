@@ -1,3 +1,4 @@
+import { supabase } from '../../utils/supabase'
 // Renderer: usar IPC seguro exposto pelo preload
 const query = async (sql: string, params?: any[]) => {
   const fn = (window as any)?.api?.db?.query
@@ -62,6 +63,14 @@ export async function getPhaseTimes(orderId: string): Promise<any> {
     }
   } catch {}
   try {
+    if (supabase) {
+      const { data } = await supabase
+        .from('kds_phase_times')
+        .select('*')
+        .eq('order_id', orderId)
+        .maybeSingle()
+      return data || {}
+    }
     const raw = localStorage.getItem('kdsPhaseTimes')
     const obj = raw ? JSON.parse(raw) : {}
     return obj[String(orderId)] || {}
@@ -83,14 +92,20 @@ async function setPhaseTime(orderId: string, patch: any) {
       ],
     )
   } catch {
-    try {
-      const raw = localStorage.getItem('kdsPhaseTimes')
-      const obj = raw ? JSON.parse(raw) : {}
-      const cur = obj[String(orderId)] || {}
-      const next = { ...cur, ...patch }
-      obj[String(orderId)] = next
-      localStorage.setItem('kdsPhaseTimes', JSON.stringify(obj))
-    } catch {}
+    if (supabase) {
+      await supabase
+        .from('kds_phase_times')
+        .upsert({ order_id: orderId, new_start: patch?.newStart ?? null, preparing_start: patch?.preparingStart ?? null, ready_at: patch?.readyAt ?? null, delivered_at: patch?.deliveredAt ?? null, updated_at: now }, { onConflict: 'order_id' })
+    } else {
+      try {
+        const raw = localStorage.getItem('kdsPhaseTimes')
+        const obj = raw ? JSON.parse(raw) : {}
+        const cur = obj[String(orderId)] || {}
+        const next = { ...cur, ...patch }
+        obj[String(orderId)] = next
+        localStorage.setItem('kdsPhaseTimes', JSON.stringify(obj))
+      } catch {}
+    }
   }
   try { await pushLanEvents([{ table: 'kds_phase_times', row: { orderId, ...patch } }]) } catch {}
 }
@@ -138,6 +153,23 @@ export async function loadUnitStatesForOrder(orderId: string): Promise<Record<st
     }
     return map
   } catch {
+    if (supabase) {
+      const { data } = await supabase
+        .from('kds_unit_states')
+        .select('*')
+        .eq('order_id', orderId)
+      const out: Record<string, any> = {}
+      for (const r of (data || [])) {
+        const key = `${String(r.order_id)}:${String(r.item_id)}:${String(r.unit_id)}`
+        out[key] = {
+          operatorName: r.operator_name ?? undefined,
+          unitStatus: r.unit_status ?? undefined,
+          completedObservations: (() => { try { const arr = JSON.parse(String(r.completed_observations_json ?? 'null')); return Array.isArray(arr) ? arr : [] } catch { return [] } })(),
+          completedAt: r.completed_at ?? undefined,
+        }
+      }
+      return out
+    }
     try {
       const raw = localStorage.getItem('kdsUnitState')
       const state = raw ? JSON.parse(raw) : {}
@@ -268,19 +300,25 @@ export async function enqueueTicket(params: { orderId: UUID; station?: string | 
   const id = uuid()
   const now = new Date().toISOString()
   const unitId = await getCurrentUnitId()
-  try {
-    await query(
-      'INSERT INTO kds_tickets (id, order_id, unit_id, status, station, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [id, params.orderId, unitId ?? null, 'queued', params.station ?? null, now, 1, 1],
-    )
-  } catch {
+  if (supabase) {
+    await supabase
+      .from('kds_tickets')
+      .insert({ id, order_id: params.orderId, unit_id: unitId ?? null, status: 'queued', station: params.station ?? null, updated_at: now, version: 1, pending_sync: false })
+  } else {
     try {
-      const raw = localStorage.getItem('kdsTickets')
-      const arr = raw ? JSON.parse(raw) : []
-      const ticket = { id, order_id: params.orderId, unit_id: unitId ?? null, status: 'queued', station: params.station ?? null, updated_at: now }
-      arr.push(ticket)
-      localStorage.setItem('kdsTickets', JSON.stringify(arr))
-    } catch {}
+      await query(
+        'INSERT INTO kds_tickets (id, order_id, unit_id, status, station, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [id, params.orderId, unitId ?? null, 'queued', params.station ?? null, now, 1, 1],
+      )
+    } catch {
+      try {
+        const raw = localStorage.getItem('kdsTickets')
+        const arr = raw ? JSON.parse(raw) : []
+        const ticket = { id, order_id: params.orderId, unit_id: unitId ?? null, status: 'queued', station: params.station ?? null, updated_at: now }
+        arr.push(ticket)
+        localStorage.setItem('kdsTickets', JSON.stringify(arr))
+      } catch {}
+    }
   }
   try { await pushLanEvents([{ table: 'kdsTickets', row: { id, order_id: params.orderId, unit_id: unitId ?? null, status: 'queued', station: params.station ?? null, updated_at: now } }]) } catch {}
   try { await setPhaseTime(params.orderId, { newStart: now }) } catch {}
@@ -358,6 +396,34 @@ export async function setTicketStatus(id: UUID, status: 'queued' | 'prep' | 'rea
 }
 
 export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 'done') {
+  if (supabase) {
+    const { data } = await supabase
+      .from('kds_tickets')
+      .select('*')
+      .eq('status', status)
+    const tickets = data || []
+    const enriched = [] as any[]
+    for (const t of tickets) {
+      const ordId = String(t.order_id)
+      const times = await getPhaseTimes(ordId)
+      let items: any[] = []
+      try {
+        const { data: oi } = await supabase
+          .from('order_items')
+          .select('*')
+          .eq('order_id', ordId)
+        items = (oi || []).map((it:any)=> ({
+          id: String(it.id),
+          quantity: Number(it.qty ?? 1),
+          skipKitchen: false,
+          menuItem: { id: String(it.product_id ?? ''), name: 'Item', unitDeliveryCount: 1, categoryId: String(it.category_id ?? '') },
+          productionUnits: Array.from({ length: Math.max(1, Number(it.qty ?? 1)) }, (_, idx) => ({ unitId: `${String(it.id)}-${idx+1}`, unitStatus: 'PENDING', operatorName: undefined, completedObservations: [], completedAt: undefined })),
+        }))
+      } catch {}
+      enriched.push({ ...t, items, createdAt: times?.newStart || t.opened_at, updatedAt: times?.preparingStart || t.updated_at, readyAt: times?.readyAt, deliveredAt: times?.deliveredAt })
+    }
+    return enriched
+  }
   try {
     const res = await query('SELECT * FROM kds_tickets WHERE status = ?', [status])
     const tickets = Array.isArray(res?.rows) ? res.rows : []

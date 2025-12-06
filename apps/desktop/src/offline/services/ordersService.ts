@@ -1,3 +1,5 @@
+import { supabase } from '../../utils/supabase'
+
 const query = async (sql: string, params?: any[]) => {
   const fn = (window as any)?.api?.db?.query
   if (typeof fn !== 'function') throw new Error('Canal de DB indisponível')
@@ -29,8 +31,25 @@ export async function createOrder(payload?: {
 }) {
   const id = payload?.id ?? uuid()
   const now = new Date().toISOString()
-  try {
-    const unitId = await getCurrentUnitId()
+  const unitId = await getCurrentUnitId()
+  if (supabase) {
+    const { error } = await supabase
+      .from('orders')
+      .insert({
+        id,
+        status: 'open',
+        total_cents: 0,
+        opened_at: payload?.openedAt ?? now,
+        device_id: payload?.deviceId ?? null,
+        unit_id: unitId ?? null,
+        operational_session_id: payload?.operationalSessionId ?? null,
+        notes: payload?.notes ?? null,
+        updated_at: now,
+        version: 1,
+        pending_sync: false,
+      })
+    if (error) throw error
+  } else {
     await query(
       'INSERT INTO orders (id, status, total_cents, opened_at, device_id, unit_id, operational_session_id, notes, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
@@ -47,8 +66,6 @@ export async function createOrder(payload?: {
         1,
       ],
     )
-  } catch (e) {
-    throw e
   }
   return id
 }
@@ -63,7 +80,42 @@ export async function addItem(params: {
   const id = uuid()
   const now = new Date().toISOString()
   const subtotal = Math.max(0, Math.round(params.qty * params.unitPriceCents))
-  try {
+  if (supabase) {
+    const { error: errItem } = await supabase
+      .from('order_items')
+      .insert({
+        id,
+        order_id: params.orderId,
+        product_id: params.productId,
+        qty: params.qty,
+        unit_price_cents: params.unitPriceCents,
+        notes: params.notes ?? null,
+        updated_at: now,
+        version: 1,
+        pending_sync: false,
+      })
+    if (errItem) throw errItem
+    const { error: errOrd } = await supabase
+      .from('orders')
+      .update({ total_cents: supabase.rpc ? undefined : undefined, updated_at: now })
+      .eq('id', params.orderId)
+    if (errOrd) {
+      // fallback: increment total_cents client-side
+      const { data, error } = await supabase
+        .from('orders')
+        .select('total_cents')
+        .eq('id', params.orderId)
+        .maybeSingle()
+      if (error) throw error
+      const current = Number(data?.total_cents ?? 0)
+      const { error: errInc } = await supabase
+        .from('orders')
+        .update({ total_cents: current + subtotal, updated_at: now })
+        .eq('id', params.orderId)
+      if (errInc) throw errInc
+    }
+    await supabase.from('kds_tickets').insert({ id: uuid(), order_id: params.orderId, status: 'queued', station: null, updated_at: now, version: 1, pending_sync: false })
+  } else {
     await query(
       'INSERT INTO order_items (id, order_id, product_id, qty, unit_price_cents, notes, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
@@ -82,11 +134,6 @@ export async function addItem(params: {
       'UPDATE orders SET total_cents = COALESCE(total_cents, 0) + ?, updated_at = ?, pending_sync = 1 WHERE id = ?',
       [subtotal, now, params.orderId],
     )
-  } catch {
-    const rawItems = localStorage.getItem('order_items')
-    const items = rawItems ? JSON.parse(rawItems) : []
-    items.push({ id, order_id: params.orderId, product_id: params.productId, qty: params.qty, unit_price_cents: params.unitPriceCents, notes: params.notes ?? null, updated_at: now, version: 1, pending_sync: 1 })
-    localStorage.setItem('order_items', JSON.stringify(items))
   }
   return id
 }
@@ -117,26 +164,38 @@ export async function removeItem(itemId: UUID) {
 
 export async function closeOrder(orderId: UUID) {
   const now = new Date().toISOString()
-  try {
+  if (supabase) {
+    const { error } = await supabase
+      .from('orders')
+      .update({ status: 'closed', closed_at: now, updated_at: now })
+      .eq('id', orderId)
+    if (error) throw error
+  } else {
     await query('UPDATE orders SET status = ?, closed_at = ?, updated_at = ?, pending_sync = 1 WHERE id = ?', [
       'closed',
       now,
       now,
       orderId,
     ])
-  } catch (e) { throw e }
+  }
 }
 
 export async function cancelOrder(orderId: UUID) {
   const now = new Date().toISOString()
-  try {
+  if (supabase) {
+    const { error } = await supabase
+      .from('orders')
+      .update({ status: 'cancelled', closed_at: now, updated_at: now })
+      .eq('id', orderId)
+    if (error) throw error
+  } else {
     await query('UPDATE orders SET status = ?, closed_at = ?, updated_at = ?, pending_sync = 1 WHERE id = ?', [
       'cancelled',
       now,
       now,
       orderId,
     ])
-  } catch (e) { throw e }
+  }
 }
 
 export async function listOrders(limit = 100) {

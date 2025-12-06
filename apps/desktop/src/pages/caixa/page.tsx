@@ -154,16 +154,26 @@ export default function CaixaPage() {
     })();
   }, []);
 
-  // Carregar cozinhas do banco de dados
+  // Carregar cozinhas (Electron → DB local; Browser → Supabase)
   useEffect(() => {
     (async () => {
       const api = (window as any)?.api;
-      if (!api?.db?.query) return;
       try {
-        const result = await api.db.query('SELECT * FROM kitchens WHERE is_active = 1 ORDER BY display_order, name');
-        if (result?.rows) {
-          setKitchens(result.rows.map((k: any) => ({ id: k.id, name: k.name })));
+        if (api?.db?.query) {
+          const result = await api.db.query('SELECT * FROM kitchens WHERE is_active = 1 ORDER BY display_order, name');
+          if (result?.rows) setKitchens(result.rows.map((k: any) => ({ id: k.id, name: k.name })));
+          return
         }
+        const { supabase } = await import('../../utils/supabase')
+        if (!supabase) return
+        const { data, error } = await supabase
+          .from('kitchens')
+          .select('id,name,is_active,display_order')
+          .eq('is_active', true)
+          .order('display_order', { ascending: true })
+          .order('name', { ascending: true })
+        if (error) { console.error('Supabase kitchens error', error); return }
+        setKitchens((data || []).map((k:any)=>({ id:k.id, name:k.name })))
       } catch (err) {
         console.error('Erro ao carregar cozinhas:', err);
       }
