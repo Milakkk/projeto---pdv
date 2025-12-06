@@ -26,15 +26,25 @@ export default function KitchenSelectModal({ onSelect, onCancel, operators }: Ki
 
   const loadKitchens = useCallback(async () => {
     const api = (window as any)?.api;
-    if (!api?.db?.query) {
-      setLoading(false);
-      return;
-    }
-
     try {
-      const result = await api.db.query('SELECT * FROM kitchens WHERE is_active = 1 ORDER BY display_order, name');
-      if (result?.rows) {
-        setKitchens(result.rows);
+      if (api?.db?.query) {
+        const result = await api.db.query('SELECT * FROM kitchens WHERE is_active = 1 ORDER BY display_order, name');
+        if (result?.rows) setKitchens(result.rows);
+      } else {
+        const { supabase } = await import('../../../utils/supabase');
+        if (supabase) {
+          const { data, error } = await supabase
+            .from('kitchens')
+            .select('id,name,is_active,display_order')
+            .eq('is_active', true)
+            .order('display_order', { ascending: true })
+            .order('name', { ascending: true });
+          if (error) {
+            console.error('Erro Supabase ao carregar cozinhas:', error);
+          } else {
+            setKitchens((data || []).map(k => ({ id: k.id, name: k.name, is_active: 1 })));
+          }
+        }
       }
     } catch (err) {
       console.error('Erro ao carregar cozinhas:', err);
