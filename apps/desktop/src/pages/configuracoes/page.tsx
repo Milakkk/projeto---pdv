@@ -282,6 +282,33 @@ export default function ConfiguracoesPage() {
     })();
   }, [setCategories, setMenuItems])
 
+  // Inicializar: se não houver associações categoria→cozinha, mapear todas categorias para a cozinha 'Mexicano' (ou a primeira)
+  useEffect(() => {
+    (async () => {
+      const isElectron = typeof (window as any)?.api?.db?.query === 'function';
+      if (isElectron) return;
+      try {
+        const { supabase } = await import('../../utils/supabase');
+        if (!supabase) return;
+        const { data: anyAssoc } = await supabase
+          .from('category_kitchens')
+          .select('id')
+          .limit(1);
+        if ((anyAssoc || []).length > 0) return;
+        const { data: cats } = await supabase
+          .from('categories')
+          .select('id');
+        const kid = defaultKitchenId;
+        if (!kid || !Array.isArray(cats) || cats.length===0) return;
+        const rows = cats.map(c => ({ category_id: c.id, kitchen_id: kid, updated_at: new Date().toISOString() }));
+        await supabase.from('category_kitchens').insert(rows);
+        console.log('[Configurações] Associações iniciais aplicadas para cozinha padrão');
+      } catch (err) {
+        console.warn('[Configurações] Falha ao aplicar associações iniciais:', err);
+      }
+    })();
+  }, [defaultKitchenId]);
+
   // NOVOS ESTADOS PARA IMAGEM
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>('');
@@ -406,6 +433,7 @@ export default function ConfiguracoesPage() {
 
   // Estado para cozinhas (para atribuir categorias a cozinhas)
   const [kitchens, setKitchens] = useState<{ id: string; name: string }[]>([]);
+  const [defaultKitchenId, setDefaultKitchenId] = useState<string | null>(null);
 
   // Carregar cozinhas do banco de dados
   useEffect(() => {
@@ -442,7 +470,10 @@ export default function ConfiguracoesPage() {
           }
 
           if (data) {
-            setKitchens(data.map(k => ({ id: k.id, name: k.name })));
+            const list = data.map(k => ({ id: k.id, name: k.name }));
+            setKitchens(list);
+            const mexican = list.find(k=> k.name.toLowerCase()==='mexicano') || list[0] || null;
+            setDefaultKitchenId(mexican ? mexican.id : null);
             console.log('[Configurações] Cozinhas carregadas:', data.length);
           }
         }
@@ -481,7 +512,7 @@ export default function ConfiguracoesPage() {
 
 
   const resetForms = () => {
-    setCategoryForm({ name: '', icon: 'ri-restaurant-line', integrationCode: '', kitchenIds: [] });
+    setCategoryForm({ name: '', icon: 'ri-restaurant-line', integrationCode: '', kitchenIds: defaultKitchenId ? [defaultKitchenId] : [] });
     setItemForm({ name: '', price: '', sla: '', categoryId: '', observations: [], requiredModifierGroups: [], image: '', code: '', integrationCode: '', skipKitchen: false, allowPartialDelivery: true, unitDeliveryCount: '' });
     setPaymentForm('');
     setNewObservation('');
