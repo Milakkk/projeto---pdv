@@ -113,10 +113,11 @@ export default function CozinhaPage() {
             const { supabase } = await import('../../utils/supabase')
             if (supabase && mounted) {
               const loadAll = async () => {
-                const queued = await kdsService.listTicketsByStatus('queued')
-                const prep = await kdsService.listTicketsByStatus('prep')
-                const ready = await kdsService.listTicketsByStatus('ready')
-                const done = await kdsService.listTicketsByStatus('done')
+                const kitchenFilter = selectedKitchenId || undefined
+                const queued = await kdsService.listTicketsByStatus('queued', kitchenFilter)
+                const prep = await kdsService.listTicketsByStatus('prep', kitchenFilter)
+                const ready = await kdsService.listTicketsByStatus('ready', kitchenFilter)
+                const done = await kdsService.listTicketsByStatus('done', kitchenFilter)
                 const all = [...queued, ...prep, ...ready, ...done]
                 startTransition(() => { setOrders(all as any) })
               }
@@ -225,7 +226,7 @@ export default function CozinhaPage() {
       } catch {}
     })()
     return () => { mounted = false }
-  }, [setOrders])
+  }, [setOrders, selectedKitchenId])
 
   // Listener para mudanças no banco de dados em tempo real (sincronização entre janelas)
   useEffect(() => {

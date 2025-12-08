@@ -327,6 +327,27 @@ export async function enqueueTicket(params: { orderId: UUID; station?: string | 
 
 export async function setTicketStatus(id: UUID, status: 'queued' | 'prep' | 'ready' | 'done') {
   const now = new Date().toISOString()
+  if ((await import('../../utils/supabase')).supabase) {
+    const { supabase } = await import('../../utils/supabase')
+    const map = { queued: 'NEW', prep: 'PREPARING', ready: 'READY', done: 'DELIVERED' } as Record<string,string>
+    const { data: tk } = await supabase
+      .from('kds_tickets')
+      .select('order_id')
+      .eq('id', id)
+      .maybeSingle()
+    const orderId = tk?.order_id ? String(tk.order_id) : undefined
+    await supabase
+      .from('kds_tickets')
+      .update({ status: map[status], updated_at: now })
+      .eq('id', id)
+    if (orderId && status === 'done') {
+      await supabase
+        .from('orders')
+        .update({ status: 'DELIVERED', updated_at: now })
+        .eq('id', orderId)
+    }
+    return
+  }
   let orderId: string | undefined
   let targetTicketId: string | undefined
   try {
@@ -395,13 +416,12 @@ export async function setTicketStatus(id: UUID, status: 'queued' | 'prep' | 'rea
   } catch {}
 }
 
-export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 'done') {
+export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 'done', kitchenId?: string | null) {
   if (supabase) {
     const map = { queued: 'NEW', prep: 'PREPARING', ready: 'READY', done: 'DELIVERED' } as Record<string,string>
-    const { data } = await supabase
-      .from('kds_tickets')
-      .select('*')
-      .eq('status', map[status])
+    let query = supabase.from('kds_tickets').select('*').eq('status', map[status])
+    if (kitchenId) query = query.eq('kitchen_id', kitchenId)
+    const { data } = await query
     const tickets = data || []
     const enriched = [] as any[]
     for (const t of tickets) {

@@ -78,6 +78,7 @@ export default function CaixaPage() {
   // Filtro de Cozinha
   const [kitchens, setKitchens] = useState<Kitchen[]>([]);
   const [selectedKitchenId, setSelectedKitchenId] = useLocalStorage<string | null>('pdv_selected_kitchen_id', null);
+  const [categoryIdsByKitchen, setCategoryIdsByKitchen] = useState<Record<string,string[]>>({})
   
   // Estados de Sessão e Caixa
   const [operationalSession, setOperationalSession] = useLocalStorage<OperationalSession | null>('currentOperationalSession', null);
@@ -174,6 +175,17 @@ export default function CaixaPage() {
           .order('name', { ascending: true })
         if (error) { console.error('Supabase kitchens error', error); return }
         setKitchens((data || []).map((k:any)=>({ id:k.id, name:k.name })))
+        const { data: assoc } = await supabase
+          .from('category_kitchens')
+          .select('category_id,kitchen_id')
+        const map: Record<string,string[]> = {}
+        for (const r of (assoc||[])) {
+          const kid = String(r.kitchen_id)
+          const cid = String(r.category_id)
+          map[kid] = map[kid] || []
+          if (!map[kid].includes(cid)) map[kid].push(cid)
+        }
+        setCategoryIdsByKitchen(map)
       } catch (err) {
         console.error('Erro ao carregar cozinhas:', err);
       }
@@ -212,12 +224,16 @@ export default function CaixaPage() {
     const activeItems = menuItems.filter(item => item.active)
     if (!selectedCategory) return []
     if (selectedCategory === 'promo-combos') return activeItems.filter(it => it.isPromo)
-    const byDb = activeItems.filter(item => item.categoryId === selectedCategory)
+    let byDb = activeItems.filter(item => item.categoryId === selectedCategory)
+    const allowed = selectedKitchenId ? (categoryIdsByKitchen[selectedKitchenId] || []) : null
+    if (allowed && allowed.length) {
+      byDb = byDb.filter((it)=> allowed.includes(String(it.categoryId)))
+    }
     if (byDb.length > 0) return byDb
     const lsItems = (menuItemsLS || []).filter(it => it.active)
     const byLs = lsItems.filter(it => it.categoryId === selectedCategory)
     return byLs
-  }, [menuItems, selectedCategory, menuItemsLS])
+  }, [menuItems, selectedCategory, menuItemsLS, selectedKitchenId, categoryIdsByKitchen])
   useEffect(() => { setSelectedItemIndex(0) }, [selectedCategory])
 
   // Pedidos da sessão atual (apenas os vinculados à sessão operacional aberta)

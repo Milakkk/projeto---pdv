@@ -108,6 +108,7 @@ export async function addItem(params: {
         unit_price_cents: params.unitPriceCents,
         total_cents: subtotal,
         observations: params.notes ?? null,
+        created_at: now,
         updated_at: now,
         version: 1,
         pending_sync: false,
@@ -125,9 +126,24 @@ export async function addItem(params: {
       .update({ total_cents: current + subtotal, updated_at: now })
       .eq('id', params.orderId)
     if (errOrdUpdate) throw errOrdUpdate
-    await supabase
-      .from('kds_tickets')
-      .insert({ id: uuid(), order_id: params.orderId, kitchen_id: null, status: 'NEW', updated_at: now, version: 1, pending_sync: false })
+    // Roteamento por cozinha: criar tickets para cozinhas associadas à categoria
+    let kitchenIds: string[] = []
+    if (categoryId) {
+      const { data: cats } = await supabase
+        .from('category_kitchens')
+        .select('kitchen_id')
+        .eq('category_id', categoryId)
+      kitchenIds = (cats || []).map((r: any) => String(r.kitchen_id)).filter(Boolean)
+    }
+    const baseTicket = { order_id: params.orderId, status: 'NEW', updated_at: now, version: 1, pending_sync: false }
+    if (kitchenIds.length > 0) {
+      const rows = kitchenIds.map((kid) => ({ id: uuid(), ...baseTicket, kitchen_id: kid }))
+      const { error: tkErr } = await supabase.from('kds_tickets').insert(rows)
+      if (tkErr) throw tkErr
+    } else {
+      const { error: tkErr } = await supabase.from('kds_tickets').insert({ id: uuid(), ...baseTicket, kitchen_id: null })
+      if (tkErr) throw tkErr
+    }
   } else {
     await query(
       'INSERT INTO order_items (id, order_id, product_id, qty, unit_price_cents, notes, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -180,7 +196,7 @@ export async function closeOrder(orderId: UUID) {
   if (supabase) {
     const { error } = await supabase
       .from('orders')
-      .update({ status: 'closed', closed_at: now, updated_at: now })
+      .update({ status: 'DELIVERED', completed_at: now, updated_at: now })
       .eq('id', orderId)
     if (error) throw error
   } else {
@@ -198,7 +214,7 @@ export async function cancelOrder(orderId: UUID) {
   if (supabase) {
     const { error } = await supabase
       .from('orders')
-      .update({ status: 'cancelled', closed_at: now, updated_at: now })
+      .update({ status: 'CANCELLED', updated_at: now })
       .eq('id', orderId)
     if (error) throw error
   } else {
