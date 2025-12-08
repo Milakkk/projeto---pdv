@@ -33,18 +33,23 @@ export async function createOrder(payload?: {
   const now = new Date().toISOString()
   const unitId = await getCurrentUnitId()
   if (supabase) {
+    const rand = () => Math.max(1000, Math.floor(Math.random() * 9999))
+    const pin = rand()
+    const password = rand()
     const { error } = await supabase
       .from('orders')
       .insert({
         id,
-        status: 'open',
-        total_cents: 0,
-        opened_at: payload?.openedAt ?? now,
-        device_id: payload?.deviceId ?? null,
         unit_id: unitId ?? null,
-        operational_session_id: payload?.operationalSessionId ?? null,
-        notes: payload?.notes ?? null,
+        status: 'NEW',
+        total_cents: 0,
+        discount_percent: 0,
+        discount_cents: 0,
+        observations: payload?.notes ?? null,
+        created_at: payload?.openedAt ?? now,
         updated_at: now,
+        pin,
+        password,
         version: 1,
         pending_sync: false,
       })
@@ -81,40 +86,48 @@ export async function addItem(params: {
   const now = new Date().toISOString()
   const subtotal = Math.max(0, Math.round(params.qty * params.unitPriceCents))
   if (supabase) {
+    let productName: string | null = null
+    let categoryId: string | null = null
+    if (params.productId) {
+      const { data: p } = await supabase
+        .from('products')
+        .select('name, category_id')
+        .eq('id', params.productId)
+        .maybeSingle()
+      productName = p?.name ?? null
+      categoryId = p?.category_id ?? null
+    }
     const { error: errItem } = await supabase
       .from('order_items')
       .insert({
         id,
         order_id: params.orderId,
         product_id: params.productId,
-        qty: params.qty,
+        product_name: productName ?? 'Item',
+        quantity: params.qty,
         unit_price_cents: params.unitPriceCents,
-        notes: params.notes ?? null,
+        total_cents: subtotal,
+        observations: params.notes ?? null,
         updated_at: now,
         version: 1,
         pending_sync: false,
       })
     if (errItem) throw errItem
-    const { error: errOrd } = await supabase
+    const { data: ordRow, error: ordSelErr } = await supabase
       .from('orders')
-      .update({ total_cents: supabase.rpc ? undefined : undefined, updated_at: now })
+      .select('total_cents')
       .eq('id', params.orderId)
-    if (errOrd) {
-      // fallback: increment total_cents client-side
-      const { data, error } = await supabase
-        .from('orders')
-        .select('total_cents')
-        .eq('id', params.orderId)
-        .maybeSingle()
-      if (error) throw error
-      const current = Number(data?.total_cents ?? 0)
-      const { error: errInc } = await supabase
-        .from('orders')
-        .update({ total_cents: current + subtotal, updated_at: now })
-        .eq('id', params.orderId)
-      if (errInc) throw errInc
-    }
-    await supabase.from('kds_tickets').insert({ id: uuid(), order_id: params.orderId, status: 'queued', station: null, updated_at: now, version: 1, pending_sync: false })
+      .maybeSingle()
+    if (ordSelErr) throw ordSelErr
+    const current = Number(ordRow?.total_cents ?? 0)
+    const { error: errOrdUpdate } = await supabase
+      .from('orders')
+      .update({ total_cents: current + subtotal, updated_at: now })
+      .eq('id', params.orderId)
+    if (errOrdUpdate) throw errOrdUpdate
+    await supabase
+      .from('kds_tickets')
+      .insert({ id: uuid(), order_id: params.orderId, kitchen_id: null, status: 'NEW', updated_at: now, version: 1, pending_sync: false })
   } else {
     await query(
       'INSERT INTO order_items (id, order_id, product_id, qty, unit_price_cents, notes, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
