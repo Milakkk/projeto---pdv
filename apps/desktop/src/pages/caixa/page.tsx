@@ -226,7 +226,7 @@ export default function CaixaPage() {
     if (selectedCategory === 'promo-combos') return activeItems.filter(it => it.isPromo)
     let byDb = activeItems.filter(item => item.categoryId === selectedCategory)
     const allowed = selectedKitchenId ? (categoryIdsByKitchen[selectedKitchenId] || []) : null
-    if (allowed && allowed.length) {
+    if (allowed) {
       byDb = byDb.filter((it)=> allowed.includes(String(it.categoryId)))
     }
     if (byDb.length > 0) return byDb
@@ -1450,6 +1450,19 @@ export default function CaixaPage() {
                 Pedidos
               </Button>
             </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                try { (window as any).appNavigate?.('/caixa/configuracoes') } catch {}
+              }}
+              title="Configurações do PDV"
+            >
+              <i className="ri-settings-3-line mr-2"></i>
+              Configurações
+            </Button>
           </div>
         </div>
       </div>
