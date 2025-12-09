@@ -15,6 +15,7 @@ import ConfirmationModal from '../../components/base/ConfirmationModal';
 import MovementConfirmationModal from './components/MovementConfirmationModal';
 import CodeListModal from './components/CodeListModal';
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom'
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import type { Category, MenuItem, OrderItem, Order, SavedCart, ProductionUnit, OperationalSession } from '../../types';
 import * as productsService from '../../offline/services/productsService';
@@ -65,6 +66,7 @@ interface Kitchen {
 
 export default function CaixaPage() {
   const { user, store } = useAuth();
+  const navigate = useNavigate()
   const [categories, setCategories] = useLocalStorage<Category[]>('categories', []);
   const [menuItemsLS] = useLocalStorage<MenuItem[]>('menuItems', []);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
@@ -380,6 +382,17 @@ export default function CaixaPage() {
       if (firstActive) setSelectedCategory(firstActive.id)
     }
   }, [categories, selectedCategory, autoSelectCategory])
+
+  useEffect(() => {
+    if (!selectedKitchenId) return
+    const allowed = categoryIdsByKitchen[selectedKitchenId] || []
+    if (!allowed.length) return
+    const active = categories.filter(cat => (cat.active ?? true)).sort((a,b)=>a.order-b.order)
+    const firstAllowed = active.find(cat => allowed.includes(String(cat.id)))
+    if (firstAllowed && selectedCategory && !allowed.includes(String(selectedCategory))) {
+      setSelectedCategory(firstAllowed.id)
+    }
+  }, [selectedKitchenId, categoryIdsByKitchen, categories, selectedCategory])
 
   // Efeito para monitorar pedidos prontos e disparar notificação
   useEffect(() => {
@@ -1478,9 +1491,7 @@ export default function CaixaPage() {
             <Button
               variant="secondary"
               size="sm"
-              onClick={() => {
-                try { (window as any).appNavigate?.('/caixa/configuracoes') } catch {}
-              }}
+              onClick={() => { navigate('/caixa/configuracoes') }}
               title="Configurações do PDV"
             >
               <i className="ri-settings-3-line mr-2"></i>
@@ -1498,7 +1509,7 @@ export default function CaixaPage() {
             {/* Sidebar de Categorias */}
             <div className="order-1 xl:order-1 flex-shrink-0">
               <CategorySidebar
-                categories={categories}
+                categories={(selectedKitchenId && categoryIdsByKitchen[selectedKitchenId]) ? categories.filter(c=> (categoryIdsByKitchen[selectedKitchenId]||[]).includes(String(c.id))) : categories}
                 selectedCategory={selectedCategory}
                 onSelectCategory={(id) => { setAutoSelectCategory(true); setSelectedCategory(id); }}
                 onReorderCategory={handleReorderCategory}

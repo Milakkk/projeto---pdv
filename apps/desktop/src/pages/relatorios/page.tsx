@@ -243,7 +243,7 @@ export default function RelatoriosPage() {
                 : String(r.status).toLowerCase() === 'cancelled' || String(r.status).toUpperCase() === 'CANCELLED'
                 ? 'CANCELLED'
                 : 'NEW',
-            createdAt: r.opened_at ? new Date(r.opened_at) : new Date(),
+            createdAt: (r.opened_at || r.created_at) ? new Date(r.opened_at || r.created_at) : new Date(),
             updatedAt: r.updated_at ? new Date(r.updated_at) : undefined,
             readyAt: r.ready_at ? new Date(r.ready_at) : undefined,
             deliveredAt: r.closed_at ? new Date(r.closed_at) : undefined,
@@ -305,7 +305,7 @@ export default function RelatoriosPage() {
                 : String(r.status).toLowerCase() === 'cancelled' || String(r.status).toUpperCase() === 'CANCELLED'
                 ? 'CANCELLED'
                 : 'NEW',
-            createdAt: r.opened_at ? new Date(r.opened_at) : new Date(),
+            createdAt: (r.opened_at || r.created_at) ? new Date(r.opened_at || r.created_at) : new Date(),
             updatedAt: r.updated_at ? new Date(r.updated_at) : undefined,
             readyAt: r.ready_at ? new Date(r.ready_at) : undefined,
             deliveredAt: r.closed_at ? new Date(r.closed_at) : undefined,

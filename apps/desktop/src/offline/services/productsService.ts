@@ -19,20 +19,36 @@ import { getCurrentUnitId } from './deviceProfileService'
 export async function listProducts() {
   try {
     const unitId = (await getCurrentUnitId())
-    const sql = unitId ? 'SELECT * FROM products WHERE unit_id = ? OR unit_id IS NULL' : 'SELECT * FROM products'
-    let res = await query(sql, unitId ? [unitId] : [])
-    const rows = res?.rows ?? []
-    if (unitId && rows.length === 0) {
-      res = await query('SELECT * FROM products')
+    const api = (window as any)?.api?.db?.query
+    if (typeof api === 'function') {
+      const sql = unitId ? 'SELECT * FROM products WHERE unit_id = ? OR unit_id IS NULL' : 'SELECT * FROM products'
+      let res = await query(sql, unitId ? [unitId] : [])
+      const rows = res?.rows ?? []
+      if (unitId && rows.length === 0) {
+        res = await query('SELECT * FROM products')
+      }
+      return res?.rows ?? []
     }
-    return res?.rows ?? []
-  } catch {
-    try {
-      const raw = localStorage.getItem('menuItems')
-      const arr = raw ? JSON.parse(raw) : []
-      return Array.isArray(arr) ? arr.map((p:any)=>({ id:p.id, sku:p.code, name:p.name, categoryId:p.categoryId, priceCents: Math.round((p.price||0)*100), isActive: p.active ? 1 : 0 })) : []
-    } catch { return [] }
-  }
+    const { supabase } = await import('../../utils/supabase')
+    if (supabase) {
+      let q = supabase.from('products').select('id, sku, name, category_id, unit_id, price_cents, is_active')
+      if (unitId) q = q.or(`unit_id.eq.${unitId},unit_id.is.null`)
+      const { data, error } = await q
+      if (error) throw error
+      return (data || []).map(p => ({
+        id: p.id,
+        sku: (p as any).sku ?? null,
+        name: (p as any).name,
+        categoryId: (p as any).category_id ?? null,
+        unitId: (p as any).unit_id ?? null,
+        priceCents: Math.max(0, Number((p as any).price_cents ?? 0)),
+        isActive: ((p as any).is_active ?? true) ? 1 : 0,
+      }))
+    }
+    const raw = localStorage.getItem('menuItems')
+    const arr = raw ? JSON.parse(raw) : []
+    return Array.isArray(arr) ? arr.map((p:any)=>({ id:p.id, sku:p.code, name:p.name, categoryId:p.categoryId, priceCents: Math.round((p.price||0)*100), isActive: p.active ? 1 : 0 })) : []
+  } catch { return [] }
 }
 
 export async function getProductById(id: string) {
@@ -61,43 +77,62 @@ export async function searchProducts(term: string) {
 export async function listCategories() {
   try {
     const unitId = (await getCurrentUnitId())
-    const sql = unitId ? 'SELECT * FROM categories WHERE unit_id = ? OR unit_id IS NULL' : 'SELECT * FROM categories'
-    let res = await query(sql, unitId ? [unitId] : [])
-    const rows = res?.rows ?? []
-    if (unitId && rows.length === 0) {
-      res = await query('SELECT * FROM categories')
-    }
-    const list = res?.rows ?? []
-    const map = new Map<string, any>()
-    for (const c of list) {
-      const key = String(c.name || '').trim().toLowerCase()
-      if (!key) continue
-      const prev = map.get(key)
-      if (!prev) {
-        map.set(key, c)
-      } else {
-        const preferCurrent = Boolean(c.unit_id) && !Boolean(prev.unit_id)
-        map.set(key, preferCurrent ? c : prev)
+    const api = (window as any)?.api?.db?.query
+    if (typeof api === 'function') {
+      const sql = unitId ? 'SELECT * FROM categories WHERE unit_id = ? OR unit_id IS NULL' : 'SELECT * FROM categories'
+      let res = await query(sql, unitId ? [unitId] : [])
+      const rows = res?.rows ?? []
+      if (unitId && rows.length === 0) {
+        res = await query('SELECT * FROM categories')
       }
-    }
-    return Array.from(map.values())
-  } catch {
-    try {
-      const raw = localStorage.getItem('categories')
-      const arr = raw ? JSON.parse(raw) : []
-      if (!Array.isArray(arr)) return []
-      const set = new Set<string>()
-      const unique: any[] = []
-      for (const c of arr) {
-        const key = String(c?.name || '').trim().toLowerCase()
+      const list = res?.rows ?? []
+      const map = new Map<string, any>()
+      for (const c of list) {
+        const key = String(c.name || '').trim().toLowerCase()
         if (!key) continue
-        if (set.has(key)) continue
-        set.add(key)
-        unique.push(c)
+        const prev = map.get(key)
+        if (!prev) {
+          map.set(key, c)
+        } else {
+          const preferCurrent = Boolean(c.unit_id) && !Boolean(prev.unit_id)
+          map.set(key, preferCurrent ? c : prev)
+        }
       }
-      return unique.map((c:any)=>({ id:c.id, name:c.name }))
-    } catch { return [] }
-  }
+      return Array.from(map.values())
+    }
+    const { supabase } = await import('../../utils/supabase')
+    if (supabase) {
+      const { data, error } = await supabase.from('categories').select('id, name, unit_id, updated_at')
+      if (error) throw error
+      const list = data || []
+      const map = new Map<string, any>()
+      for (const c of list) {
+        const key = String((c as any).name || '').trim().toLowerCase()
+        if (!key) continue
+        const prev = map.get(key)
+        if (!prev) {
+          map.set(key, c)
+        } else {
+          const preferCurrent = Boolean((c as any).unit_id) && !Boolean((prev as any).unit_id)
+          map.set(key, preferCurrent ? c : prev)
+        }
+      }
+      return Array.from(map.values()).map(c=>({ id: (c as any).id, name: (c as any).name }))
+    }
+    const raw = localStorage.getItem('categories')
+    const arr = raw ? JSON.parse(raw) : []
+    if (!Array.isArray(arr)) return []
+    const set = new Set<string>()
+    const unique: any[] = []
+    for (const c of arr) {
+      const key = String(c?.name || '').trim().toLowerCase()
+      if (!key) continue
+      if (set.has(key)) continue
+      set.add(key)
+      unique.push(c)
+    }
+    return unique.map((c:any)=>({ id:c.id, name:c.name }))
+  } catch { return [] }
 }
 
 // --- Write APIs ---
@@ -285,10 +320,7 @@ export async function upsertCategory(params: { id?: UUID; name: string }) {
         console.log('[productsService] Inserindo nova categoria com ID:', finalId);
         const { data: insertedData, error: insertError } = await supabase
           .from('categories')
-          .insert({
-            ...categoryData,
-            created_at: now,
-          })
+          .insert(categoryData)
           .select()
         
         if (insertError) {

@@ -230,92 +230,136 @@ export async function cancelOrder(orderId: UUID) {
 export async function listOrders(limit = 100) {
   try {
     const unitId = await getCurrentUnitId()
-    const sql = unitId
-      ? 'SELECT * FROM orders WHERE unit_id = ? ORDER BY datetime(updated_at) DESC LIMIT ?'
-      : 'SELECT * FROM orders ORDER BY datetime(updated_at) DESC LIMIT ?'
-    const params = unitId ? [unitId, limit] : [limit]
-    const res = await query(sql, params)
-    return res?.rows ?? []
+    const api = (window as any)?.api?.db?.query
+    if (typeof api === 'function') {
+      const sql = unitId
+        ? 'SELECT * FROM orders WHERE unit_id = ? ORDER BY datetime(updated_at) DESC LIMIT ?'
+        : 'SELECT * FROM orders ORDER BY datetime(updated_at) DESC LIMIT ?'
+      const params = unitId ? [unitId, limit] : [limit]
+      const res = await query(sql, params)
+      return res?.rows ?? []
+    }
+    if (supabase) {
+      let q = supabase.from('orders').select('*').order('updated_at', { ascending: false }).limit(limit)
+      if (unitId) q = q.eq('unit_id', unitId)
+      const { data, error } = await q
+      if (error) throw error
+      return data || []
+    }
+    return []
   } catch { return [] }
 }
 
 export async function listOrdersDetailed(limit = 100): Promise<Array<{ order: any; items: any[]; payments: any[]; details?: { pin?: string; password?: string }; phaseTimes?: any; unitStates?: any }>> {
   try {
     const unitId = await getCurrentUnitId()
-    const sql = unitId
-      ? 'SELECT * FROM orders WHERE unit_id = ? ORDER BY datetime(updated_at) DESC LIMIT ?'
-      : 'SELECT * FROM orders ORDER BY datetime(updated_at) DESC LIMIT ?'
-    const params = unitId ? [unitId, limit] : [limit]
-    const res = await query(sql, params)
-    const orders = res?.rows ?? []
-    const ids = orders.map((r: any) => String(r.id)).filter(Boolean)
-    if (!ids.length) return []
-    const placeholders = ids.map(() => '?').join(', ')
-    const itemsRes = await query(`SELECT oi.*, p.name as product_name, p.category_id as category_id FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id IN (${placeholders})`, ids)
-    const paysRes = await query(`SELECT order_id, method, SUM(amount_cents) AS amount_cents, SUM(change_cents) AS change_cents FROM payments WHERE order_id IN (${placeholders}) GROUP BY order_id, method`, ids)
-    const detRes = await query(`SELECT * FROM orders_details WHERE order_id IN (${placeholders})`, ids)
-    const timesRes = await query(`SELECT * FROM kds_phase_times WHERE order_id IN (${placeholders})`, ids)
-    const unitStatesRes = await query(`SELECT * FROM kds_unit_states WHERE order_id IN (${placeholders})`, ids)
+    const api = (window as any)?.api?.db?.query
+    if (typeof api === 'function') {
+      const sql = unitId
+        ? 'SELECT * FROM orders WHERE unit_id = ? ORDER BY datetime(updated_at) DESC LIMIT ?'
+        : 'SELECT * FROM orders ORDER BY datetime(updated_at) DESC LIMIT ?'
+      const params = unitId ? [unitId, limit] : [limit]
+      const res = await query(sql, params)
+      const orders = res?.rows ?? []
+      const ids = orders.map((r: any) => String(r.id)).filter(Boolean)
+      if (!ids.length) return []
+      const placeholders = ids.map(() => '?').join(', ')
+      const itemsRes = await query(`SELECT oi.*, p.name as product_name, p.category_id as category_id FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id IN (${placeholders})`, ids)
+      const paysRes = await query(`SELECT order_id, method, SUM(amount_cents) AS amount_cents, SUM(change_cents) AS change_cents FROM payments WHERE order_id IN (${placeholders}) GROUP BY order_id, method`, ids)
+      const detRes = await query(`SELECT * FROM orders_details WHERE order_id IN (${placeholders})`, ids)
+      const timesRes = await query(`SELECT * FROM kds_phase_times WHERE order_id IN (${placeholders})`, ids)
+      const unitStatesRes = await query(`SELECT * FROM kds_unit_states WHERE order_id IN (${placeholders})`, ids)
 
-    const itemsByOrder: Record<string, any[]> = {}
-    for (const it of (itemsRes?.rows ?? [])) {
-      const oid = String((it as any).order_id ?? (it as any).orderId ?? '')
-      if (!itemsByOrder[oid]) itemsByOrder[oid] = []
-      itemsByOrder[oid].push(it)
-    }
-
-    const paysByOrder: Record<string, any[]> = {}
-    for (const p of (paysRes?.rows ?? [])) {
-      const oid = String((p as any).order_id ?? (p as any).orderId ?? '')
-      if (!paysByOrder[oid]) paysByOrder[oid] = []
-      paysByOrder[oid].push(p)
-    }
-
-    const detByOrder: Record<string, any> = {}
-    for (const d of (detRes?.rows ?? [])) {
-      const oid = String((d as any).order_id ?? (d as any).orderId ?? '')
-      detByOrder[oid] = d
-    }
-
-    const timesByOrder: Record<string, any> = {}
-    for (const t of (timesRes?.rows ?? [])) {
-      const oid = String((t as any).order_id ?? (t as any).orderId ?? '')
-      timesByOrder[oid] = {
-        newStart: t.new_start ?? t.newStart,
-        preparingStart: t.preparing_start ?? t.preparingStart,
-        readyAt: t.ready_at ?? t.readyAt,
-        deliveredAt: t.delivered_at ?? t.deliveredAt,
+      const itemsByOrder: Record<string, any[]> = {}
+      for (const it of (itemsRes?.rows ?? [])) {
+        const oid = String((it as any).order_id ?? (it as any).orderId ?? '')
+        if (!itemsByOrder[oid]) itemsByOrder[oid] = []
+        itemsByOrder[oid].push(it)
       }
-    }
 
-    const unitStatesByOrder: Record<string, any> = {}
-    for (const u of (unitStatesRes?.rows ?? [])) {
-      const oid = String((u as any).order_id ?? (u as any).orderId ?? '')
-      const itemId = String((u as any).item_id ?? (u as any).itemId ?? '')
-      const unitId = String((u as any).unit_id ?? (u as any).unitId ?? '')
-      if (!unitStatesByOrder[oid]) unitStatesByOrder[oid] = {}
-      const key = `${itemId}:${unitId}`
-      unitStatesByOrder[oid][key] = {
-        operatorName: u.operator_name ?? u.operatorName ?? undefined,
-        unitStatus: u.unit_status ?? u.unitStatus ?? undefined,
-        completedAt: u.completed_at ?? u.completedAt ?? undefined,
-        deliveredAt: u.delivered_at ?? u.deliveredAt ?? undefined,
-        completedObservations: (() => { try { const arr = JSON.parse(String(u.completed_observations_json ?? 'null')); return Array.isArray(arr) ? arr : [] } catch { return [] } })(),
+      const paysByOrder: Record<string, any[]> = {}
+      for (const p of (paysRes?.rows ?? [])) {
+        const oid = String((p as any).order_id ?? (p as any).orderId ?? '')
+        if (!paysByOrder[oid]) paysByOrder[oid] = []
+        paysByOrder[oid].push(p)
       }
-    }
 
-    return orders.map((r: any) => {
-      const oid = String(r.id)
-      const d = detByOrder[oid]
-      return {
-        order: r,
-        items: itemsByOrder[oid] ?? [],
-        payments: paysByOrder[oid] ?? [],
-        details: d ? { pin: d.pin ? String(d.pin) : undefined, password: d.password ? String(d.password) : undefined } : undefined,
-        phaseTimes: timesByOrder[oid],
-        unitStates: unitStatesByOrder[oid],
+      const detByOrder: Record<string, any> = {}
+      for (const d of (detRes?.rows ?? [])) {
+        const oid = String((d as any).order_id ?? (d as any).orderId ?? '')
+        detByOrder[oid] = d
       }
-    })
+
+      const timesByOrder: Record<string, any> = {}
+      for (const t of (timesRes?.rows ?? [])) {
+        const oid = String((t as any).order_id ?? (t as any).orderId ?? '')
+        timesByOrder[oid] = {
+          newStart: t.new_start ?? t.newStart,
+          preparingStart: t.preparing_start ?? t.preparingStart,
+          readyAt: t.ready_at ?? t.readyAt,
+          deliveredAt: t.delivered_at ?? t.deliveredAt,
+        }
+      }
+
+      const unitStatesByOrder: Record<string, any> = {}
+      for (const u of (unitStatesRes?.rows ?? [])) {
+        const oid = String((u as any).order_id ?? (u as any).orderId ?? '')
+        const itemId = String((u as any).item_id ?? (u as any).itemId ?? '')
+        const unitId = String((u as any).unit_id ?? (u as any).unitId ?? '')
+        if (!unitStatesByOrder[oid]) unitStatesByOrder[oid] = {}
+        const key = `${itemId}:${unitId}`
+        unitStatesByOrder[oid][key] = {
+          operatorName: u.operator_name ?? u.operatorName ?? undefined,
+          unitStatus: u.unit_status ?? u.unitStatus ?? undefined,
+          completedAt: u.completed_at ?? u.completedAt ?? undefined,
+          deliveredAt: u.delivered_at ?? u.deliveredAt ?? undefined,
+          completedObservations: (() => { try { const arr = JSON.parse(String(u.completed_observations_json ?? 'null')); return Array.isArray(arr) ? arr : [] } catch { return [] } })(),
+        }
+      }
+
+      return orders.map((r: any) => {
+        const oid = String(r.id)
+        const d = detByOrder[oid]
+        return {
+          order: r,
+          items: itemsByOrder[oid] ?? [],
+          payments: paysByOrder[oid] ?? [],
+          details: d ? { pin: d.pin ? String(d.pin) : undefined, password: d.password ? String(d.password) : undefined } : undefined,
+          phaseTimes: timesByOrder[oid],
+          unitStates: unitStatesByOrder[oid],
+        }
+      })
+    }
+    if (supabase) {
+      let q = supabase.from('orders').select('id, status, total_cents, discount_percent, discount_cents, observations, pin, password, unit_id, created_at, updated_at, completed_at').order('updated_at', { ascending: false }).limit(limit)
+      if (unitId) q = q.eq('unit_id', unitId)
+      const { data: ords, error: ordErr } = await q
+      if (ordErr) throw ordErr
+      const ids = (ords || []).map(r => String(r.id))
+      if (!ids.length) return []
+      const { data: itemsData, error: itemsErr } = await supabase.from('order_items').select('id, order_id, product_id, product_name, quantity, unit_price_cents, total_cents').in('order_id', ids)
+      if (itemsErr) throw itemsErr
+      const { data: paysData, error: paysErr } = await supabase.from('payments').select('order_id, method, amount_cents, change_cents').in('order_id', ids)
+      if (paysErr) throw paysErr
+      const prodIds = Array.from(new Set((itemsData || []).map(it => String(it.product_id)).filter(Boolean)))
+      const { data: prods } = prodIds.length ? await supabase.from('products').select('id, category_id, name').in('id', prodIds) : { data: [] as any[] }
+      const catByProd: Record<string, string | null> = {}
+      for (const p of (prods || [])) catByProd[String(p.id)] = (p as any).category_id ?? null
+      const itemsByOrder: Record<string, any[]> = {}
+      for (const it of (itemsData || [])) {
+        const oid = String(it.order_id)
+        itemsByOrder[oid] = itemsByOrder[oid] || []
+        itemsByOrder[oid].push({ ...it, category_id: catByProd[String(it.product_id)] ?? null })
+      }
+      const paysByOrder: Record<string, any[]> = {}
+      for (const p of (paysData || [])) {
+        const oid = String(p.order_id)
+        paysByOrder[oid] = paysByOrder[oid] || []
+        paysByOrder[oid].push(p)
+      }
+      return (ords || []).map(r => ({ order: r, items: itemsByOrder[String(r.id)] || [], payments: paysByOrder[String(r.id)] || [], details: { pin: (r as any).pin, password: (r as any).password } }))
+    }
+    return []
   } catch { return [] }
 }
 
