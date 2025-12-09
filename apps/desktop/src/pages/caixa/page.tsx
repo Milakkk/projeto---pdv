@@ -191,6 +191,29 @@ export default function CaixaPage() {
       }
     })();
   }, []);
+
+  // Inicializar associações padrão: mapear todas categorias para a cozinha "Mexicano" se ainda não houver associações
+  useEffect(() => {
+    (async () => {
+      const api = (window as any)?.api;
+      if (api?.db?.query) return;
+      try {
+        const { supabase } = await import('../../utils/supabase')
+        if (!supabase) return
+        const { data: anyAssoc } = await supabase.from('category_kitchens').select('id').limit(1)
+        if ((anyAssoc||[]).length > 0) return
+        const { data: ks } = await supabase.from('kitchens').select('id,name').eq('is_active', true)
+        if (!Array.isArray(ks) || ks.length===0) return
+        const mexican = ks.find(k=> String(k.name).toLowerCase()==='mexicano') || ks[0]
+        const kid = mexican?.id
+        if (!kid) return
+        const { data: cats } = await supabase.from('categories').select('id')
+        if (!Array.isArray(cats) || cats.length===0) return
+        const rows = cats.map(c => ({ category_id: c.id, kitchen_id: kid, updated_at: new Date().toISOString() }))
+        await supabase.from('category_kitchens').insert(rows)
+      } catch {}
+    })()
+  }, [kitchens])
   
   // Acessando orders e savedCarts
   const [orders, setOrders] = useState<Order[]>([]);
