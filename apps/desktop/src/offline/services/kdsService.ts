@@ -572,7 +572,15 @@ export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 
     try {
       const rawTk = localStorage.getItem('kdsTickets')
       const tickets = rawTk ? JSON.parse(rawTk) : []
-      const filtered = Array.isArray(tickets) ? tickets.filter((t:any)=> String(t.status)===String(status)) : []
+      let filtered = Array.isArray(tickets) ? tickets.filter((t:any)=> String(t.status)===String(status)) : []
+      
+      // Aplicar filtro por cozinha no modo offline
+      if (kitchenId) {
+        filtered = filtered.filter((t:any) => {
+          const ticketKitchenId = t.kitchen_id || t.kitchenId;
+          return ticketKitchenId === kitchenId;
+        });
+      }
       if (filtered.length) {
         const res = [] as any[]
         for (const t of filtered) {

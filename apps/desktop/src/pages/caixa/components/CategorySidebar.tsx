@@ -13,6 +13,7 @@ interface CategorySidebarProps {
   kitchens?: Kitchen[];
   selectedKitchenId?: string | null;
   onKitchenChange?: (kitchenId: string | null) => void;
+  categoryIdsByKitchen?: Record<string, string[]>;
 }
 
 export default function CategorySidebar({ 
@@ -22,12 +23,14 @@ export default function CategorySidebar({
   onReorderCategory,
   kitchens = [],
   selectedKitchenId = null,
-  onKitchenChange
+  onKitchenChange,
+  categoryIdsByKitchen = {}
 }: CategorySidebarProps) {
   // Filtrar categorias por cozinha selecionada
   const filteredCategories = categories.filter(category => {
     if (!selectedKitchenId) return true; // Mostrar todas se nenhuma cozinha selecionada
-    return (category as any).kitchenId === selectedKitchenId || !(category as any).kitchenId;
+    const allowedCategoryIds = categoryIdsByKitchen[selectedKitchenId] || [];
+    return allowedCategoryIds.includes(String(category.id));
   });
 
   const activeCategories = filteredCategories

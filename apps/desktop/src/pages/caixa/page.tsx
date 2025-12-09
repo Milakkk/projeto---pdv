@@ -203,7 +203,10 @@ export default function CaixaPage() {
         const { supabase } = await import('../../utils/supabase')
         if (!supabase) return
         const { data: anyAssoc } = await supabase.from('category_kitchens').select('id').limit(1)
-        if ((anyAssoc||[]).length > 0) return
+        if ((anyAssoc||[]).length > 0) {
+          console.log('[Caixa] Já existem associações categoria-cozinha, pulando bootstrap')
+          return
+        }
         const { data: ks } = await supabase.from('kitchens').select('id,name').eq('is_active', true)
         if (!Array.isArray(ks) || ks.length===0) return
         const mexican = ks.find(k=> String(k.name).toLowerCase()==='mexicano') || ks[0]
@@ -212,8 +215,16 @@ export default function CaixaPage() {
         const { data: cats } = await supabase.from('categories').select('id')
         if (!Array.isArray(cats) || cats.length===0) return
         const rows = cats.map(c => ({ category_id: c.id, kitchen_id: kid, updated_at: new Date().toISOString() }))
-        await supabase.from('category_kitchens').insert(rows)
-      } catch {}
+        console.log('[Caixa] Criando associações automáticas para cozinha Mexicano:', { cozinhaId: kid, categorias: cats.length })
+        const { error } = await supabase.from('category_kitchens').insert(rows)
+        if (error) {
+          console.error('[Caixa] Erro ao criar associações:', error)
+        } else {
+          console.log('[Caixa] Associações criadas com sucesso')
+        }
+      } catch (err) {
+        console.error('[Caixa] Erro no bootstrap de associações:', err)
+      }
     })()
   }, [kitchens])
   
@@ -1509,13 +1520,14 @@ export default function CaixaPage() {
             {/* Sidebar de Categorias */}
             <div className="order-1 xl:order-1 flex-shrink-0">
               <CategorySidebar
-                categories={(selectedKitchenId && categoryIdsByKitchen[selectedKitchenId]) ? categories.filter(c=> (categoryIdsByKitchen[selectedKitchenId]||[]).includes(String(c.id))) : categories}
+                categories={categories}
                 selectedCategory={selectedCategory}
                 onSelectCategory={(id) => { setAutoSelectCategory(true); setSelectedCategory(id); }}
                 onReorderCategory={handleReorderCategory}
                 kitchens={kitchens}
                 selectedKitchenId={selectedKitchenId}
                 onKitchenChange={setSelectedKitchenId}
+                categoryIdsByKitchen={categoryIdsByKitchen}
               />
             </div>
 
