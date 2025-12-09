@@ -280,7 +280,7 @@ export default function ConfiguracoesPage() {
         console.error('[Configurações] ❌ Erro ao corrigir produtos:', err);
       }
     })();
-  }, [setCategories, setMenuItems])
+  }, []) // Removidas dependências setCategories/setMenuItems para evitar loop infinito
 
   // Inicializar: se não houver associações categoria→cozinha, mapear todas categorias para a cozinha 'Mexicano' (ou a primeira)
   useEffect(() => {
