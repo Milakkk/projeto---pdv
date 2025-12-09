@@ -107,7 +107,7 @@ export default function ConfiguracoesPage() {
         console.error('[Configurações] Erro ao carregar associações categoria-cozinha:', err);
       }
     })();
-  }, [setCategories]);
+  }, []); // Removida dependência setCategories para evitar loop infinito
 
   // Corrigir produtos sem categoria - reatribuir baseado no nome da categoria
   useEffect(() => {
