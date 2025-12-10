@@ -418,214 +418,111 @@ export async function setTicketStatus(id: UUID, status: 'queued' | 'prep' | 'rea
 }
 
 export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 'done', kitchenId?: string | null) {
+  let tickets: any[] = []
+  
   if (supabase) {
-    const map = { queued: 'NEW', prep: 'PREPARING', ready: 'READY', done: 'DELIVERED' } as Record<string,string>
-    let query = supabase.from('kds_tickets').select('*').eq('status', map[status])
-    if (kitchenId) query = query.eq('kitchen_id', kitchenId)
-    const { data } = await query
-    try { console.log('[KDS] listTickets supabase', { status: map[status], kitchenId: kitchenId ?? null, count: (data||[]).length }) } catch {}
-    const tickets = data || []
-    const enriched = [] as any[]
-    for (const t of tickets) {
-      const ordId = String(t.order_id)
-      const times = await getPhaseTimes(ordId)
-      let items: any[] = []
-      try {
-        const { data: oi } = await supabase
-          .from('order_items')
-          .select('*')
-          .eq('order_id', ordId)
-        items = (oi || []).map((it:any)=> ({
-          id: String(it.id),
-          quantity: Number(it.quantity ?? it.qty ?? 1),
-          skipKitchen: false,
-          menuItem: { id: String(it.product_id ?? ''), name: String(it.product_name ?? 'Item'), unitDeliveryCount: 1, categoryId: String(it.category_id ?? '') },
-          productionUnits: Array.from({ length: Math.max(1, Number(it.qty ?? 1)) }, (_, idx) => ({ unitId: `${String(it.id)}-${idx+1}`, unitStatus: 'PENDING', operatorName: undefined, completedObservations: [], completedAt: undefined })),
-        }))
-      } catch {}
-      enriched.push({ ...t, items, createdAt: times?.newStart || t.created_at, updatedAt: times?.preparingStart || t.updated_at, readyAt: times?.readyAt, deliveredAt: times?.deliveredAt })
-    }
-    return enriched
-  }
-  try {
-    const res = await query('SELECT * FROM kds_tickets WHERE status = ?', [status])
-    const tickets = Array.isArray(res?.rows) ? res.rows : []
-  if ((tickets?.length ?? 0) === 0) {
     try {
-      const rawTk = localStorage.getItem('kdsTickets')
-      const lsTickets = rawTk ? JSON.parse(rawTk) : []
-      const filtered = Array.isArray(lsTickets) ? lsTickets.filter((t:any)=> String(t.status)===String(status)) : []
-      if (filtered.length) {
-        const resList = [] as any[]
-        for (const t of filtered) {
-          const times = await getPhaseTimes(String(t.order_id || t.orderId))
-          const resItems = await query('SELECT oi.*, p.name as product_name, p.category_id as category_id FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ?', [String(t.order_id || t.orderId)])
-          let items = (resItems?.rows ?? []).map((it:any) => ({
-            id: String(it.id),
-            quantity: Number(it.qty ?? 1),
-            skipKitchen: false,
-            menuItem: {
-              id: String(it.product_id ?? ''),
-              name: String(it.product_name ?? 'Item'),
-              unitDeliveryCount: 1,
-              categoryId: String(it.category_id ?? ''),
-            },
-            productionUnits: Array.from({ length: Math.max(1, Number(it.qty ?? 1)) }, (_, idx) => ({
-              unitId: `${String(it.id)}-${idx+1}`,
-              unitStatus: 'PENDING',
-              operatorName: undefined,
-              completedObservations: [],
-              completedAt: undefined,
-            })),
-          }))
-          try {
-            const unitMap = await loadUnitStatesForOrder(String(t.order_id || t.orderId))
-            items = items.map((it:any)=> ({
-              ...it,
-              productionUnits: (Array.isArray(it.productionUnits)? it.productionUnits : []).map((u:any)=> mergeUnitFromMap(unitMap, String(t.order_id || t.orderId), String(it.id), u))
-            }))
-          } catch {}
-          resList.push({ ...t, items, createdAt: times?.newStart || t.createdAt, updatedAt: times?.preparingStart || t.updatedAt, readyAt: times?.readyAt || t.readyAt, deliveredAt: times?.deliveredAt || t.deliveredAt })
-        }
-        return resList
-      }
-      const statusParam = status
-      const rows = await query('SELECT id, opened_at, updated_at, closed_at FROM orders WHERE closed_at IS NULL ORDER BY datetime(updated_at) DESC LIMIT 200')
-      const out = [] as any[]
-      for (const r of (rows?.rows ?? [])) {
-        const id = String(r.id)
-        const times = await getPhaseTimes(id)
-        const st = times?.readyAt ? 'ready' : (times?.preparingStart ? 'prep' : 'queued')
-        if (st !== statusParam) continue
-        const resItems = await query('SELECT oi.*, p.name as product_name, p.category_id as category_id FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ?', [id])
-        const items = (resItems?.rows ?? []).map((it:any) => ({
-          id: String(it.id),
-          quantity: Number(it.qty ?? 1),
-          skipKitchen: false,
-          menuItem: {
-            id: String(it.product_id ?? ''),
-            name: String(it.product_name ?? 'Item'),
-            unitDeliveryCount: 1,
-            categoryId: String(it.category_id ?? ''),
-          },
-          productionUnits: Array.from({ length: Math.max(1, Number(it.qty ?? 1)) }, (_, idx) => ({
-            unitId: `${String(it.id)}-${idx+1}`,
-            unitStatus: 'PENDING',
-            operatorName: undefined,
-            completedObservations: [],
-            completedAt: undefined,
-          })),
-        }))
-        out.push({ id, order_id: id, status: st, items, createdAt: times?.newStart || r.opened_at, updatedAt: times?.preparingStart || r.updated_at, readyAt: times?.readyAt, deliveredAt: times?.deliveredAt })
-      }
-      return out
-    } catch {}
-  }
-    const enriched = [] as any[]
-    for (const t of tickets) {
-      const ordId = t.order_id ?? t.orderId
-      const times = await getPhaseTimes(String(ordId))
-      const resItems = await query('SELECT oi.*, p.name as product_name, p.category_id as category_id FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ?', [ordId])
-      const items = (resItems?.rows ?? []).map((it:any) => ({
-        id: String(it.id),
-        quantity: Number(it.qty ?? 1),
-        skipKitchen: false,
-        menuItem: {
-          id: String(it.product_id ?? ''),
-          name: String(it.product_name ?? 'Item'),
-          unitDeliveryCount: 1,
-          categoryId: String(it.category_id ?? ''),
-        },
-        productionUnits: Array.from({ length: Math.max(1, Number(it.qty ?? 1)) }, (_, idx) => ({
-          unitId: `${String(it.id)}-${idx+1}`,
-          unitStatus: 'PENDING',
-          operatorName: undefined,
-          completedObservations: [],
-          completedAt: undefined,
-        })),
-      }))
-      try {
-        const unitMap = await loadUnitStatesForOrder(String(ordId))
-        const mergedItems = items.map((it:any)=> ({
-          ...it,
-          productionUnits: it.productionUnits.map((u:any)=> mergeUnitFromMap(unitMap, String(ordId), String(it.id), u))
-        }))
-        let pin: string | undefined
-        let password: string | undefined
-        try {
-          const dres = await query('SELECT pin, password FROM orders_details WHERE order_id = ?', [ordId])
-          const drow = (dres?.rows ?? [])[0]
-          if (drow) { pin = drow.pin ?? undefined; password = drow.password ?? undefined }
-        } catch {}
-        enriched.push({ ...t, pin, password, items: mergedItems, createdAt: times?.newStart || t.createdAt, updatedAt: times?.preparingStart || t.updatedAt, readyAt: times?.readyAt || t.readyAt, deliveredAt: times?.deliveredAt || t.deliveredAt })
-          } catch {
-            let pin: string | undefined
-            let password: string | undefined
-            try {
-              const dres = await query('SELECT pin, password FROM orders_details WHERE order_id = ?', [ordId])
-              const drow = (dres?.rows ?? [])[0]
-              if (drow) { pin = drow.pin ?? undefined; password = drow.password ?? undefined }
-            } catch {}
-            enriched.push({ ...t, pin, password, items, createdAt: times?.newStart || t.createdAt, updatedAt: times?.preparingStart || t.updatedAt, readyAt: times?.readyAt || t.readyAt, deliveredAt: times?.deliveredAt || t.deliveredAt })
-          }
-    }
-    return enriched
-  } catch {
-    try {
-      const rawTk = localStorage.getItem('kdsTickets')
-      const tickets = rawTk ? JSON.parse(rawTk) : []
-      let filtered = Array.isArray(tickets) ? tickets.filter((t:any)=> String(t.status)===String(status)) : []
+      const map = { queued: 'NEW', prep: 'PREPARING', ready: 'READY', done: 'DELIVERED' } as Record<string,string>
+      let query = supabase.from('kds_tickets').select('*').eq('status', map[status])
+      if (kitchenId) query = query.eq('kitchen_id', kitchenId)
+      const { data } = await query
+      try { console.log('[KDS] listTickets supabase', { status: map[status], kitchenId: kitchenId ?? null, count: (data||[]).length }) } catch {}
+      const sbTickets = data || []
       
-      // Aplicar filtro por cozinha no modo offline
-      if (kitchenId) {
-        filtered = filtered.filter((t:any) => {
-          const ticketKitchenId = t.kitchen_id || t.kitchenId;
-          return ticketKitchenId === kitchenId;
-        });
+      const enriched = [] as any[]
+      for (const t of sbTickets) {
+        const ordId = String(t.order_id)
+        const times = await getPhaseTimes(ordId)
+        let items: any[] = []
+        try {
+          const { data: oi } = await supabase
+            .from('order_items')
+            .select('*')
+            .eq('order_id', ordId)
+          items = (oi || []).map((it:any)=> ({
+            id: String(it.id),
+            quantity: Number(it.quantity ?? it.qty ?? 1),
+            skipKitchen: false,
+            menuItem: { id: String(it.product_id ?? ''), name: String(it.product_name ?? 'Item'), unitDeliveryCount: 1, categoryId: String(it.category_id ?? '') },
+            productionUnits: Array.from({ length: Math.max(1, Number(it.qty ?? 1)) }, (_, idx) => ({ unitId: `${String(it.id)}-${idx+1}`, unitStatus: 'PENDING', operatorName: undefined, completedObservations: [], completedAt: undefined })),
+          }))
+        } catch {}
+        enriched.push({ ...t, items, createdAt: times?.newStart || t.created_at, updatedAt: times?.preparingStart || t.updated_at, readyAt: times?.readyAt, deliveredAt: times?.deliveredAt })
       }
-      if (filtered.length) {
-        const res = [] as any[]
-        for (const t of filtered) {
-          const times = await getPhaseTimes(String(t.order_id || t.orderId))
-          try {
-            const rawItems = localStorage.getItem('order_items')
-            const arrItems = rawItems ? JSON.parse(rawItems) : []
-            const rows = (Array.isArray(arrItems) ? arrItems : []).filter((it:any)=> String(it.order_id)===String(t.order_id || t.orderId))
-            let items = rows.map((it:any)=> ({
+      tickets = [...tickets, ...enriched]
+    } catch (e) {
+      console.warn('[KDS] Falha ao ler do Supabase, tentando local:', e)
+    }
+  }
+  
+  // Fallback Local (se Supabase falhou ou retornou vazio - ou para complementar)
+  // Sempre tenta ler localmente para pegar tickets criados offline
+  try {
+    // Tenta DB local (Electron)
+    let localTickets: any[] = []
+    try {
+      const res = await query('SELECT * FROM kds_tickets WHERE status = ?', [status])
+      if (Array.isArray(res?.rows)) localTickets = res.rows
+    } catch {}
+
+    // Tenta localStorage (Browser offline fallback)
+    if (localTickets.length === 0) {
+      try {
+        const rawTk = localStorage.getItem('kdsTickets')
+        const lsTickets = rawTk ? JSON.parse(rawTk) : []
+        // Filtra por status (aceita tanto 'queued' quanto 'NEW' mapeado)
+        localTickets = Array.isArray(lsTickets) ? lsTickets.filter((t:any)=> String(t.status)===String(status) || (status==='queued' && t.status==='NEW')) : []
+        
+        // Filtra por cozinha se necessário
+        if (kitchenId && localTickets.length > 0) {
+           localTickets = localTickets.filter((t:any) => !t.kitchen_id || String(t.kitchen_id) === String(kitchenId))
+        }
+      } catch {}
+    }
+
+    if (localTickets.length > 0) {
+      const enrichedLocal = [] as any[]
+      for (const t of localTickets) {
+        // Evita duplicatas se já veio do Supabase
+        if (tickets.some(existing => String(existing.id) === String(t.id))) continue
+
+        const ordId = String(t.order_id || t.orderId)
+        const times = await getPhaseTimes(ordId)
+        
+        // Tenta buscar itens localmente (Electron ou localStorage)
+        let items: any[] = []
+        try {
+          const resItems = await query('SELECT oi.*, p.name as product_name, p.category_id as category_id FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ?', [ordId])
+          if (resItems?.rows) {
+             items = resItems.rows.map((it:any) => ({
               id: String(it.id),
               quantity: Number(it.qty ?? 1),
               skipKitchen: false,
-              menuItem: {
-                id: String(it.product_id ?? ''),
-                name: 'Item',
-                unitDeliveryCount: 1,
-                categoryId: '',
-              },
-              productionUnits: Array.from({ length: Math.max(1, Number(it.qty ?? 1)) }, (_, idx) => ({
-                unitId: `${String(it.id)}-${idx+1}`,
-                unitStatus: 'PENDING',
-                operatorName: undefined,
-                completedObservations: [],
-                completedAt: undefined,
-              })),
+              menuItem: { id: String(it.product_id ?? ''), name: String(it.product_name ?? 'Item'), unitDeliveryCount: 1, categoryId: String(it.category_id ?? '') },
+              productionUnits: Array.from({ length: Math.max(1, Number(it.qty ?? 1)) }, (_, idx) => ({ unitId: `${String(it.id)}-${idx+1}`, unitStatus: 'PENDING', operatorName: undefined, completedObservations: [], completedAt: undefined })),
             }))
-            try {
-              const unitMap = await loadUnitStatesForOrder(String(t.order_id || t.orderId))
-              items = items.map((it:any)=> ({
-                ...it,
-                productionUnits: (Array.isArray(it.productionUnits)? it.productionUnits : []).map((u:any)=> mergeUnitFromMap(unitMap, String(t.order_id || t.orderId), String(it.id), u))
-              }))
-            } catch {}
-            res.push({ ...t, items, createdAt: times?.newStart || t.createdAt, updatedAt: times?.preparingStart || t.updatedAt, readyAt: times?.readyAt || t.readyAt, deliveredAt: times?.deliveredAt || t.deliveredAt })
-          } catch {
-            res.push({ ...t, items: [], createdAt: times?.newStart || t.createdAt, updatedAt: times?.preparingStart || t.updatedAt, readyAt: times?.readyAt || t.readyAt, deliveredAt: times?.deliveredAt || t.deliveredAt })
+          } else {
+             // Fallback itens localStorage
+             const rawItems = localStorage.getItem('order_items')
+             const allItems = rawItems ? JSON.parse(rawItems) : []
+             const myItems = allItems.filter((it:any) => String(it.order_id) === ordId)
+             items = myItems.map((it:any)=> ({
+                id: String(it.id),
+                quantity: Number(it.qty ?? 1),
+                skipKitchen: false,
+                menuItem: { id: String(it.product_id ?? ''), name: String(it.product_name ?? 'Item'), unitDeliveryCount: 1, categoryId: String(it.category_id ?? '') },
+                productionUnits: Array.from({ length: Math.max(1, Number(it.qty ?? 1)) }, (_, idx) => ({ unitId: `${String(it.id)}-${idx+1}`, unitStatus: 'PENDING', operatorName: undefined, completedObservations: [], completedAt: undefined })),
+             }))
           }
-        }
-        return res
+        } catch {}
+
+        enrichedLocal.push({ ...t, items, createdAt: times?.newStart || t.createdAt || t.created_at, updatedAt: times?.preparingStart || t.updatedAt || t.updated_at, readyAt: times?.readyAt || t.ready_at, deliveredAt: times?.deliveredAt || t.delivered_at })
       }
-      return []
-    } catch { return [] }
-  }
+      tickets = [...tickets, ...enrichedLocal]
+    }
+  } catch {}
+
+  return tickets
 }
 
 function persistUnitState(key: string, patch: any) {
