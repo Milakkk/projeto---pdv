@@ -104,66 +104,78 @@ export async function addItem(params: {
   const id = uuid()
   const now = new Date().toISOString()
   const subtotal = Math.max(0, Math.round(params.qty * params.unitPriceCents))
+  let persisted = false
+
   if (supabase) {
-    let productName: string | null = null
-    let categoryId: string | null = null
-    if (params.productId) {
-      const { data: p } = await supabase
-        .from('products')
-        .select('name, category_id')
-        .eq('id', params.productId)
+    try {
+      let productName: string | null = null
+      let categoryId: string | null = null
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      
+      if (params.productId && uuidRegex.test(params.productId)) {
+        const { data: p } = await supabase
+          .from('products')
+          .select('name, category_id')
+          .eq('id', params.productId)
+          .maybeSingle()
+        productName = p?.name ?? null
+        categoryId = p?.category_id ?? null
+      }
+      
+      const { error: errItem } = await supabase
+        .from('order_items')
+        .insert({
+          id,
+          order_id: params.orderId,
+          product_id: (params.productId && uuidRegex.test(params.productId)) ? params.productId : null,
+          product_name: productName ?? 'Item',
+          quantity: params.qty,
+          unit_price_cents: params.unitPriceCents,
+          total_cents: subtotal,
+          observations: params.notes ?? null,
+          created_at: now,
+          updated_at: now,
+          version: 1,
+          pending_sync: false,
+        })
+      if (errItem) throw errItem
+      
+      const { data: ordRow, error: ordSelErr } = await supabase
+        .from('orders')
+        .select('total_cents')
+        .eq('id', params.orderId)
         .maybeSingle()
-      productName = p?.name ?? null
-      categoryId = p?.category_id ?? null
+      if (!ordSelErr) {
+        const current = Number(ordRow?.total_cents ?? 0)
+        await supabase
+          .from('orders')
+          .update({ total_cents: current + subtotal, updated_at: now })
+          .eq('id', params.orderId)
+      }
+
+      // Roteamento por cozinha
+      let kitchenIds: string[] = []
+      if (categoryId) {
+        const { data: cats } = await supabase
+          .from('category_kitchens')
+          .select('kitchen_id')
+          .eq('category_id', categoryId)
+        kitchenIds = (cats || []).map((r: any) => String(r.kitchen_id)).filter(Boolean)
+      }
+      const baseTicket = { order_id: params.orderId, status: 'NEW', updated_at: now, version: 1, pending_sync: false }
+      if (kitchenIds.length > 0) {
+        const rows = kitchenIds.map((kid) => ({ id: uuid(), ...baseTicket, kitchen_id: kid }))
+        await supabase.from('kds_tickets').insert(rows)
+      } else {
+        await supabase.from('kds_tickets').insert({ id: uuid(), ...baseTicket, kitchen_id: null })
+      }
+      persisted = true
+    } catch (err) {
+      console.warn('[ordersService] Falha ao adicionar item no Supabase, tentando local:', err)
     }
-    const { error: errItem } = await supabase
-      .from('order_items')
-      .insert({
-        id,
-        order_id: params.orderId,
-        product_id: params.productId,
-        product_name: productName ?? 'Item',
-        quantity: params.qty,
-        unit_price_cents: params.unitPriceCents,
-        total_cents: subtotal,
-        observations: params.notes ?? null,
-        created_at: now,
-        updated_at: now,
-        version: 1,
-        pending_sync: false,
-      })
-    if (errItem) throw errItem
-    const { data: ordRow, error: ordSelErr } = await supabase
-      .from('orders')
-      .select('total_cents')
-      .eq('id', params.orderId)
-      .maybeSingle()
-    if (ordSelErr) throw ordSelErr
-    const current = Number(ordRow?.total_cents ?? 0)
-    const { error: errOrdUpdate } = await supabase
-      .from('orders')
-      .update({ total_cents: current + subtotal, updated_at: now })
-      .eq('id', params.orderId)
-    if (errOrdUpdate) throw errOrdUpdate
-    // Roteamento por cozinha: criar tickets para cozinhas associadas à categoria
-    let kitchenIds: string[] = []
-    if (categoryId) {
-      const { data: cats } = await supabase
-        .from('category_kitchens')
-        .select('kitchen_id')
-        .eq('category_id', categoryId)
-      kitchenIds = (cats || []).map((r: any) => String(r.kitchen_id)).filter(Boolean)
-    }
-    const baseTicket = { order_id: params.orderId, status: 'NEW', updated_at: now, version: 1, pending_sync: false }
-    if (kitchenIds.length > 0) {
-      const rows = kitchenIds.map((kid) => ({ id: uuid(), ...baseTicket, kitchen_id: kid }))
-      const { error: tkErr } = await supabase.from('kds_tickets').insert(rows)
-      if (tkErr) throw tkErr
-    } else {
-      const { error: tkErr } = await supabase.from('kds_tickets').insert({ id: uuid(), ...baseTicket, kitchen_id: null })
-      if (tkErr) throw tkErr
-    }
-  } else {
+  } 
+  
+  if (!persisted) {
     try {
       await query(
         'INSERT INTO order_items (id, order_id, product_id, qty, unit_price_cents, notes, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
