@@ -32,29 +32,41 @@ export async function createOrder(payload?: {
   const id = payload?.id ?? uuid()
   const now = new Date().toISOString()
   const unitId = await getCurrentUnitId()
+  let persisted = false
+
   if (supabase) {
-    const rand = () => Math.max(1000, Math.floor(Math.random() * 9999))
-    const pin = rand()
-    const password = rand()
-    const { error } = await supabase
-      .from('orders')
-      .insert({
-        id,
-        unit_id: unitId ?? null,
-        status: 'NEW',
-        total_cents: 0,
-        discount_percent: 0,
-        discount_cents: 0,
-        observations: payload?.notes ?? null,
-        created_at: payload?.openedAt ?? now,
-        updated_at: now,
-        pin,
-        password,
-        version: 1,
-        pending_sync: false,
-      })
-    if (error) throw error
-  } else {
+    try {
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      const validUnitId = unitId && uuidRegex.test(unitId) ? unitId : null
+      
+      const rand = () => Math.max(1000, Math.floor(Math.random() * 9999))
+      const pin = rand()
+      const password = rand()
+      const { error } = await supabase
+        .from('orders')
+        .insert({
+          id,
+          unit_id: validUnitId,
+          status: 'NEW',
+          total_cents: 0,
+          discount_percent: 0,
+          discount_cents: 0,
+          observations: payload?.notes ?? null,
+          created_at: payload?.openedAt ?? now,
+          updated_at: now,
+          pin,
+          password,
+          version: 1,
+          pending_sync: false,
+        })
+      if (error) throw error
+      persisted = true
+    } catch (err) {
+      console.warn('[ordersService] Falha ao criar pedido no Supabase, tentando local:', err)
+    }
+  } 
+  
+  if (!persisted) {
     try {
       await query(
         'INSERT INTO orders (id, status, total_cents, opened_at, device_id, unit_id, operational_session_id, notes, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -171,6 +183,7 @@ export async function addItem(params: {
         'UPDATE orders SET total_cents = COALESCE(total_cents, 0) + ?, updated_at = ?, pending_sync = 1 WHERE id = ?',
         [subtotal, now, params.orderId],
       )
+      
       let kitchenIds: string[] = []
       if (params.productId) {
         try {
@@ -181,7 +194,7 @@ export async function addItem(params: {
           kitchenIds = (resCats?.rows ?? []).map((r: any) => String(r.kitchen_id)).filter(Boolean)
         } catch {}
       }
-      const baseTicket = { order_id: params.orderId, status: 'NEW', updated_at: now, version: 1, pending_sync: 1 }
+      
       if (kitchenIds.length > 0) {
         for (const kid of kitchenIds) {
           await query(
@@ -200,10 +213,12 @@ export async function addItem(params: {
       const arrItems = rawItems ? JSON.parse(rawItems) : []
       arrItems.push({ id, order_id: params.orderId, product_id: params.productId, qty: params.qty, unit_price_cents: params.unitPriceCents, notes: params.notes ?? null, updated_at: now, version: 1, pending_sync: 1 })
       localStorage.setItem('order_items', JSON.stringify(arrItems))
+      
       const rawOrders = localStorage.getItem('orders')
       const arrOrders = rawOrders ? JSON.parse(rawOrders) : []
       const nextOrders = arrOrders.map((o:any)=> String(o.id)===String(params.orderId) ? { ...o, total_cents: Math.max(0, Number(o.total_cents||0) + subtotal), updated_at: now } : o)
       localStorage.setItem('orders', JSON.stringify(nextOrders))
+      
       const rawTk = localStorage.getItem('kdsTickets')
       const arrTk = rawTk ? JSON.parse(rawTk) : []
       arrTk.push({ id: uuid(), order_id: params.orderId, status: 'queued', updated_at: now })
