@@ -303,7 +303,8 @@ export async function enqueueTicket(params: { orderId: UUID; station?: string | 
   if (supabase) {
     await supabase
       .from('kds_tickets')
-      .insert({ id, order_id: params.orderId, unit_id: unitId ?? null, status: 'queued', station: params.station ?? null, updated_at: now, version: 1, pending_sync: false })
+      .insert({ id, order_id: params.orderId, unit_id: unitId ?? null, status: 'NEW', station: params.station ?? null, updated_at: now, version: 1, pending_sync: false })
+    try { console.log('[KDS] enqueueTicket supabase', { id, orderId: params.orderId, status: 'NEW', kitchenId: null }) } catch {}
   } else {
     try {
       await query(
@@ -320,7 +321,7 @@ export async function enqueueTicket(params: { orderId: UUID; station?: string | 
       } catch {}
     }
   }
-  try { await pushLanEvents([{ table: 'kdsTickets', row: { id, order_id: params.orderId, unit_id: unitId ?? null, status: 'queued', station: params.station ?? null, updated_at: now } }]) } catch {}
+  try { await pushLanEvents([{ table: 'kdsTickets', row: { id, order_id: params.orderId, unit_id: unitId ?? null, status: 'NEW', station: params.station ?? null, updated_at: now } }]) } catch {}
   try { await setPhaseTime(params.orderId, { newStart: now }) } catch {}
   return id
 }
@@ -422,6 +423,7 @@ export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 
     let query = supabase.from('kds_tickets').select('*').eq('status', map[status])
     if (kitchenId) query = query.eq('kitchen_id', kitchenId)
     const { data } = await query
+    try { console.log('[KDS] listTickets supabase', { status: map[status], kitchenId: kitchenId ?? null, count: (data||[]).length }) } catch {}
     const tickets = data || []
     const enriched = [] as any[]
     for (const t of tickets) {

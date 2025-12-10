@@ -597,7 +597,15 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
       }
       // Enfileirar ticket na cozinha somente se houver itens que passam pela cozinha
       if (!onlyDirectDelivery) {
-        try { const ticketId = await enqueueTicket({ orderId }); ticketEnqueued = true; lastTicketId = ticketId; try { onSaveOrders(prev => prev.map(o => o.id===newOrder.id ? ({ ...o, ticketId } as any) : o)) } catch {} } catch {}
+        try {
+          const { supabase } = await import('../../../utils/supabase')
+          if (!supabase) {
+            const ticketId = await enqueueTicket({ orderId });
+            ticketEnqueued = true;
+            lastTicketId = ticketId;
+            try { onSaveOrders(prev => prev.map(o => o.id===newOrder.id ? ({ ...o, ticketId } as any) : o)) } catch {}
+          }
+        } catch {}
       } else {
         try { await closeOrder(orderId) } catch {}
       }
@@ -675,8 +683,12 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
 
     try {
       const hasKitchenItems = items.some(it => !(it.skipKitchen || it.menuItem?.skipKitchen))
-      if (hasKitchenItems && !ticketEnqueued) { enqueueTicket({ orderId: newOrder.id }).catch(()=>{}) }
-      else if (!hasKitchenItems) { closeOrder(newOrder.id).catch(()=>{}) }
+      if (hasKitchenItems && !ticketEnqueued) {
+        try {
+          const { supabase } = await import('../../../utils/supabase')
+          if (!supabase) { enqueueTicket({ orderId: newOrder.id }).catch(()=>{}) }
+        } catch {}
+      } else if (!hasKitchenItems) { closeOrder(newOrder.id).catch(()=>{}) }
     } catch {}
 
     // Simular som de novo pedido
