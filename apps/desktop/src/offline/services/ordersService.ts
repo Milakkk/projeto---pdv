@@ -163,6 +163,42 @@ export async function addItem(params: {
       'UPDATE orders SET total_cents = COALESCE(total_cents, 0) + ?, updated_at = ?, pending_sync = 1 WHERE id = ?',
       [subtotal, now, params.orderId],
     )
+    
+    // Roteamento por cozinha: criar tickets para cozinhas associadas à categoria (modo offline)
+    let kitchenIds: string[] = []
+    if (params.productId) {
+      try {
+        const resCats = await query(
+          'SELECT kitchen_id FROM category_kitchens WHERE category_id IN (SELECT category_id FROM products WHERE id = ?)',
+          [params.productId]
+        )
+        kitchenIds = (resCats?.rows ?? []).map((r: any) => String(r.kitchen_id)).filter(Boolean)
+      } catch (error) {
+        console.warn('Erro ao buscar associações categoria-cozinha:', error)
+      }
+    }
+    
+    const baseTicket = { 
+      order_id: params.orderId, 
+      status: 'NEW', 
+      updated_at: now, 
+      version: 1, 
+      pending_sync: 1 
+    }
+    
+    if (kitchenIds.length > 0) {
+      for (const kid of kitchenIds) {
+        await query(
+          'INSERT INTO kds_tickets (id, order_id, status, updated_at, version, pending_sync, kitchen_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [uuid(), params.orderId, 'NEW', now, 1, 1, kid]
+        )
+      }
+    } else {
+      await query(
+        'INSERT INTO kds_tickets (id, order_id, status, updated_at, version, pending_sync, kitchen_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [uuid(), params.orderId, 'NEW', now, 1, 1, null]
+      )
+    }
   }
   return id
 }
