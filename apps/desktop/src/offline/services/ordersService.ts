@@ -55,22 +55,29 @@ export async function createOrder(payload?: {
       })
     if (error) throw error
   } else {
-    await query(
-      'INSERT INTO orders (id, status, total_cents, opened_at, device_id, unit_id, operational_session_id, notes, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [
-        id,
-        'open',
-        0,
-        payload?.openedAt ?? now,
-        payload?.deviceId ?? null,
-        unitId ?? null,
-        payload?.operationalSessionId ?? null,
-        payload?.notes ?? null,
-        now,
-        1,
-        1,
-      ],
-    )
+    try {
+      await query(
+        'INSERT INTO orders (id, status, total_cents, opened_at, device_id, unit_id, operational_session_id, notes, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+          id,
+          'open',
+          0,
+          payload?.openedAt ?? now,
+          payload?.deviceId ?? null,
+          unitId ?? null,
+          payload?.operationalSessionId ?? null,
+          payload?.notes ?? null,
+          now,
+          1,
+          1,
+        ],
+      )
+    } catch {
+      const raw = localStorage.getItem('orders')
+      const arr = raw ? JSON.parse(raw) : []
+      arr.push({ id, status: 'open', total_cents: 0, opened_at: payload?.openedAt ?? now, device_id: payload?.deviceId ?? null, unit_id: unitId ?? null, operational_session_id: payload?.operationalSessionId ?? null, notes: payload?.notes ?? null, updated_at: now, version: 1, pending_sync: 1 })
+      localStorage.setItem('orders', JSON.stringify(arr))
+    }
   }
   return id
 }
@@ -145,59 +152,62 @@ export async function addItem(params: {
       if (tkErr) throw tkErr
     }
   } else {
-    await query(
-      'INSERT INTO order_items (id, order_id, product_id, qty, unit_price_cents, notes, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [
-        id,
-        params.orderId,
-        params.productId,
-        params.qty,
-        params.unitPriceCents,
-        params.notes ?? null,
-        now,
-        1,
-        1,
-      ],
-    )
-    await query(
-      'UPDATE orders SET total_cents = COALESCE(total_cents, 0) + ?, updated_at = ?, pending_sync = 1 WHERE id = ?',
-      [subtotal, now, params.orderId],
-    )
-    
-    // Roteamento por cozinha: criar tickets para cozinhas associadas à categoria (modo offline)
-    let kitchenIds: string[] = []
-    if (params.productId) {
-      try {
-        const resCats = await query(
-          'SELECT kitchen_id FROM category_kitchens WHERE category_id IN (SELECT category_id FROM products WHERE id = ?)',
-          [params.productId]
-        )
-        kitchenIds = (resCats?.rows ?? []).map((r: any) => String(r.kitchen_id)).filter(Boolean)
-      } catch (error) {
-        console.warn('Erro ao buscar associações categoria-cozinha:', error)
+    try {
+      await query(
+        'INSERT INTO order_items (id, order_id, product_id, qty, unit_price_cents, notes, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+          id,
+          params.orderId,
+          params.productId,
+          params.qty,
+          params.unitPriceCents,
+          params.notes ?? null,
+          now,
+          1,
+          1,
+        ],
+      )
+      await query(
+        'UPDATE orders SET total_cents = COALESCE(total_cents, 0) + ?, updated_at = ?, pending_sync = 1 WHERE id = ?',
+        [subtotal, now, params.orderId],
+      )
+      let kitchenIds: string[] = []
+      if (params.productId) {
+        try {
+          const resCats = await query(
+            'SELECT kitchen_id FROM category_kitchens WHERE category_id IN (SELECT category_id FROM products WHERE id = ?)',
+            [params.productId]
+          )
+          kitchenIds = (resCats?.rows ?? []).map((r: any) => String(r.kitchen_id)).filter(Boolean)
+        } catch {}
       }
-    }
-    
-    const baseTicket = { 
-      order_id: params.orderId, 
-      status: 'NEW', 
-      updated_at: now, 
-      version: 1, 
-      pending_sync: 1 
-    }
-    
-    if (kitchenIds.length > 0) {
-      for (const kid of kitchenIds) {
+      const baseTicket = { order_id: params.orderId, status: 'NEW', updated_at: now, version: 1, pending_sync: 1 }
+      if (kitchenIds.length > 0) {
+        for (const kid of kitchenIds) {
+          await query(
+            'INSERT INTO kds_tickets (id, order_id, status, updated_at, version, pending_sync, kitchen_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [uuid(), params.orderId, 'NEW', now, 1, 1, kid]
+          )
+        }
+      } else {
         await query(
           'INSERT INTO kds_tickets (id, order_id, status, updated_at, version, pending_sync, kitchen_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          [uuid(), params.orderId, 'NEW', now, 1, 1, kid]
+          [uuid(), params.orderId, 'NEW', now, 1, 1, null]
         )
       }
-    } else {
-      await query(
-        'INSERT INTO kds_tickets (id, order_id, status, updated_at, version, pending_sync, kitchen_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [uuid(), params.orderId, 'NEW', now, 1, 1, null]
-      )
+    } catch {
+      const rawItems = localStorage.getItem('order_items')
+      const arrItems = rawItems ? JSON.parse(rawItems) : []
+      arrItems.push({ id, order_id: params.orderId, product_id: params.productId, qty: params.qty, unit_price_cents: params.unitPriceCents, notes: params.notes ?? null, updated_at: now, version: 1, pending_sync: 1 })
+      localStorage.setItem('order_items', JSON.stringify(arrItems))
+      const rawOrders = localStorage.getItem('orders')
+      const arrOrders = rawOrders ? JSON.parse(rawOrders) : []
+      const nextOrders = arrOrders.map((o:any)=> String(o.id)===String(params.orderId) ? { ...o, total_cents: Math.max(0, Number(o.total_cents||0) + subtotal), updated_at: now } : o)
+      localStorage.setItem('orders', JSON.stringify(nextOrders))
+      const rawTk = localStorage.getItem('kdsTickets')
+      const arrTk = rawTk ? JSON.parse(rawTk) : []
+      arrTk.push({ id: uuid(), order_id: params.orderId, status: 'queued', updated_at: now })
+      localStorage.setItem('kdsTickets', JSON.stringify(arrTk))
     }
   }
   return id

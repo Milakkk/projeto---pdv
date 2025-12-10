@@ -3,7 +3,7 @@
   "orgId": "team_vercel",
   "settings": {
     "buildCommand": "cd apps/desktop && npm run build",
-    "outputDirectory": "apps/desktop/out",
+    "outputDirectory": "apps/desktop/dist",
     "devCommand": "cd apps/desktop && npm run dev:browser",
     "installCommand": "cd apps/desktop && npm install"
   }
