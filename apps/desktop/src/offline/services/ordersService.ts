@@ -414,8 +414,8 @@ export async function listOrdersDetailed(limit = 100): Promise<Array<{ order: an
       if (itemsErr) throw itemsErr
       const { data: paysData, error: paysErr } = await supabase.from('payments').select('order_id, method, amount_cents, change_cents').in('order_id', ids)
       if (paysErr) throw paysErr
-      const prodIds = Array.from(new Set((itemsData || []).map(it => String(it.product_id)).filter(Boolean)))
-      const { data: prods } = prodIds.length ? await supabase.from('products').select('id, category_id, name').in('id', prodIds) : { data: [] as any[] }
+      const prodIds = Array.from(new Set((itemsData || []).map(it => String(it.product_id)).filter(id => id && id !== 'null' && id !== 'undefined')))
+      const { data: prods } = prodIds.length > 0 ? await supabase.from('products').select('id, category_id, name').in('id', prodIds) : { data: [] as any[] }
       const catByProd: Record<string, string | null> = {}
       for (const p of (prods || [])) catByProd[String(p.id)] = (p as any).category_id ?? null
       const itemsByOrder: Record<string, any[]> = {}
