@@ -59,8 +59,8 @@ export async function openSession(params: { openedBy?: string | null; openingAmo
       const { error } = await supabase.from('cash_sessions').insert({
         id,
         opened_at: now,
-        opened_by: params.openedBy ?? null,
-        opening_amount_cents: Math.max(0, Math.round(params.openingAmountCents ?? 0)),
+        operator_name: params.openedBy ?? null,
+        initial_amount_cents: Math.max(0, Math.round(params.openingAmountCents ?? 0)),
         updated_at: now,
         version: 1,
         pending_sync: false
@@ -134,8 +134,8 @@ export async function closeSession(id: UUID, params?: { closedBy?: string | null
     try {
       const { error } = await supabase.from('cash_sessions').update({
         closed_at: now,
-        closed_by: params?.closedBy ?? null,
-        closing_amount_cents: Math.max(0, Math.round(params?.closingAmountCents ?? 0)),
+        // closed_by não existe no schema
+        final_amount_cents: Math.max(0, Math.round(params?.closingAmountCents ?? 0)),
         updated_at: now,
         pending_sync: false
       }).eq('id', id)
@@ -196,7 +196,7 @@ export async function addMovement(params: {
         session_id: params.sessionId,
         type: params.type,
         amount_cents: Math.max(0, Math.round(params.amountCents)),
-        reason: params.reason ?? null,
+        description: params.reason ?? null,
         created_at: now
       })
       if (error) throw error
@@ -251,7 +251,12 @@ export async function getCurrentSession() {
         .maybeSingle()
       
       if (data) {
-        const session = { ...data, status: 'OPEN' }
+        const session = { 
+          ...data, 
+          opening_amount_cents: data.initial_amount_cents,
+          opened_by: data.operator_name,
+          status: 'OPEN' 
+        }
         localStorage.setItem('currentCashSession', JSON.stringify(session))
         return session
       }
@@ -280,10 +285,16 @@ export async function listSessions(limit = 50) {
       
       if (error) throw error
       
-      // Cache no localStorage
+      // Cache no localStorage e mapeamento
       if (data) {
-        localStorage.setItem('cashSessions', JSON.stringify(data))
-        return data
+        const mapped = data.map((d:any) => ({
+          ...d,
+          opening_amount_cents: d.initial_amount_cents,
+          closing_amount_cents: d.final_amount_cents,
+          opened_by: d.operator_name
+        }))
+        localStorage.setItem('cashSessions', JSON.stringify(mapped))
+        return mapped
       }
     } catch (e) {
       console.warn('[cashService] Erro ao listar sessões no Supabase, tentando local:', e)
@@ -318,8 +329,13 @@ export async function listMovementsBySession(sessionId: UUID) {
       
       if (error) throw error
       
-      // Cache no localStorage (precisa mesclar ou salvar separado? Vamos apenas retornar por enquanto)
-      return data || []
+      if (data) {
+        const mapped = data.map((d:any) => ({
+          ...d,
+          reason: d.description
+        }))
+        return mapped
+      }
     } catch (e) {
       console.warn('[cashService] Erro ao listar movimentos no Supabase, tentando local:', e)
     }
