@@ -1,4 +1,5 @@
 import { supabase } from '../../utils/supabase'
+import { getCurrentUnitId } from './deviceProfileService'
 
 // Renderer: usar IPC seguro exposto pelo preload
 const query = async (sql: string, params?: any[]) => {
@@ -54,12 +55,34 @@ export async function openSession(params: { openedBy?: string | null; openingAmo
   const id = uuid()
   const now = new Date().toISOString()
   
+  // Identifica Estação
+  const stationId = localStorage.getItem('currentStationId')
+  let operatorName = params.openedBy ?? null
+  
+  if (stationId) {
+    try {
+      const unitId = await getCurrentUnitId()
+      if (unitId) {
+        const raw = localStorage.getItem(`stations_${unitId}`)
+        if (raw) {
+          const stations = JSON.parse(raw)
+          const st = stations.find((s:any) => String(s.id) === String(stationId))
+          if (st) operatorName = `${operatorName || 'Operador'} (${st.name})`
+        }
+      }
+    } catch {}
+    // Adiciona ID para filtro futuro (apenas se já não tiver sido formatado antes)
+    if (!operatorName?.includes(`[${stationId}]`)) {
+       operatorName = `${operatorName || 'Operador'} [${stationId}]`
+    }
+  }
+
   if (supabase) {
     try {
       const { error } = await supabase.from('cash_sessions').insert({
         id,
         opened_at: now,
-        operator_name: params.openedBy ?? null,
+        operator_name: operatorName,
         initial_amount_cents: Math.max(0, Math.round(params.openingAmountCents ?? 0)),
         updated_at: now,
         version: 1,
@@ -70,7 +93,7 @@ export async function openSession(params: { openedBy?: string | null; openingAmo
       const session = {
         id,
         opened_at: now,
-        opened_by: params.openedBy ?? null,
+        opened_by: operatorName,
         opening_amount_cents: Math.max(0, Math.round(params.openingAmountCents ?? 0)),
         updated_at: now,
         version: 1,
@@ -80,10 +103,10 @@ export async function openSession(params: { openedBy?: string | null; openingAmo
       localStorage.setItem('currentCashSession', JSON.stringify(session))
     } catch (e) {
       console.warn('[cashService] Falha ao abrir sessão no Supabase, tentando local:', e)
-      await openSessionLocal(id, now, params)
+      await openSessionLocal(id, now, { ...params, openedBy: operatorName })
     }
   } else {
-    await openSessionLocal(id, now, params)
+    await openSessionLocal(id, now, { ...params, openedBy: operatorName })
   }
   return id
 }
@@ -242,11 +265,18 @@ async function addMovementLocal(id: string, now: string, params: any) {
 export async function getCurrentSession() {
   if (supabase) {
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('cash_sessions')
         .select('*')
         .is('closed_at', null)
         .order('opened_at', { ascending: false })
+      
+      const stationId = localStorage.getItem('currentStationId')
+      if (stationId) {
+        query = query.ilike('operator_name', `%[${stationId}]%`)
+      }
+
+      const { data, error } = await query
         .limit(1)
         .maybeSingle()
       
@@ -264,7 +294,6 @@ export async function getCurrentSession() {
       console.warn('[cashService] Erro ao buscar sessão no Supabase:', e)
     }
   }
-
   // Fallback Local
   try {
     const raw = localStorage.getItem('currentCashSession')

@@ -10,6 +10,7 @@ import { mockCategories, mockMenuItems, mockPaymentMethods } from '../../mocks/d
 import { DEFAULT_PAYMENT_SHORTCUTS, DEFAULT_GLOBAL_OBSERVATIONS } from '../../utils/constants';
 import { showSuccess } from '../../utils/toast'
 import { getDeviceProfile } from '@/offline/services/deviceProfileService'
+import * as stationsService from '@/offline/services/stationsService'
 import { getOperationInfo, getAppVersions, getDbVersion, getDataPath } from '@/offline/services/syncInfoService'
 import * as inventory from '@/offline/services/inventoryService'
 import * as productsService from '@/offline/services/productsService'
@@ -38,6 +39,24 @@ export default function ConfiguracoesPage() {
     passwordFormat: 'numeric' as PasswordFormat // Novo campo
   });
   const [paymentShortcuts, setPaymentShortcuts] = useLocalStorage<Record<string, string>>('paymentShortcuts', DEFAULT_PAYMENT_SHORTCUTS);
+  
+  // Estações
+  const [stations, setStations] = useState<stationsService.Station[]>([]);
+  const [currentStationId, setCurrentStationId] = useLocalStorage<string>('currentStationId', '');
+
+  // Carregar estações
+  useEffect(() => {
+    (async () => {
+      try {
+        const unitId = await productsService.getCurrentUnitId();
+        if (unitId) {
+           const list = await stationsService.listStations(unitId);
+           setStations(list || []);
+        }
+      } catch {}
+    })();
+  }, []);
+
   useEffect(() => {
     (async () => {
       try {
@@ -2586,6 +2605,36 @@ export default function ConfiguracoesPage() {
             
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
               <div className="space-y-6">
+
+                {/* Seletor de Caixa/Estação */}
+                <div className="bg-amber-50 p-4 rounded-lg border border-amber-200 mb-6">
+                  <h3 className="font-medium text-gray-900 mb-2">Identificação do Caixa (Estação)</h3>
+                  <p className="text-sm text-gray-600 mb-3">
+                    Selecione qual caixa está sendo operado neste dispositivo. Esta informação será usada para identificar as sessões e movimentos de caixa nos relatórios.
+                  </p>
+                  <div className="flex gap-4 items-center">
+                    <select
+                      className="block w-full max-w-xs pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-amber-500 focus:border-amber-500 sm:text-sm rounded-md"
+                      value={currentStationId}
+                      onChange={(e) => setCurrentStationId(e.target.value)}
+                    >
+                      <option value="">Selecione o Caixa...</option>
+                      {stations.map(s => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </select>
+                    {currentStationId && (
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                        <i className="ri-check-line mr-1"></i> Ativo
+                      </span>
+                    )}
+                  </div>
+                  {stations.length === 0 && (
+                    <p className="text-xs text-red-500 mt-2">
+                      * Nenhuma estação encontrada. Cadastre 'stations' no banco de dados.
+                    </p>
+                  )}
+                </div>
                 
                 {/* Configuração de Formato de Senha */}
                 <div>
