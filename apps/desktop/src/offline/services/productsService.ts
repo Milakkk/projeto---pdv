@@ -18,7 +18,10 @@ import { getCurrentUnitId } from './deviceProfileService'
 
 export async function listProducts() {
   try {
-    const unitId = (await getCurrentUnitId())
+    const rawUnitId = await getCurrentUnitId()
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    const unitId = rawUnitId && uuidRegex.test(rawUnitId) ? rawUnitId : null
+
     const api = (window as any)?.api?.db?.query
     if (typeof api === 'function') {
       const sql = unitId ? 'SELECT * FROM products WHERE unit_id = ? OR unit_id IS NULL' : 'SELECT * FROM products'
@@ -152,7 +155,9 @@ export async function upsertProduct(params: {
   isActive?: boolean
 }) {
   const id = params.id ?? uuid()
-  const unitId = await getCurrentUnitId()
+  const rawUnitId = await getCurrentUnitId()
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  const unitId = rawUnitId && uuidRegex.test(rawUnitId) ? rawUnitId : null
   const now = new Date().toISOString()
   await query(
     'INSERT INTO products (id, sku, name, category_id, unit_id, price_cents, is_active, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET sku=excluded.sku, name=excluded.name, category_id=excluded.category_id, unit_id=excluded.unit_id, price_cents=excluded.price_cents, is_active=excluded.is_active, updated_at=excluded.updated_at, version=excluded.version, pending_sync=excluded.pending_sync',
@@ -194,7 +199,8 @@ export async function upsertCategory(params: { id?: UUID; name: string }) {
   if (params.id && !uuidRegex.test(params.id)) {
     console.warn(`[productsService] ID "${params.id}" não é um UUID válido, gerando novo UUID: ${id}`)
   }
-  const unitId = await getCurrentUnitId()
+  const rawUnitId = await getCurrentUnitId()
+  const unitId = rawUnitId && uuidRegex.test(rawUnitId) ? rawUnitId : null
   const now = new Date().toISOString()
   const isElectron = typeof (window as any)?.api?.db?.query === 'function'
   
