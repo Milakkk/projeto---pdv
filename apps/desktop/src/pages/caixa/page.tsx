@@ -22,6 +22,7 @@ import * as productsService from '../../offline/services/productsService';
 import * as cashService from '../../offline/services/cashService';
 import * as ordersService from '../../offline/services/ordersService';
 import * as kdsService from '../../offline/services/kdsService';
+import * as stationsService from '../../offline/services/stationsService';
 import { useOffline } from '../../hooks/useOffline';
 import Input from '../../components/base/Input';
 import Button from '../../components/base/Button';
@@ -81,6 +82,23 @@ export default function CaixaPage() {
   const [kitchens, setKitchens] = useState<Kitchen[]>([]);
   const [selectedKitchenId, setSelectedKitchenId] = useLocalStorage<string | null>('pdv_selected_kitchen_id', null);
   const [categoryIdsByKitchen, setCategoryIdsByKitchen] = useState<Record<string,string[]>>({})
+  
+  // Seleção de Estação
+  const [showStationModal, setShowStationModal] = useState(false);
+  const [stations, setStations] = useState<any[]>([]);
+  const [currentStationId, setCurrentStationId] = useLocalStorage<string>('currentStationId', '');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const unitId = await productsService.getCurrentUnitId();
+        if (unitId) {
+          const list = await stationsService.listStations(unitId);
+          setStations(list || []);
+        }
+      } catch {}
+    })()
+  }, []);
   
   // Estados de Sessão e Caixa
   const [operationalSession, setOperationalSession] = useLocalStorage<OperationalSession | null>('currentOperationalSession', null);
@@ -1453,6 +1471,15 @@ export default function CaixaPage() {
 
           {/* Lado Direito: Ações e Navegação */}
           <div className="flex items-center space-x-3">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setShowStationModal(true)}
+              className="hidden md:flex"
+            >
+              <i className="ri-computer-line mr-2"></i>
+              {currentStationId ? (stations.find(s => s.id === currentStationId)?.name || 'Caixa') : 'Selecionar Caixa'}
+            </Button>
             <OperationModeBadge />
             {/* Botões movidos para a esquerda; mantém aqui ações gerais */}
             {/* Removido: Iniciar Sessão agora fica ao lado do status à esquerda */}
@@ -2065,6 +2092,42 @@ export default function CaixaPage() {
           confirmText={confirmationData.confirmText}
         />
       )}
+      {/* Modal de Seleção de Estação */}
+      <Modal
+        isOpen={showStationModal}
+        onClose={() => setShowStationModal(false)}
+        title="Selecionar Caixa / Estação"
+      >
+        <div className="space-y-4">
+          <p className="text-gray-600">Selecione qual caixa este dispositivo está operando:</p>
+          <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto">
+            {stations.map(s => (
+              <button
+                key={s.id}
+                onClick={() => {
+                  setCurrentStationId(s.id);
+                  setShowStationModal(false);
+                  window.location.reload();
+                }}
+                className={`p-3 rounded-lg border text-left flex justify-between items-center ${currentStationId === s.id ? 'bg-amber-50 border-amber-500 text-amber-900' : 'bg-white border-gray-200 hover:bg-gray-50'}`}
+              >
+                <span className="font-medium">{s.name}</span>
+                {currentStationId === s.id && <i className="ri-check-line text-amber-600"></i>}
+              </button>
+            ))}
+            {stations.length === 0 && (
+              <div className="text-center p-4 bg-gray-50 rounded-lg">
+                <p className="text-gray-500 text-sm">Nenhuma estação cadastrada.</p>
+                <p className="text-xs text-gray-400 mt-1">Cadastre 'stations' no banco de dados.</p>
+              </div>
+            )}
+          </div>
+          <div className="flex justify-end mt-4">
+            <Button variant="secondary" onClick={() => setShowStationModal(false)}>Cancelar</Button>
+          </div>
+        </div>
+      </Modal>
+
     </div>
   );
 }

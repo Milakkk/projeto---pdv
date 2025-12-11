@@ -86,12 +86,13 @@ export default function GerenciamentoCaixaPage() {
   const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
   const [cashLoaded, setCashLoaded] = useState(false);
 
-  // Carregar sessões e movimentos a partir do SQLite
+  // Carregar sessões e movimentos a partir do SQLite/Supabase
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const sessions = await cashService.listSessions(200);
+        // Limitar a 50 sessões iniciais para evitar travamento
+        const sessions = await cashService.listSessions(50);
         const mappedSessions: CashSession[] = (sessions || []).map((row: any) => ({
           id: String(row.id),
           operatorName: String(row.opened_by ?? ''),
@@ -110,33 +111,49 @@ export default function GerenciamentoCaixaPage() {
           initialAmountInputMode: 'total',
           finalAmountInputMode: 'total',
         }));
-        if (!cancelled) setCashSessions(mappedSessions);
+        
+        if (cancelled) return;
+        setCashSessions(mappedSessions);
 
-        // Carregar movimentos por sessão e achatar em uma lista única
+        // Carregar movimentos em paralelo (lotes de 5)
         const allMovements: CashMovement[] = [];
-        for (const s of mappedSessions) {
-          const movs = await cashService.listMovementsBySession(s.id);
-          for (const m of (movs || [])) {
-            const reason = String(m.reason ?? '');
-            const isSale = m.type === 'in' && reason.toLowerCase().includes('venda');
-            allMovements.push({
-              id: String(m.id),
-              // Mapear para 'SALE' quando for entrada de venda, mantendo IN/OUT para os demais
-              type: isSale ? 'SALE' : (m.type === 'in' ? 'IN' : 'OUT'),
-              amount: Math.max(0, (m.amount_cents ?? 0) / 100),
-              description: reason,
-              timestamp: m.created_at ? new Date(m.created_at) : new Date(),
-              sessionId: String(m.session_id),
-              orderId: undefined,
-            });
+        const batchSize = 5;
+        
+        for (let i = 0; i < mappedSessions.length; i += batchSize) {
+          if (cancelled) break;
+          const batch = mappedSessions.slice(i, i + batchSize);
+          
+          await Promise.all(batch.map(async (s) => {
+            try {
+              const movs = await cashService.listMovementsBySession(s.id);
+              for (const m of (movs || [])) {
+                const reason = String(m.reason ?? '');
+                const isSale = m.type === 'in' && reason.toLowerCase().includes('venda');
+                allMovements.push({
+                  id: String(m.id),
+                  type: isSale ? 'SALE' : (m.type === 'in' ? 'IN' : 'OUT'),
+                  amount: Math.max(0, (m.amount_cents ?? 0) / 100),
+                  description: reason,
+                  timestamp: m.created_at ? new Date(m.created_at) : new Date(),
+                  sessionId: String(m.session_id),
+                  orderId: undefined,
+                });
+              }
+            } catch (err) {
+              console.warn(`Erro ao carregar movimentos da sessão ${s.id}:`, err);
+            }
+          }));
+          
+          // Atualiza o estado progressivamente para dar feedback visual
+          if (!cancelled) {
+             setCashMovements(prev => [...prev, ...allMovements.slice(prev.length)]);
           }
         }
-        if (!cancelled) setCashMovements(allMovements);
       } catch (e) {
-        console.error('Erro ao carregar sessões/movimentos do SQLite:', e);
+        console.error('Erro ao carregar sessões/movimentos:', e);
         if (!cancelled) {
-          setCashSessions([]);
-          setCashMovements([]);
+          // Mantém o que já carregou ou define vazio se falhou tudo
+          if (cashSessions.length === 0) setCashSessions([]);
         }
       } finally {
         if (!cancelled) setCashLoaded(true);
