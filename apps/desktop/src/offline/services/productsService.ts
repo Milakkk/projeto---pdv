@@ -51,7 +51,7 @@ export async function listProducts() {
     }
     const raw = localStorage.getItem('menuItems')
     const arr = raw ? JSON.parse(raw) : []
-    return Array.isArray(arr) ? arr.map((p:any)=>({ id:p.id, sku:p.code, name:p.name, categoryId:p.categoryId, priceCents: Math.round((p.price||0)*100), isActive: p.active ? 1 : 0 })) : []
+    return Array.isArray(arr) ? arr.map((p: any) => ({ id: p.id, sku: p.code, name: p.name, categoryId: p.categoryId, priceCents: Math.round((p.price || 0) * 100), isActive: p.active ? 1 : 0 })) : []
   } catch { return [] }
 }
 
@@ -73,7 +73,7 @@ export async function searchProducts(term: string) {
       const q = (term || '').toLowerCase()
       const raw = localStorage.getItem('menuItems')
       const arr = raw ? JSON.parse(raw) : []
-      return Array.isArray(arr) ? arr.filter((p:any)=> String(p.name||'').toLowerCase().includes(q) || String(p.code||'').toLowerCase().includes(q)) : []
+      return Array.isArray(arr) ? arr.filter((p: any) => String(p.name || '').toLowerCase().includes(q) || String(p.code || '').toLowerCase().includes(q)) : []
     } catch { return [] }
   }
 }
@@ -121,7 +121,7 @@ export async function listCategories() {
           map.set(key, preferCurrent ? c : prev)
         }
       }
-      return Array.from(map.values()).map(c=>({ id: (c as any).id, name: (c as any).name }))
+      return Array.from(map.values()).map(c => ({ id: (c as any).id, name: (c as any).name }))
     }
     const raw = localStorage.getItem('categories')
     const arr = raw ? JSON.parse(raw) : []
@@ -135,7 +135,7 @@ export async function listCategories() {
       set.add(key)
       unique.push(c)
     }
-    return unique.map((c:any)=>({ id:c.id, name:c.name }))
+    return unique.map((c: any) => ({ id: c.id, name: c.name }))
   } catch { return [] }
 }
 
@@ -196,7 +196,7 @@ export async function upsertCategory(params: { id?: UUID; name: string }) {
   const id = params.id && uuidRegex.test(params.id)
     ? params.id
     : crypto.randomUUID()
-  
+
   if (params.id && !uuidRegex.test(params.id)) {
     console.warn(`[productsService] ID "${params.id}" não é um UUID válido, gerando novo UUID: ${id}`)
   }
@@ -204,13 +204,13 @@ export async function upsertCategory(params: { id?: UUID; name: string }) {
   const unitId = rawUnitId && uuidRegex.test(rawUnitId) ? rawUnitId : null
   const now = new Date().toISOString()
   const isElectron = typeof (window as any)?.api?.db?.query === 'function'
-  
+
   try {
     if (isElectron) {
       // Modo Electron - usa banco local
       const found = await query('SELECT id, unit_id FROM categories WHERE LOWER(name) = LOWER(?) AND (unit_id = ? OR unit_id IS NULL)', [params.name, unitId ?? null])
       const rows = found?.rows ?? []
-      const preferred = rows.find((r:any)=> String(r.unit_id||'') === String(unitId||'')) || rows[0]
+      const preferred = rows.find((r: any) => String(r.unit_id || '') === String(unitId || '')) || rows[0]
       const targetId = preferred?.id ? String(preferred.id) : null
       if (targetId) {
         await query('UPDATE categories SET name = ?, unit_id = ?, updated_at = ?, pending_sync = 1 WHERE id = ?', [params.name, unitId ?? null, now, targetId])
@@ -230,7 +230,7 @@ export async function upsertCategory(params: { id?: UUID; name: string }) {
       }
 
       console.log('[productsService] Salvando categoria no Supabase:', { id, name: params.name })
-      
+
       // Verifica se já existe pelo ID
       const { data: existingById, error: selectErrorById } = await supabase
         .from('categories')
@@ -246,7 +246,7 @@ export async function upsertCategory(params: { id?: UUID; name: string }) {
       // Se não encontrou pelo ID, tenta encontrar pelo nome
       let existing = existingById;
       let finalId = id;
-      
+
       if (!existing) {
         console.log('[productsService] Categoria não encontrada pelo ID, buscando pelo nome...');
         const { data: existingByName, error: selectErrorByName } = await supabase
@@ -254,7 +254,7 @@ export async function upsertCategory(params: { id?: UUID; name: string }) {
           .select('id, name')
           .eq('name', params.name)
           .maybeSingle();
-        
+
         if (selectErrorByName && selectErrorByName.code !== 'PGRST116') {
           console.error('[productsService] Erro ao buscar categoria pelo nome:', selectErrorByName);
           throw selectErrorByName;
@@ -286,12 +286,12 @@ export async function upsertCategory(params: { id?: UUID; name: string }) {
           .update(categoryData)
           .eq('id', finalId)
           .select()
-        
+
         if (updateError) {
           console.error('[productsService] Erro ao atualizar categoria:', updateError)
           throw updateError
         }
-        
+
         if (updatedData && updatedData.length > 0) {
           console.log('[productsService] ✅ Categoria atualizada no Supabase:', updatedData[0])
           // Aguarda um pouco e verifica se a categoria foi realmente atualizada
@@ -329,7 +329,7 @@ export async function upsertCategory(params: { id?: UUID; name: string }) {
           .from('categories')
           .insert(categoryData)
           .select()
-        
+
         if (insertError) {
           console.error('[productsService] Erro ao inserir categoria:', insertError)
           console.error('[productsService] Detalhes:', {
@@ -340,7 +340,7 @@ export async function upsertCategory(params: { id?: UUID; name: string }) {
           })
           throw insertError
         }
-        
+
         if (insertedData && insertedData.length > 0) {
           console.log('[productsService] ✅ Categoria inserida no Supabase com sucesso:', insertedData[0])
           // Aguarda um pouco e verifica se a categoria foi realmente inserida
@@ -390,7 +390,7 @@ export async function upsertCategory(params: { id?: UUID; name: string }) {
         localStorage.setItem('categories', JSON.stringify(arr))
         console.warn('[productsService] Categoria salva no localStorage como fallback')
         return id
-      } catch {}
+      } catch { }
     }
     throw err
   }
@@ -403,30 +403,75 @@ export async function deleteCategories(ids: string[]) {
 }
 
 export async function migrateLocalStorageCatalog() {
+  const MIGRATION_FLAG = 'catalog_migration_done_v2'
+
+  // Skip if already migrated
+  if (localStorage.getItem(MIGRATION_FLAG) === 'true') {
+    return
+  }
+
   try {
     const rawCats = localStorage.getItem('categories')
     const rawItems = localStorage.getItem('menuItems')
     const cats = rawCats ? JSON.parse(rawCats) : []
     const items = rawItems ? JSON.parse(rawItems) : []
+
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    const idMap: Record<string, string> = {} // old ID -> new UUID
+
+    // Migrate categories and build ID mapping
     if (Array.isArray(cats)) {
+      const updatedCats = []
       for (const c of cats) {
-        const id = String(c.id ?? '') || undefined
+        const oldId = String(c.id ?? '')
         const name = String(c.name ?? '').trim()
         if (!name) continue
-        await upsertCategory({ id, name })
+
+        // Generate new UUID if old ID is not valid
+        const newId = oldId && uuidRegex.test(oldId) ? oldId : crypto.randomUUID()
+        if (oldId && oldId !== newId) {
+          idMap[oldId] = newId
+        }
+
+        await upsertCategory({ id: newId, name })
+        updatedCats.push({ ...c, id: newId })
       }
+      // Update localStorage with new UUIDs
+      localStorage.setItem('categories', JSON.stringify(updatedCats))
     }
+
+    // Migrate products with updated category IDs
     if (Array.isArray(items)) {
+      const updatedItems = []
       for (const p of items) {
-        const id = String(p.id ?? '') || undefined
+        const oldId = String(p.id ?? '')
         const sku = p.code ? String(p.code) : null
         const name = String(p.name ?? '').trim()
-        const categoryId = p.categoryId ? String(p.categoryId) : null
+        let categoryId = p.categoryId ? String(p.categoryId) : null
         const priceCents = Math.max(0, Math.round(((p.price ?? 0) as number) * 100))
         const isActive = Boolean(p.active ?? true)
         if (!name) continue
-        await upsertProduct({ id, sku, name, categoryId, priceCents, isActive })
+
+        // Update category ID if it was remapped
+        if (categoryId && idMap[categoryId]) {
+          categoryId = idMap[categoryId]
+        }
+
+        // Generate new UUID for product if needed
+        const newId = oldId && uuidRegex.test(oldId) ? oldId : crypto.randomUUID()
+
+        await upsertProduct({ id: newId, sku, name, categoryId, priceCents, isActive })
+        updatedItems.push({ ...p, id: newId, categoryId })
       }
+      // Update localStorage with new UUIDs
+      localStorage.setItem('menuItems', JSON.stringify(updatedItems))
     }
-  } catch {}
+
+    // Mark migration as complete
+    localStorage.setItem(MIGRATION_FLAG, 'true')
+    console.log('[productsService] ✅ Catalog migration completed successfully')
+  } catch (err) {
+    console.error('[productsService] Migration error:', err)
+  }
 }
+
