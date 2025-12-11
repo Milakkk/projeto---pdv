@@ -26,7 +26,8 @@ export type Station = {
 
 export async function listStations(unitId: string): Promise<Station[]> {
   // 1. Tentar Supabase
-  if (supabase) {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (supabase && unitId && unitId !== 'default' && uuidRegex.test(unitId)) {
     try {
       const { data, error } = await supabase
         .from('stations')

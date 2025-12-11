@@ -87,7 +87,11 @@ export async function ensureDeviceProfile(opts: { role: 'pos' | 'kds' | 'admin' 
 
 export async function getCurrentUnitId(): Promise<string | null> {
   const dp = await getDeviceProfile()
-  return dp?.unitId ?? null
+  const uid = dp?.unitId ?? null
+  if (uid && uid !== 'default' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uid)) {
+    return uid
+  }
+  return null
 }
 
 function readDeviceProfileLS(): DeviceProfile | null {
@@ -95,7 +99,8 @@ function readDeviceProfileLS(): DeviceProfile | null {
     const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('deviceProfile') : null
     if (raw) {
       const obj = JSON.parse(raw)
-      const unitId = typeof obj.unitId === 'string' ? obj.unitId : ''
+      const unitIdRaw = typeof obj.unitId === 'string' ? obj.unitId : ''
+      const unitId = (unitIdRaw && unitIdRaw !== 'default') ? unitIdRaw : ''
       const deviceId = typeof obj.deviceId === 'string' ? obj.deviceId : crypto.randomUUID()
       const role = (obj.role || 'pos') as any
       const station = obj.station ? String(obj.station) : null
@@ -105,7 +110,8 @@ function readDeviceProfileLS(): DeviceProfile | null {
     const unitIdLS = typeof localStorage !== 'undefined' ? localStorage.getItem('unitId') : null
     const deviceIdLS = typeof localStorage !== 'undefined' ? localStorage.getItem('deviceId') : null
     if (unitIdLS || deviceIdLS) {
-      return { unitId: unitIdLS || '', deviceId: deviceIdLS || crypto.randomUUID(), role: 'pos', station: null, updatedAt: new Date().toISOString() }
+      const finalUnitId = (unitIdLS && unitIdLS !== 'default') ? unitIdLS : ''
+      return { unitId: finalUnitId, deviceId: deviceIdLS || crypto.randomUUID(), role: 'pos', station: null, updatedAt: new Date().toISOString() }
     }
   } catch {}
   return null
