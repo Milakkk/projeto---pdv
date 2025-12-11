@@ -1,3 +1,6 @@
+import { getCurrentUnitId } from './deviceProfileService'
+export { getCurrentUnitId }
+
 // Renderer: usar IPC seguro exposto pelo preload
 const query = async (sql: string, params?: any[]) => {
   const fn = (window as any)?.api?.db?.query
@@ -13,8 +16,6 @@ const query = async (sql: string, params?: any[]) => {
     return res2 as { rows?: any[]; meta?: any; error?: any }
   }
 }
-
-import { getCurrentUnitId } from './deviceProfileService'
 
 export async function listProducts() {
   try {

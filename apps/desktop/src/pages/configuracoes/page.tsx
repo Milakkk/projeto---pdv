@@ -9,7 +9,7 @@ import ConfirmationModal from '../../components/base/ConfirmationModal';
 import { mockCategories, mockMenuItems, mockPaymentMethods } from '../../mocks/data';
 import { DEFAULT_PAYMENT_SHORTCUTS, DEFAULT_GLOBAL_OBSERVATIONS } from '../../utils/constants';
 import { showSuccess } from '../../utils/toast'
-import { getDeviceProfile } from '@/offline/services/deviceProfileService'
+import { getDeviceProfile, getCurrentUnitId } from '@/offline/services/deviceProfileService'
 import * as stationsService from '@/offline/services/stationsService'
 import { getOperationInfo, getAppVersions, getDbVersion, getDataPath } from '@/offline/services/syncInfoService'
 import * as inventory from '@/offline/services/inventoryService'
@@ -48,7 +48,7 @@ export default function ConfiguracoesPage() {
   useEffect(() => {
     (async () => {
       try {
-        const unitId = await productsService.getCurrentUnitId();
+        const unitId = await getCurrentUnitId();
         if (unitId) {
            const list = await stationsService.listStations(unitId);
            setStations(list || []);
