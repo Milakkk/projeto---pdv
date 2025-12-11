@@ -167,9 +167,14 @@ export default function RelatoriosPage() {
   const [itemsFilter, setItemsFilter] = useState(''); // Filtro da tabela de Itens vendidos
   const [itemsSortBy, setItemsSortBy] = useState<'name' | 'category' | 'quantity' | 'revenue'>('quantity');
   const [itemsSortDir, setItemsSortDir] = useState<'asc' | 'desc'>('desc');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let stopped = false;
+    const timeout = setTimeout(() => {
+      if (!stopped) setLoading(false);
+    }, 10000); // Timeout de segurança de 10s
+
     (async () => {
       try {
         const cats = await productsService.listCategories();
@@ -253,9 +258,14 @@ export default function RelatoriosPage() {
           out.push(ord);
         }
         if (!stopped) setOrders(out);
-      } catch {}
+      } catch (e) {
+        console.error('Erro ao carregar relatórios:', e);
+      } finally {
+        if (!stopped) setLoading(false);
+        clearTimeout(timeout);
+      }
     })();
-    return () => { stopped = true };
+    return () => { stopped = true; clearTimeout(timeout); };
   }, []);
 
   // Atualização periódica dos pedidos via SQLite para refletir mudanças entre janelas
@@ -846,8 +856,17 @@ export default function RelatoriosPage() {
 
       {/* CONTEÚDO ROLÁVEL */}
       <div className="flex-1 min-h-0 overflow-y-auto p-6">
-        {activeTab === 'sales' && (
-          <div className="space-y-6">
+        {loading ? (
+          <div className="flex items-center justify-center h-full">
+            <div className="flex flex-col items-center">
+              <i className="ri-loader-4-line text-4xl text-amber-500 animate-spin mb-4"></i>
+              <p className="text-gray-500">Carregando dados...</p>
+            </div>
+          </div>
+        ) : (
+          <>
+            {activeTab === 'sales' && (
+              <div className="space-y-6">
             {/* Cards de métricas */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               <div className="bg-white rounded-lg p-6 shadow-sm border border-gray-200">
@@ -1306,6 +1325,8 @@ export default function RelatoriosPage() {
             {/* Removido ItemPreparationMetrics */}
           </div>
         )}
+        </>
+      )}
       </div>
     </div>
   );

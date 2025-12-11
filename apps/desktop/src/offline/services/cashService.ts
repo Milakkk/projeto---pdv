@@ -270,6 +270,26 @@ export async function getCurrentSession() {
 }
 
 export async function listSessions(limit = 50) {
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('cash_sessions')
+        .select('*')
+        .order('opened_at', { ascending: false })
+        .limit(limit)
+      
+      if (error) throw error
+      
+      // Cache no localStorage
+      if (data) {
+        localStorage.setItem('cashSessions', JSON.stringify(data))
+        return data
+      }
+    } catch (e) {
+      console.warn('[cashService] Erro ao listar sessões no Supabase, tentando local:', e)
+    }
+  }
+
   try {
     const res = await query('SELECT * FROM cash_sessions ORDER BY datetime(opened_at) DESC LIMIT ?', [limit])
     const rows = res?.rows ?? []
@@ -289,6 +309,22 @@ export async function listSessions(limit = 50) {
 }
 
 export async function listMovementsBySession(sessionId: UUID) {
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('cash_movements')
+        .select('*')
+        .eq('session_id', sessionId)
+      
+      if (error) throw error
+      
+      // Cache no localStorage (precisa mesclar ou salvar separado? Vamos apenas retornar por enquanto)
+      return data || []
+    } catch (e) {
+      console.warn('[cashService] Erro ao listar movimentos no Supabase, tentando local:', e)
+    }
+  }
+
   try {
     const res = await query('SELECT * FROM cash_movements WHERE session_id = ?', [sessionId])
     const rows = res?.rows ?? []
