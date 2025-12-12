@@ -354,7 +354,7 @@ export async function setTicketStatus(id: UUID, status: 'queued' | 'prep' | 'rea
         .update(orderUpdate)
         .eq('id', orderId)
     }
-    return
+    // return - removido para garantir que o estado local também seja atualizado (optimistic/backup)
   }
 
   let orderId: string | undefined

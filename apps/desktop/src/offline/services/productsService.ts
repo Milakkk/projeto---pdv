@@ -39,7 +39,7 @@ export async function listProducts() {
       if (unitId) q = q.or(`unit_id.eq.${unitId},unit_id.is.null`)
       const { data, error } = await q
       if (error) throw error
-      return (data || []).map(p => ({
+      const mapped = (data || []).map(p => ({
         id: p.id,
         sku: (p as any).sku ?? null,
         name: (p as any).name,
@@ -48,6 +48,16 @@ export async function listProducts() {
         priceCents: Math.max(0, Number((p as any).price_cents ?? 0)),
         isActive: ((p as any).is_active ?? true) ? 1 : 0,
       }))
+
+      // Fallback: Se Supabase retornar vazio mas tivermos dados locais (ex: falha de sync/409), usar local
+      if (mapped.length === 0) {
+        // Verifica se existe dado local antes de lançar erro para fallback
+        const raw = localStorage.getItem('menuItems')
+        if (raw && JSON.parse(raw).length > 0) {
+          throw new Error('Fallback to local')
+        }
+      }
+      return mapped
     }
     const raw = localStorage.getItem('menuItems')
     const arr = raw ? JSON.parse(raw) : []
