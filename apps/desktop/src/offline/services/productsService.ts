@@ -489,7 +489,7 @@ export async function deleteCategories(ids: string[]) {
 
 export async function migrateLocalStorageCatalog() {
   // Migration logic
-  const MIGRATION_KEY = 'catalog_migration_done_v3'
+  const MIGRATION_KEY = 'catalog_migration_done_v4'
 
   // Skip if already migrated
   if (localStorage.getItem(MIGRATION_KEY)) {
@@ -506,6 +506,8 @@ export async function migrateLocalStorageCatalog() {
     const idMap: Record<string, string> = {} // old ID -> new UUID
 
     // Migrate categories and build ID mapping
+    const nameToIdMap: Record<string, string> = {}
+
     if (Array.isArray(cats)) {
       const updatedCats = []
       for (const c of cats) {
@@ -515,12 +517,22 @@ export async function migrateLocalStorageCatalog() {
 
         // Generate new UUID if old ID is not valid
         const newId = oldId && uuidRegex.test(oldId) ? oldId : crypto.randomUUID()
-        if (oldId && oldId !== newId) {
-          idMap[oldId] = newId
+
+        // IMPORTANT: Capture the ACTUAL ID returned by upsert (it might find existing by name)
+        const actualId = await upsertCategory({ id: newId, name })
+
+        nameToIdMap[name.toLowerCase()] = actualId
+
+        // Update map: Old ID -> Actual DB ID
+        if (oldId) {
+          idMap[oldId] = actualId
+        }
+        // Also map the generated newId -> Actual ID (in case logic mixed them)
+        if (newId !== actualId) {
+          idMap[newId] = actualId
         }
 
-        await upsertCategory({ id: newId, name })
-        updatedCats.push({ ...c, id: newId })
+        updatedCats.push({ ...c, id: actualId })
       }
       // Update localStorage with new UUIDs
       localStorage.setItem('categories', JSON.stringify(updatedCats))
@@ -538,10 +550,14 @@ export async function migrateLocalStorageCatalog() {
         const isActive = Boolean(p.active ?? true)
         if (!name) continue
 
-        // Update category ID if it was remapped
+        // 1. Try mapping via ID Map (Old ID -> New ID)
         if (categoryId && idMap[categoryId]) {
           categoryId = idMap[categoryId]
         }
+
+        // 2. If no ID match, try to fuzzy match by Name? (Not possible as product doesn't have cat name)
+        // However, if we failed, maybe categoryId IS actually a valid UUID that we missed?
+        // Or maybe it's orphan.
 
         // Generate new UUID for product if needed
         const newId = oldId && uuidRegex.test(oldId) ? oldId : crypto.randomUUID()
