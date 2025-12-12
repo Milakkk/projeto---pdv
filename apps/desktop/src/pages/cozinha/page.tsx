@@ -17,10 +17,10 @@ import DeliveredOrderList from './components/DeliveredOrderList';
 import Icon from '../../ui/Icon';
 // Serviços offline (leitura do SQLite)
 import * as productsService from "../../offline/services/productsService";
-import * as kdsService      from "../../offline/services/kdsService";
-import * as cashService     from "../../offline/services/cashService";
+import * as kdsService from "../../offline/services/kdsService";
+import * as cashService from "../../offline/services/cashService";
 import { ensureDeviceProfile } from '@/offline/services/deviceProfileService'
- 
+
 import OperationModeBadge from '@/components/OperationModeBadge'
 import { getDeviceProfile } from '../../offline/services/deviceProfileService'
 
@@ -40,36 +40,36 @@ const createProductionUnits = (quantity: number): ProductionUnit[] => {
 export default function CozinhaPage() {
   const { user, store } = useAuth();
   const navigate = useNavigate();
-  
+
   // Seleção de cozinha e operador
   const [showKitchenSelect, setShowKitchenSelect] = useState(true);
   const [selectedKitchenId, setSelectedKitchenId] = useLocalStorage<string | null>('kds_selected_kitchen_id', null);
   const [selectedKitchenName, setSelectedKitchenName] = useLocalStorage<string>('kds_selected_kitchen_name', 'Todas as Cozinhas');
   const [currentOperatorName, setCurrentOperatorName] = useLocalStorage<string>('kds_current_operator', '');
-  
+
   const [orders, setOrders] = useState<Order[]>([]);
   const [operators, setOperators] = useLocalStorage<KitchenOperator[]>('kitchenOperators', []);
   useEffect(() => {
-    (async () => { try { await kdsService.broadcastOperators(operators) } catch {} })()
+    (async () => { try { await kdsService.broadcastOperators(operators) } catch { } })()
   }, [operators])
   const [categories, setCategories] = useLocalStorage<Category[]>('categories', mockCategories);
-  
+
   const [operationalSession] = useLocalStorage<OperationalSession | null>('currentOperationalSession', null);
   const [cashSession, setCashSession] = useLocalStorage<any>('currentCashSession', null);
-  
+
   const [showOperatorModal, setShowOperatorModal] = useState(false);
   const [showOperatorViewModal, setShowOperatorViewModal] = useState(false);
   const [operatorFilter, setOperatorFilter] = useState('');
   const [onlyPreparingOperatorView, setOnlyPreparingOperatorView] = useState(true);
-  
-  
+
+
   const [showReadyModal, setShowReadyModal] = useState(false);
   const [showDeliveredModal, setShowDeliveredModal] = useState(false);
   const [showCanceledModal, setShowCanceledModal] = useState(false);
-  
+
   const [showAlertModal, setShowAlertModal] = useState(false);
   const [alertModalMessage, setAlertModalMessage] = useState({ title: '', message: '', variant: 'error' as 'error' | 'info' | 'success' });
-  
+
   const [showDeliveryConfirmation, setShowDeliveryConfirmation] = useState(false);
   const [orderToDeliver, setOrderToDeliver] = useState<Order | null>(null);
   // Checklist de entrega por item/unidade (Cozinha)
@@ -77,15 +77,15 @@ export default function CozinhaPage() {
 
   // Removido: estado e UI da aba Configurações embutida
 
-  
-  
-  const previousOrdersRef = useRef<Order[]>(orders); 
+
+
+  const previousOrdersRef = useRef<Order[]>(orders);
   const hasMigratedRef = useRef(false); // NOVO: Ref para controlar se a migração já foi tentada
   const getOrderDetails = (id: string): { pin?: string; password?: string } => {
     try { const raw = localStorage.getItem('kdsOrderDetails'); const map = raw ? JSON.parse(raw) : {}; return map[id] || {} } catch { return {} }
   }
   const setOrderDetails = (id: string, patch: { pin?: string; password?: string }) => {
-    try { const raw = localStorage.getItem('kdsOrderDetails'); const map = raw ? JSON.parse(raw) : {}; map[id] = { ...(map[id]||{}), ...patch }; localStorage.setItem('kdsOrderDetails', JSON.stringify(map)) } catch {}
+    try { const raw = localStorage.getItem('kdsOrderDetails'); const map = raw ? JSON.parse(raw) : {}; map[id] = { ...(map[id] || {}), ...patch }; localStorage.setItem('kdsOrderDetails', JSON.stringify(map)) } catch { }
   }
 
   const isOperationalSessionOpen = useMemo(() => !!operationalSession && operationalSession.status === 'OPEN', [operationalSession]);
@@ -103,128 +103,141 @@ export default function CozinhaPage() {
       return `http://${host}:4000`
     })()
     const secret = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || undefined
-    ;(async () => {
-      try {
-        const dp = await getDeviceProfile()
-        const unitId = dp?.unitId || 'default'
-        const deviceId = dp?.deviceId || crypto.randomUUID()
-        if (!secret) {
-          try {
-            const { supabase } = await import('../../utils/supabase')
-            if (supabase && mounted) {
-              const loadAll = async () => {
-                const kitchenFilter = selectedKitchenId || undefined
-                const queued = await kdsService.listTicketsByStatus('queued', kitchenFilter)
-                const prep = await kdsService.listTicketsByStatus('prep', kitchenFilter)
-                const ready = await kdsService.listTicketsByStatus('ready', kitchenFilter)
-                const done = await kdsService.listTicketsByStatus('done', kitchenFilter)
-                const all = [...queued, ...prep, ...ready, ...done]
-                startTransition(() => { setOrders(all as any) })
-              }
-              await loadAll()
-              const sub = supabase
-                .channel('kds_tickets_changes')
-                .on('postgres_changes', { event: '*', schema: 'public', table: 'kds_tickets' }, async () => { await loadAll() })
-                .subscribe()
-              const unsub = () => { try { sub.unsubscribe() } catch {} }
-              return () => { unsub() }
-            }
-          } catch {}
-          return
-        }
-        const wsUrl = hubUrl.replace(/^http/, 'ws') + `/realtime?token=${encodeURIComponent(secret)}`
-        let attempt = 0
-        let reconnectTimer: any = null
-        const connect = () => {
-          if (!mounted) return
-          attempt++
-          const ws = new WebSocket(wsUrl)
-          ws.addEventListener('open', () => {
-            ws.send(JSON.stringify({ unit_id: unitId, device_id: deviceId }))
-          })
-          ws.addEventListener('message', (ev) => {
-            if (!mounted) return
-          let events: any[] = []
-          try { const msg = JSON.parse(String((ev as MessageEvent).data)); if (msg?.type==='events') events = msg.events || [] } catch {}
-          if (!Array.isArray(events) || events.length === 0) return
-          try { (async()=>{ await kdsService.applyHubEvents(events) })() } catch {}
-          const tickets = events.filter((e:any)=> String(e.table)==='kdsTickets' && (e.row || e.rows))
-          const ordersEv = events.filter((e:any)=> String(e.table)==='orders' && (e.row || e.rows))
-          const phaseTimesEv = events.filter((e:any)=> String(e.table)==='kds_phase_times' && (e.row || e.rows))
-          if (tickets.length){
-            const mapToOrderStatus = (s:string)=> s==='ready'?'READY': s==='prep'?'PREPARING': s==='done'?'DELIVERED': 'NEW'
-            const byIdStatus: Record<string,string> = {}
-            for (const e of tickets){
-              const r = e.row || {}
-              const id = String(r.order_id ?? r.orderId ?? r.id)
-              const st = mapToOrderStatus(String(r.status ?? e.status ?? 'queued'))
-              byIdStatus[id] = st
-            }
-            startTransition(() => {
-              setOrders(prev => prev.map(o => {
-                const oid = String(o.id)
-                const st = byIdStatus[oid]
-                if (!st) return o
-                if (st==='DELIVERED') return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date(), updatedAt: o.updatedAt }
-                if (st==='READY') return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
-                if (st==='PREPARING') return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date(), readyAt: undefined }
-                if (st==='NEW') return { ...o, status: 'NEW', updatedAt: undefined, readyAt: undefined }
-                return o
-              }))
-            })
-          }
-          if (ordersEv.length){
-            for (const e of ordersEv){
-              const r = e.row || {}
-              const id = String(r.id || '')
-              const pin = typeof r.pin==='string' ? r.pin : undefined
-              const password = typeof r.password==='string' ? r.password : undefined
-              if (id && (pin || password)) setOrderDetails(id, { pin, password })
-            }
-            startTransition(() => {
-              setOrders(prev => prev.map(o => {
-                const evs = ordersEv.filter(e=> String(e.row?.id || e.rows?.[0]?.id || '')===String(o.id))
-                const r = evs.length ? (evs[evs.length-1].row || {}) : {}
-                const st = String(r.status || '').toLowerCase()
-                const det = getOrderDetails(String(o.id))
-                const next: Order = { ...o }
-                if (!next.pin && det.pin) next.pin = det.pin
-                if (!next.password && det.password) next.password = det.password
-                if (st==='closed') {
-                  next.status = 'DELIVERED'
-                  next.deliveredAt = r.closed_at ? new Date(r.closed_at) : (o.deliveredAt ?? new Date())
+      ; (async () => {
+        try {
+          const dp = await getDeviceProfile()
+          const unitId = dp?.unitId || 'default'
+          const deviceId = dp?.deviceId || crypto.randomUUID()
+          if (!secret) {
+            try {
+              const { supabase } = await import('../../utils/supabase')
+              if (supabase && mounted) {
+                const loadAll = async () => {
+                  const kitchenFilter = selectedKitchenId || undefined
+                  const queued = await kdsService.listTicketsByStatus('queued', kitchenFilter)
+                  const prep = await kdsService.listTicketsByStatus('prep', kitchenFilter)
+                  const ready = await kdsService.listTicketsByStatus('ready', kitchenFilter)
+                  const done = await kdsService.listTicketsByStatus('done', kitchenFilter)
+                  const all = [...queued, ...prep, ...ready, ...done]
+                  startTransition(() => { setOrders(all as any) })
                 }
-                return next
-              }))
-            })
+                await loadAll()
+
+                // Debounce para prevenir loop infinito: agrupa múltiplas mudanças em 500ms
+                let debounceTimer: NodeJS.Timeout | null = null
+
+                const sub = supabase
+                  .channel('kds_tickets_changes')
+                  .on('postgres_changes', { event: '*', schema: 'public', table: 'kds_tickets' }, async () => {
+                    if (debounceTimer) clearTimeout(debounceTimer)
+                    debounceTimer = setTimeout(async () => {
+                      await loadAll()
+                      debounceTimer = null
+                    }, 500)
+                  })
+                  .subscribe()
+                const unsub = () => {
+                  if (debounceTimer) clearTimeout(debounceTimer)
+                  try { sub.unsubscribe() } catch { }
+                }
+                return () => { unsub() }
+              }
+            } catch { }
+            return
           }
-          if (phaseTimesEv.length){
-            startTransition(() => {
-              setOrders(prev => prev.map(o => {
-                const evs = phaseTimesEv.filter(e=> String(e.row?.orderId || '')===String(o.id))
-                if (!evs.length) return o
-                const patch = evs.reduce((acc:any, e:any)=> ({ ...acc, ...e.row }), {})
-                const createdAt = patch.newStart ? new Date(patch.newStart) : o.createdAt
-                const updatedAt = patch.preparingStart ? new Date(patch.preparingStart) : o.updatedAt
-                const readyAt = patch.readyAt ? new Date(patch.readyAt) : o.readyAt
-                const deliveredAt = patch.deliveredAt ? new Date(patch.deliveredAt) : o.deliveredAt
-                return { ...o, createdAt, updatedAt, readyAt, deliveredAt }
-              }))
-            })
-          }
-        })
-          const scheduleReconnect = () => {
+          const wsUrl = hubUrl.replace(/^http/, 'ws') + `/realtime?token=${encodeURIComponent(secret)}`
+          let attempt = 0
+          let reconnectTimer: any = null
+          const connect = () => {
             if (!mounted) return
-            const delay = Math.min(30000, 1000 * Math.pow(2, Math.min(5, attempt)))
-            clearTimeout(reconnectTimer)
-            reconnectTimer = setTimeout(() => connect(), delay)
+            attempt++
+            const ws = new WebSocket(wsUrl)
+            ws.addEventListener('open', () => {
+              ws.send(JSON.stringify({ unit_id: unitId, device_id: deviceId }))
+            })
+            ws.addEventListener('message', (ev) => {
+              if (!mounted) return
+              let events: any[] = []
+              try { const msg = JSON.parse(String((ev as MessageEvent).data)); if (msg?.type === 'events') events = msg.events || [] } catch { }
+              if (!Array.isArray(events) || events.length === 0) return
+              try { (async () => { await kdsService.applyHubEvents(events) })() } catch { }
+              const tickets = events.filter((e: any) => String(e.table) === 'kdsTickets' && (e.row || e.rows))
+              const ordersEv = events.filter((e: any) => String(e.table) === 'orders' && (e.row || e.rows))
+              const phaseTimesEv = events.filter((e: any) => String(e.table) === 'kds_phase_times' && (e.row || e.rows))
+              if (tickets.length) {
+                const mapToOrderStatus = (s: string) => s === 'ready' ? 'READY' : s === 'prep' ? 'PREPARING' : s === 'done' ? 'DELIVERED' : 'NEW'
+                const byIdStatus: Record<string, string> = {}
+                for (const e of tickets) {
+                  const r = e.row || {}
+                  const id = String(r.order_id ?? r.orderId ?? r.id)
+                  const st = mapToOrderStatus(String(r.status ?? e.status ?? 'queued'))
+                  byIdStatus[id] = st
+                }
+                startTransition(() => {
+                  setOrders(prev => prev.map(o => {
+                    const oid = String(o.id)
+                    const st = byIdStatus[oid]
+                    if (!st) return o
+                    if (st === 'DELIVERED') return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date(), updatedAt: o.updatedAt }
+                    if (st === 'READY') return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
+                    if (st === 'PREPARING') return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date(), readyAt: undefined }
+                    if (st === 'NEW') return { ...o, status: 'NEW', updatedAt: undefined, readyAt: undefined }
+                    return o
+                  }))
+                })
+              }
+              if (ordersEv.length) {
+                for (const e of ordersEv) {
+                  const r = e.row || {}
+                  const id = String(r.id || '')
+                  const pin = typeof r.pin === 'string' ? r.pin : undefined
+                  const password = typeof r.password === 'string' ? r.password : undefined
+                  if (id && (pin || password)) setOrderDetails(id, { pin, password })
+                }
+                startTransition(() => {
+                  setOrders(prev => prev.map(o => {
+                    const evs = ordersEv.filter(e => String(e.row?.id || e.rows?.[0]?.id || '') === String(o.id))
+                    const r = evs.length ? (evs[evs.length - 1].row || {}) : {}
+                    const st = String(r.status || '').toLowerCase()
+                    const det = getOrderDetails(String(o.id))
+                    const next: Order = { ...o }
+                    if (!next.pin && det.pin) next.pin = det.pin
+                    if (!next.password && det.password) next.password = det.password
+                    if (st === 'closed') {
+                      next.status = 'DELIVERED'
+                      next.deliveredAt = r.closed_at ? new Date(r.closed_at) : (o.deliveredAt ?? new Date())
+                    }
+                    return next
+                  }))
+                })
+              }
+              if (phaseTimesEv.length) {
+                startTransition(() => {
+                  setOrders(prev => prev.map(o => {
+                    const evs = phaseTimesEv.filter(e => String(e.row?.orderId || '') === String(o.id))
+                    if (!evs.length) return o
+                    const patch = evs.reduce((acc: any, e: any) => ({ ...acc, ...e.row }), {})
+                    const createdAt = patch.newStart ? new Date(patch.newStart) : o.createdAt
+                    const updatedAt = patch.preparingStart ? new Date(patch.preparingStart) : o.updatedAt
+                    const readyAt = patch.readyAt ? new Date(patch.readyAt) : o.readyAt
+                    const deliveredAt = patch.deliveredAt ? new Date(patch.deliveredAt) : o.deliveredAt
+                    return { ...o, createdAt, updatedAt, readyAt, deliveredAt }
+                  }))
+                })
+              }
+            })
+            const scheduleReconnect = () => {
+              if (!mounted) return
+              const delay = Math.min(30000, 1000 * Math.pow(2, Math.min(5, attempt)))
+              clearTimeout(reconnectTimer)
+              reconnectTimer = setTimeout(() => connect(), delay)
+            }
+            ws.addEventListener('error', () => { scheduleReconnect() })
+            ws.addEventListener('close', () => { scheduleReconnect() })
           }
-          ws.addEventListener('error', () => { scheduleReconnect() })
-          ws.addEventListener('close', () => { scheduleReconnect() })
-        }
-        connect()
-      } catch {}
-    })()
+          connect()
+        } catch { }
+      })()
     return () => { mounted = false }
   }, [setOrders, selectedKitchenId])
 
@@ -235,9 +248,9 @@ export default function CozinhaPage() {
 
     const unsubscribe = api.db.onChange((event: any) => {
       if (!event || !event.table) return
-      
+
       const { table, operation } = event
-      
+
       // Tabelas que afetam os pedidos
       const relevantTables = ['orders', 'order_items', 'payments', 'kds_phase_times', 'kds_tickets', 'orders_details', 'kds_unit_states']
       if (!relevantTables.includes(table)) return
@@ -251,14 +264,14 @@ export default function CozinhaPage() {
             const prepTickets = await kdsService.listTicketsByStatus('prep')
             const readyTickets = await kdsService.listTicketsByStatus('ready')
             const doneTickets = await kdsService.listTicketsByStatus('done')
-            
+
             const allTickets = [...tickets, ...prepTickets, ...readyTickets, ...doneTickets]
             const out: Order[] = []
-            
+
             for (const t of allTickets) {
               const ordId = String(t.order_id ?? t.orderId ?? '')
               if (!ordId) continue
-              
+
               const times = await kdsService.getPhaseTimes(ordId)
               const api = (window as any)?.api
               const resItems = api?.db ? await api.db.query(
@@ -276,14 +289,14 @@ export default function CozinhaPage() {
                   categoryId: String(it.category_id ?? ''),
                 },
                 productionUnits: Array.from({ length: Math.max(1, Number(it.qty ?? 1)) }, (_, idx) => ({
-                  unitId: `${String(it.id)}-${idx+1}`,
+                  unitId: `${String(it.id)}-${idx + 1}`,
                   unitStatus: 'PENDING' as ProductionUnit['unitStatus'],
                   operatorName: undefined,
                   completedObservations: [],
                   completedAt: undefined,
                 })),
               }))
-              
+
               try {
                 const unitMap = await kdsService.loadUnitStatesForOrder(ordId)
                 const mergedItems = items.map((it: any) => ({
@@ -301,7 +314,7 @@ export default function CozinhaPage() {
                     }
                   })
                 }))
-                
+
                 const pin = t.pin
                 const password = t.password
                 const statusMap: Record<string, Order['status']> = {
@@ -310,7 +323,7 @@ export default function CozinhaPage() {
                   'ready': 'READY',
                   'done': 'DELIVERED',
                 }
-                
+
                 out.push({
                   id: ordId,
                   pin: pin || '',
@@ -351,7 +364,7 @@ export default function CozinhaPage() {
                 } as Order)
               }
             }
-            
+
             setOrders(out)
           } catch (err) {
             console.warn('Erro ao recarregar pedidos após mudança no banco:', err)
@@ -412,82 +425,82 @@ export default function CozinhaPage() {
     if (hasMigratedRef.current) return; // Já tentou migrar, não faça novamente
 
     let needsUpdate = false;
-    
+
     const migratedOrders = orders.map(order => {
       let orderNeedsUpdate = false;
       let currentOrder = order;
-      
+
       if (!('operationalSessionId' in currentOrder) && operationalSession) {
-          orderNeedsUpdate = true;
-          currentOrder = { ...currentOrder, operationalSessionId: operationalSession.id };
+        orderNeedsUpdate = true;
+        currentOrder = { ...currentOrder, operationalSessionId: operationalSession.id };
       }
-      
+
       const updatedItems = currentOrder.items.map(item => {
         let itemNeedsUpdate = false;
         let currentItem = item;
-        
-        const isUnitStructureInvalid = !currentItem.productionUnits || 
-                                      currentItem.productionUnits.length === 0 ||
-                                      currentItem.productionUnits.length !== currentItem.quantity;
-                                      
+
+        const isUnitStructureInvalid = !currentItem.productionUnits ||
+          currentItem.productionUnits.length === 0 ||
+          currentItem.productionUnits.length !== currentItem.quantity;
+
         if (isUnitStructureInvalid) {
           itemNeedsUpdate = true;
-          
-          const oldStatus = (currentItem as any).itemStatus; 
+
+          const oldStatus = (currentItem as any).itemStatus;
           const newUnits = createProductionUnits(currentItem.quantity);
-          
+
           if (oldStatus === 'READY') {
-             newUnits.forEach(unit => unit.unitStatus = 'READY');
+            newUnits.forEach(unit => unit.unitStatus = 'READY');
           }
-          
-          currentItem = { 
-            ...currentItem, 
+
+          currentItem = {
+            ...currentItem,
             productionUnits: newUnits,
-            operatorName: undefined, 
-            itemStatus: undefined, 
+            operatorName: undefined,
+            itemStatus: undefined,
           };
         }
-        
+
         const unitsWithObsMigration = currentItem.productionUnits.map(unit => {
-            let updatedUnit = unit;
-            let unitNeedsUpdate = false;
-            
-            if (!('completedObservations' in unit)) {
-                unitNeedsUpdate = true;
-                updatedUnit = { ...updatedUnit, completedObservations: [] };
-            }
-            if (!('completedAt' in unit)) {
-                unitNeedsUpdate = true;
-                updatedUnit = { ...updatedUnit, completedAt: undefined };
-            }
-            
-            if (unitNeedsUpdate) {
-                itemNeedsUpdate = true;
-                return updatedUnit;
-            }
-            return unit;
+          let updatedUnit = unit;
+          let unitNeedsUpdate = false;
+
+          if (!('completedObservations' in unit)) {
+            unitNeedsUpdate = true;
+            updatedUnit = { ...updatedUnit, completedObservations: [] };
+          }
+          if (!('completedAt' in unit)) {
+            unitNeedsUpdate = true;
+            updatedUnit = { ...updatedUnit, completedAt: undefined };
+          }
+
+          if (unitNeedsUpdate) {
+            itemNeedsUpdate = true;
+            return updatedUnit;
+          }
+          return unit;
         });
-        
+
         if (itemNeedsUpdate) {
-            orderNeedsUpdate = true;
-            return { ...currentItem, productionUnits: unitsWithObsMigration };
+          orderNeedsUpdate = true;
+          return { ...currentItem, productionUnits: unitsWithObsMigration };
         }
-        
+
         return currentItem;
       });
-      
+
       if (orderNeedsUpdate) {
         needsUpdate = true;
         return { ...currentOrder, items: updatedItems };
       }
       return currentOrder;
     });
-    
+
     if (needsUpdate) {
-      setOrders(migratedOrders); 
+      setOrders(migratedOrders);
       console.log('Dados de pedidos migrados para nova estrutura de ProductionUnits.');
     }
-    
+
     hasMigratedRef.current = true; // Marca que a migração foi tentada
   }, [orders, setOrders, operationalSession]); // Dependências para a migração
 
@@ -539,7 +552,7 @@ export default function CozinhaPage() {
         default: return 'NEW';
       }
     };
-  const fetchTickets = async () => {
+    const fetchTickets = async () => {
       try {
         const [tkQueued, tkPrep, tkReady, tkDone] = await Promise.all([
           kdsService.listTicketsByStatus('queued'),
@@ -585,7 +598,7 @@ export default function CozinhaPage() {
             paymentMethod: '',
             createdBy: 'KDS',
           }
-          ;(ord as any).ticketId = String(t.id ?? t.ticketId ?? ord.id)
+            ; (ord as any).ticketId = String(t.id ?? t.ticketId ?? ord.id)
           return ord
         }) as Order[];
         const validOrders = mappedOrders.filter(o => o.id && String(o.id).trim().length > 0)
@@ -607,7 +620,7 @@ export default function CozinhaPage() {
           const password = (o.password && String(o.password).trim()) ? o.password : (prev?.password ?? '')
           return { ...o, items, createdAt, updatedAt, readyAt, deliveredAt, pin, password }
         })
-        const rank = (s: Order['status']) => s==='DELIVERED'?3: s==='READY'?2: s==='PREPARING'?1: 0
+        const rank = (s: Order['status']) => s === 'DELIVERED' ? 3 : s === 'READY' ? 2 : s === 'PREPARING' ? 1 : 0
         const byId: Record<string, Order> = {}
         for (const o of merged) {
           const cur = byId[o.id]
@@ -633,7 +646,7 @@ export default function CozinhaPage() {
   // useEffect para monitorar pedidos prontos e disparar notificação (mantido separado)
   useEffect(() => {
     const previousOrders = previousOrdersRef.current;
-    
+
     orders.forEach(currentOrder => {
       const previousOrder = previousOrders.find(o => o.id === currentOrder.id);
       if (currentOrder.status === 'READY' && previousOrder?.status !== 'READY') {
@@ -676,16 +689,24 @@ export default function CozinhaPage() {
       }
       return;
     }
-    
-    // Atualiza status via serviço KDS e faz atualização otimista local
+
+    // Atualiza status via serviço KDS PRIMEIRO, aguarda confirmação, depois atualiza UI
     (async () => {
       try {
-        const mapToKds = (s: Order['status']) => s === 'READY' ? 'ready' : s === 'PREPARING' ? 'prep' : 'queued';
+        // Correção CRÍTICA: NEW → queued, PREPARING → prep, READY → ready, DELIVERED → done
+        const mapToKds = (s: Order['status']) => {
+          if (s === 'NEW') return 'queued';
+          if (s === 'PREPARING') return 'prep';
+          if (s === 'READY') return 'ready';
+          if (s === 'DELIVERED') return 'done';
+          return 'queued';
+        };
         const ord = orders.find(o => o.id === orderId)
         const tId = (ord as any)?.ticketId || orderId
         await kdsService.setTicketStatus(String(tId), mapToKds(status));
+        console.log('[Cozinha] Status atualizado com sucesso:', { orderId, status, kdsStatus: mapToKds(status) });
       } catch (error) {
-        console.warn('cozinha: setTicketStatus', error);
+        console.error('[Cozinha] ERRO ao atualizar status:', error);
       }
     })();
 
@@ -695,46 +716,46 @@ export default function CozinhaPage() {
           const now = new Date();
           let readyAt = order.readyAt;
           let updatedAt = order.updatedAt;
-          
+
           if (status === 'PREPARING' && order.status === 'NEW') {
             const updatedItems = order.items.map(item => ({
               ...item,
               productionUnits: item.productionUnits.map(unit => ({
                 ...unit,
                 unitStatus: unit.unitStatus || 'PENDING',
-                completedAt: undefined, 
+                completedAt: undefined,
               }))
             }));
-            updatedAt = now; 
-            return { ...order, status, items: updatedItems, updatedAt, readyAt: undefined }; 
+            updatedAt = now;
+            return { ...order, status, items: updatedItems, updatedAt, readyAt: undefined };
           }
-          
+
           if (status === 'READY' && order.status === 'PREPARING') {
-              readyAt = now;
-              const updatedItems = order.items.map(item => ({
-                  ...item,
-                  productionUnits: item.productionUnits.map(unit => ({
-                      ...unit,
-                      unitStatus: 'READY' as ProductionUnit['unitStatus'],
-                      completedAt: unit.unitStatus === 'READY' ? unit.completedAt : now, 
-                  }))
-              }));
-              return { ...order, status, items: updatedItems, updatedAt: order.updatedAt, readyAt }; 
+            readyAt = now;
+            const updatedItems = order.items.map(item => ({
+              ...item,
+              productionUnits: item.productionUnits.map(unit => ({
+                ...unit,
+                unitStatus: 'READY' as ProductionUnit['unitStatus'],
+                completedAt: unit.unitStatus === 'READY' ? unit.completedAt : now,
+              }))
+            }));
+            return { ...order, status, items: updatedItems, updatedAt: order.updatedAt, readyAt };
           }
-          
+
           if (status === 'DELIVERED' && order.status === 'READY') {
-              // Não sobrescreva updatedAt (início do preparo); registre o tempo de entrega em deliveredAt
-              return { ...order, status, deliveredAt: now, updatedAt: order.updatedAt, readyAt }; 
+            // Não sobrescreva updatedAt (início do preparo); registre o tempo de entrega em deliveredAt
+            return { ...order, status, deliveredAt: now, updatedAt: order.updatedAt, readyAt };
           }
-          
+
           if (status === 'PREPARING' && order.status === 'READY') {
-              readyAt = undefined;
-              return { ...order, status, updatedAt: order.updatedAt, readyAt: undefined }; 
+            readyAt = undefined;
+            return { ...order, status, updatedAt: order.updatedAt, readyAt: undefined };
           }
           if (status === 'NEW' && order.status === 'PREPARING') {
-              return { ...order, status, updatedAt: undefined, readyAt: undefined };
+            return { ...order, status, updatedAt: undefined, readyAt: undefined };
           }
-          
+
           return { ...order, status, updatedAt: now, readyAt };
         }
         return order;
@@ -764,20 +785,20 @@ export default function CozinhaPage() {
         }
         try {
           for (let i = 0; i < delivered; i++) {
-            const unitId = `${item.id}-${i+1}`;
+            const unitId = `${item.id}-${i + 1}`;
             kdsService.setUnitDelivered(orderId, item.id, unitId, (deliveredTimes[i] ? new Date(deliveredTimes[i]).toISOString() : now.toISOString()));
           }
           for (let i = delivered; i < totalUnits; i++) {
-            const unitId = `${item.id}-${i+1}`;
+            const unitId = `${item.id}-${i + 1}`;
             kdsService.setUnitDelivered(orderId, item.id, unitId, undefined as any);
           }
-        } catch {}
+        } catch { }
         return { ...item, directDeliveredUnitCount: delivered, directDeliveredUnitTimes: deliveredTimes };
       });
       return { ...order, items: updatedItems };
     }));
   };
-  
+
   const confirmDelivery = () => {
     if (!orderToDeliver) return;
     startTransition(() => {
@@ -793,7 +814,7 @@ export default function CozinhaPage() {
     try {
       const tId = (orderToDeliver as any)?.ticketId || orderToDeliver.id;
       kdsService.setTicketStatus(String(tId), 'done');
-    } catch {}
+    } catch { }
     setShowDeliveryConfirmation(false);
     setOrderToDeliver(null);
   };
@@ -813,7 +834,7 @@ export default function CozinhaPage() {
     try {
       const tId = (ord as any)?.ticketId || orderId;
       kdsService.setTicketStatus(String(tId), 'done');
-    } catch {}
+    } catch { }
   };
 
   const updateProductionUnitStatus = (orderId: string, itemId: string, unitId: string, unitStatus: ProductionUnit['unitStatus'], completedObservations?: string[]) => {
@@ -824,62 +845,62 @@ export default function CozinhaPage() {
           let newOrderStatus = order.status;
           let readyAt = order.readyAt;
           let orderUpdated = false;
-          
+
           const updatedItems = order.items.map(item => {
             if (item.id === itemId) {
               const updatedUnits = item.productionUnits.map(unit => {
-                  if (unit.unitId === unitId) {
-                      const updatedUnit = { ...unit, unitStatus };
-                      if (unitStatus === 'READY') {
-                          updatedUnit.completedAt = now;
-                      } else {
-                          updatedUnit.completedAt = undefined;
-                      }
-                      if (completedObservations !== undefined) {
-                          updatedUnit.completedObservations = completedObservations;
-                      }
-                      orderUpdated = true;
-                      return updatedUnit;
+                if (unit.unitId === unitId) {
+                  const updatedUnit = { ...unit, unitStatus };
+                  if (unitStatus === 'READY') {
+                    updatedUnit.completedAt = now;
+                  } else {
+                    updatedUnit.completedAt = undefined;
                   }
-                  return unit;
+                  if (completedObservations !== undefined) {
+                    updatedUnit.completedObservations = completedObservations;
+                  }
+                  orderUpdated = true;
+                  return updatedUnit;
+                }
+                return unit;
               });
               return { ...item, productionUnits: updatedUnits };
             }
             return item;
           });
-          
-          const allUnitsReady = updatedItems.every(item => 
+
+          const allUnitsReady = updatedItems.every(item =>
             item.productionUnits.every(unit => unit.unitStatus === 'READY')
           );
-          
+
           if (order.status === 'NEW' && unitStatus === 'READY') {
-               newOrderStatus = 'PREPARING';
-               orderUpdated = true;
+            newOrderStatus = 'PREPARING';
+            orderUpdated = true;
           }
-          
+
           if (order.status === 'READY' && unitStatus === 'PENDING' && !allUnitsReady) {
             newOrderStatus = 'PREPARING';
             readyAt = undefined;
             orderUpdated = true;
           }
-          
+
           let finalUpdatedAt = order.updatedAt;
           if (newOrderStatus === 'PREPARING' && order.status === 'NEW') {
-              finalUpdatedAt = now;
+            finalUpdatedAt = now;
           }
-          
-          return { 
-            ...order, 
-            items: updatedItems, 
+
+          return {
+            ...order,
+            items: updatedItems,
             status: newOrderStatus,
-            updatedAt: order.status === 'NEW' && newOrderStatus === 'PREPARING' ? finalUpdatedAt : order.updatedAt, 
+            updatedAt: order.status === 'NEW' && newOrderStatus === 'PREPARING' ? finalUpdatedAt : order.updatedAt,
             readyAt: readyAt
           };
         }
         return order;
       }));
     });
-    try { kdsService.setUnitStatus(orderId, itemId, unitId, unitStatus as any, completedObservations) } catch {}
+    try { kdsService.setUnitStatus(orderId, itemId, unitId, unitStatus as any, completedObservations) } catch { }
   };
 
   const assignOperatorToUnit = (orderId: string, itemId: string, unitId: string, operatorName: string) => {
@@ -893,7 +914,7 @@ export default function CozinhaPage() {
                 if (item.id === itemId) {
                   return {
                     ...item,
-                    productionUnits: item.productionUnits.map(unit => 
+                    productionUnits: item.productionUnits.map(unit =>
                       unit.unitId === unitId ? { ...unit, operatorName } : unit
                     ),
                   };
@@ -906,7 +927,7 @@ export default function CozinhaPage() {
         })
       );
     });
-    try { kdsService.setUnitOperator(orderId, itemId, unitId, operatorName) } catch {}
+    try { kdsService.setUnitOperator(orderId, itemId, unitId, operatorName) } catch { }
   };
 
   const handleAssignOperatorToAll = (orderId: string, operatorName: string) => {
@@ -933,13 +954,13 @@ export default function CozinhaPage() {
           kdsService.setUnitOperator(orderId, it.id, u.unitId, operatorName)
         }
       }
-    } catch {}
+    } catch { }
   };
 
   const cancelOrder = (orderId: string, reason: string) => {
     startTransition(() => {
-      setOrders(orders.map(order => 
-        order.id === orderId 
+      setOrders(orders.map(order =>
+        order.id === orderId
           ? { ...order, status: 'CANCELLED', cancelReason: reason, updatedAt: new Date() }
           : order
       ));
@@ -947,11 +968,11 @@ export default function CozinhaPage() {
   };
 
   const { isOnline } = useOffline();
-  
+
   const productionOrders = useMemo(() => {
     return orders.filter(order => ['NEW', 'PREPARING'].includes(order.status));
   }, [orders]);
-  
+
   // Handler para seleção de cozinha
   const handleKitchenSelect = (kitchenId: string | null, kitchenName: string, operatorName: string) => {
     setSelectedKitchenId(kitchenId);
@@ -1001,7 +1022,7 @@ export default function CozinhaPage() {
             Modo Offline - Algumas funcionalidades podem estar limitadas
           </div>
         )}
-        
+
         <div className="px-4 lg:px-6 py-4 flex-shrink-0">
           <div className="flex items-center justify-between mb-4">
             <h1 className="text-2xl font-bold text-gray-900">Cozinha - KDS</h1>
@@ -1010,12 +1031,12 @@ export default function CozinhaPage() {
               <OperationModeBadge compact />
             </div>
           </div>
-          
+
           <div className="flex flex-wrap items-center justify-start gap-3">
-            
-            
-            
-            
+
+
+
+
             <Button
               variant="secondary"
               onClick={() => setShowReadyModal(true)}
@@ -1025,7 +1046,7 @@ export default function CozinhaPage() {
               <span className="material-symbols-outlined mr-2">done</span>
               Prontos ({readyOrdersList.length})
             </Button>
-            
+
             <Button
               variant="secondary"
               onClick={() => setShowDeliveredModal(true)}
@@ -1035,7 +1056,7 @@ export default function CozinhaPage() {
               <span className="material-symbols-outlined mr-2">done_all</span>
               Entregues ({deliveredOrdersList.length})
             </Button>
-            
+
             <Button
               variant="secondary"
               onClick={() => setShowCanceledModal(true)}
@@ -1045,7 +1066,7 @@ export default function CozinhaPage() {
               <Icon name="XCircle" className="mr-2" />
               Cancelados ({canceledOrdersList.length})
             </Button>
-            
+
             <Button onClick={() => setShowOperatorModal(true)} size="sm" className="flex-shrink-0">
               <Icon name="UserPlus" className="mr-2" />
               + Operador
@@ -1057,12 +1078,12 @@ export default function CozinhaPage() {
           </div>
         </div>
 
-        <div className="pb-6 flex-1 overflow-y-auto min-h-0"> 
+        <div className="pb-6 flex-1 overflow-y-auto min-h-0">
           {true ? (
             <div className="px-4 lg:px-6 h-full">
               <div className="flex flex-col h-full">
                 <div className="flex-1 flex flex-col min-h-0">
-                  <OrderBoard 
+                  <OrderBoard
                     orders={orders}
                     operators={operators}
                     categories={categories}
@@ -1070,10 +1091,10 @@ export default function CozinhaPage() {
                     onCancelOrder={cancelOrder}
                     onAssignOperator={assignOperatorToUnit}
                     onAssignOperatorToAll={handleAssignOperatorToAll}
-                  onUpdateItemStatus={updateProductionUnitStatus}
-                  onUpdateDirectDelivery={updateDirectDelivery}
-                  onConfirmDelivery={confirmDeliveryImmediate}
-                />
+                    onUpdateItemStatus={updateProductionUnitStatus}
+                    onUpdateDirectDelivery={updateDirectDelivery}
+                    onConfirmDelivery={confirmDeliveryImmediate}
+                  />
                 </div>
               </div>
             </div>
@@ -1099,48 +1120,48 @@ export default function CozinhaPage() {
             ) : (
               <div className="space-y-3">
                 <div className="flex items-center gap-3">
-                  <select className="border rounded px-2 py-1" value={operatorFilter} onChange={(e)=> setOperatorFilter(e.target.value)}>
+                  <select className="border rounded px-2 py-1" value={operatorFilter} onChange={(e) => setOperatorFilter(e.target.value)}>
                     <option value="">Todos</option>
                     <option value="Sem Operador">Sem Operador</option>
-                    {operators.map(op=> (<option key={op.id} value={op.name}>{op.name}</option>))}
+                    {operators.map(op => (<option key={op.id} value={op.name}>{op.name}</option>))}
                   </select>
                   <label className="flex items-center gap-2 text-sm text-gray-700">
-                    <input type="checkbox" checked={onlyPreparingOperatorView} onChange={(e)=> setOnlyPreparingOperatorView(e.target.checked)} />
+                    <input type="checkbox" checked={onlyPreparingOperatorView} onChange={(e) => setOnlyPreparingOperatorView(e.target.checked)} />
                     Mostrar apenas em preparo
                   </label>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {(operatorGroups.filter(g=> !operatorFilter || g.name===operatorFilter)).map(group => {
-                  const total = group.units.length;
-                  const visibleUnits = onlyPreparingOperatorView ? group.units.filter(u=> u.status !== 'READY') : group.units;
-                  const pendentes = visibleUnits.filter(u => u.status === 'PENDING').length;
-                  const prontos = visibleUnits.filter(u => u.status === 'READY').length;
-                  return (
-                    <div key={group.name} className="border rounded-lg p-4 bg-white">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="font-semibold text-gray-900">{group.name}</div>
-                        <div className="flex items-center space-x-2 text-sm">
-                          <span className="inline-flex items-center px-2 py-1 rounded-full bg-gray-100 text-gray-700">Total {total}</span>
-                          <span className="inline-flex items-center px-2 py-1 rounded-full bg-yellow-100 text-yellow-700">Pendentes {pendentes}</span>
-                          <span className="inline-flex items-center px-2 py-1 rounded-full bg-green-100 text-green-700">Prontos {prontos}</span>
+                  {(operatorGroups.filter(g => !operatorFilter || g.name === operatorFilter)).map(group => {
+                    const total = group.units.length;
+                    const visibleUnits = onlyPreparingOperatorView ? group.units.filter(u => u.status !== 'READY') : group.units;
+                    const pendentes = visibleUnits.filter(u => u.status === 'PENDING').length;
+                    const prontos = visibleUnits.filter(u => u.status === 'READY').length;
+                    return (
+                      <div key={group.name} className="border rounded-lg p-4 bg-white">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="font-semibold text-gray-900">{group.name}</div>
+                          <div className="flex items-center space-x-2 text-sm">
+                            <span className="inline-flex items-center px-2 py-1 rounded-full bg-gray-100 text-gray-700">Total {total}</span>
+                            <span className="inline-flex items-center px-2 py-1 rounded-full bg-yellow-100 text-yellow-700">Pendentes {pendentes}</span>
+                            <span className="inline-flex items-center px-2 py-1 rounded-full bg-green-100 text-green-700">Prontos {prontos}</span>
+                          </div>
+                        </div>
+                        <div className="divide-y">
+                          {visibleUnits.map(u => (
+                            <div key={u.unitId} className="py-2 flex items-center justify-between">
+                              <div className="text-sm text-gray-800">
+                                Pedido #{u.orderPin} • {u.itemName}
+                              </div>
+                              <span className={`inline-flex items-center px-2 py-1 rounded text-xs ${u.status === 'READY' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-yellow-50 text-yellow-700 border border-yellow-200'}`}>
+                                {u.status === 'READY' ? 'Pronto' : 'Em preparo'}
+                              </span>
+                            </div>
+                          ))}
                         </div>
                       </div>
-                      <div className="divide-y">
-                        {visibleUnits.map(u => (
-                          <div key={u.unitId} className="py-2 flex items-center justify-between">
-                            <div className="text-sm text-gray-800">
-                              Pedido #{u.orderPin} • {u.itemName}
-                            </div>
-                            <span className={`inline-flex items-center px-2 py-1 rounded text-xs ${u.status === 'READY' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-yellow-50 text-yellow-700 border border-yellow-200'}`}>
-                              {u.status === 'READY' ? 'Pronto' : 'Em preparo'}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
             <div className="flex justify-end pt-4 border-t">
@@ -1148,9 +1169,9 @@ export default function CozinhaPage() {
             </div>
           </div>
         </Modal>
-        
-        
-        
+
+
+
         <AlertModal
           isOpen={showAlertModal}
           onClose={() => setShowAlertModal(false)}
@@ -1158,7 +1179,7 @@ export default function CozinhaPage() {
           message={alertModalMessage.message}
           variant={alertModalMessage.variant}
         />
-        
+
         {orderToDeliver && (
           <Modal
             isOpen={showDeliveryConfirmation}
@@ -1278,16 +1299,16 @@ export default function CozinhaPage() {
             </div>
           </Modal>
         )}
-        
+
         <Modal
           isOpen={showReadyModal}
           onClose={() => setShowReadyModal(false)}
           title="Pedidos Prontos para Retirada"
           size="full"
         >
-          <ReadyOrderTable 
-            readyOrders={readyOrdersList} 
-            onUpdateStatus={updateOrderStatus} 
+          <ReadyOrderTable
+            readyOrders={readyOrdersList}
+            onUpdateStatus={updateOrderStatus}
             onUpdateDirectDelivery={updateDirectDelivery}
             onConfirmDelivery={confirmDeliveryImmediate}
           />
@@ -1349,8 +1370,8 @@ export default function CozinhaPage() {
             </div>
           </div>
         </Modal>
-  </div>
+      </div>
     </>
   );
 }
-  
+

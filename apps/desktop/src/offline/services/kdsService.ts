@@ -434,7 +434,8 @@ export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 
       let query = supabase.from('kds_tickets').select('*').eq('status', map[status])
       if (kitchenId) query = query.eq('kitchen_id', kitchenId)
       const { data } = await query
-      try { console.log('[KDS] listTickets supabase', { status: map[status], kitchenId: kitchenId ?? null, count: (data || []).length }) } catch { }
+      // Log removido para performance
+      // try { console.log('[KDS] listTickets supabase', { status: map[status], kitchenId: kitchenId ?? null, count: (data || []).length }) } catch { }
       const sbTickets = data || []
 
       const enriched = [] as any[]

@@ -489,7 +489,7 @@ export async function deleteCategories(ids: string[]) {
 
 export async function migrateLocalStorageCatalog() {
   // Migration logic
-  const MIGRATION_KEY = 'catalog_migration_done_v4'
+  const MIGRATION_KEY = 'catalog_migration_done_v5'
 
   // Skip if already migrated
   if (localStorage.getItem(MIGRATION_KEY)) {
@@ -532,6 +532,8 @@ export async function migrateLocalStorageCatalog() {
           idMap[newId] = actualId
         }
 
+        console.log(`[Migration] Mapped Category: '${name}' | Old: ${oldId} -> New: ${actualId}`)
+
         updatedCats.push({ ...c, id: actualId })
       }
       // Update localStorage with new UUIDs
@@ -552,10 +554,13 @@ export async function migrateLocalStorageCatalog() {
 
         // 1. Try mapping via ID Map (Old ID -> New ID)
         if (categoryId && idMap[categoryId]) {
+          console.log(`[Migration] Product '${name}': remaped cat ${categoryId} -> ${idMap[categoryId]}`)
           categoryId = idMap[categoryId]
+        } else if (categoryId) {
+          console.warn(`[Migration] Product '${name}': category ${categoryId} NOT FOUND in map. Keys:`, Object.keys(idMap).slice(0, 5))
+          // Tenta encontrar por nome no nameToIdMap se não achou por ID? 
+          // Não temos o nome da categoria no produto, infelizmente.
         }
-
-        // 2. If no ID match, try to fuzzy match by Name? (Not possible as product doesn't have cat name)
         // However, if we failed, maybe categoryId IS actually a valid UUID that we missed?
         // Or maybe it's orphan.
 
