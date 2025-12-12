@@ -217,6 +217,15 @@ export async function upsertProduct(params: {
         .upsert(productData, { onConflict: 'id' })
 
       if (error) {
+        // Se for erro de FK (categoria não existe/inválida), tenta salvar sem categoria
+        if (error.code === '23503' || error.details?.includes('Key is not present in table "categories"')) {
+          console.warn('[productsService] Erro de FK na categoria due to missing ID. Retrying with category_id=null', { failedId: params.categoryId })
+          const fallbackData = { ...productData, category_id: null }
+          const { error: retryError } = await supabase.from('products').upsert(fallbackData, { onConflict: 'id' })
+          if (retryError) throw retryError
+          return id
+        }
+
         console.error('[productsService] Erro ao salvar produto no Supabase:', error)
         throw error
       }
@@ -228,11 +237,15 @@ export async function upsertProduct(params: {
       const raw = localStorage.getItem('menuItems')
       const arr = raw ? JSON.parse(raw) : []
       const idx = arr.findIndex((p: any) => String(p.id) === String(id))
+      // Se falhou por FK (Supabase), devemos salvar LOCALMENTE sem categoria também, para evitar "sumiço"
+      // Se falhou por conexão (catch geral), salvamos com a categoria original para tentar sync depois
+      const isFkError = (err as any)?.code === '23503' || (err as any)?.details?.includes('Key is not present')
+
       const item = {
         id,
         code: params.sku,
         name: params.name,
-        categoryId: params.categoryId,
+        categoryId: isFkError ? null : params.categoryId, // HARD FIX: Se DB rejeitou a categoria, removemos ela local também
         price: params.priceCents / 100,
         active: params.isActive ?? true,
       }
@@ -242,7 +255,7 @@ export async function upsertProduct(params: {
         arr.push(item)
       }
       localStorage.setItem('menuItems', JSON.stringify(arr))
-      console.warn('[productsService] Produto salvo no localStorage como fallback')
+      console.warn('[productsService] Produto salvo no localStorage como fallback', { wasFkError: isFkError })
       return id
     } catch { }
     throw err
@@ -475,10 +488,11 @@ export async function deleteCategories(ids: string[]) {
 }
 
 export async function migrateLocalStorageCatalog() {
-  const MIGRATION_FLAG = 'catalog_migration_done_v2'
+  // Migration logic
+  const MIGRATION_KEY = 'catalog_migration_done_v3'
 
   // Skip if already migrated
-  if (localStorage.getItem(MIGRATION_FLAG) === 'true') {
+  if (localStorage.getItem(MIGRATION_KEY)) {
     return
   }
 
@@ -540,7 +554,7 @@ export async function migrateLocalStorageCatalog() {
     }
 
     // Mark migration as complete
-    localStorage.setItem(MIGRATION_FLAG, 'true')
+    localStorage.setItem(MIGRATION_KEY, 'true')
     console.log('[productsService] ✅ Catalog migration completed successfully')
   } catch (err) {
     console.error('[productsService] Migration error:', err)
