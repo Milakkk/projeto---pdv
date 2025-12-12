@@ -160,23 +160,85 @@ export async function upsertProduct(params: {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
   const unitId = rawUnitId && uuidRegex.test(rawUnitId) ? rawUnitId : null
   const now = new Date().toISOString()
-  await query(
-    'INSERT INTO products (id, sku, name, category_id, unit_id, price_cents, is_active, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET sku=excluded.sku, name=excluded.name, category_id=excluded.category_id, unit_id=excluded.unit_id, price_cents=excluded.price_cents, is_active=excluded.is_active, updated_at=excluded.updated_at, version=excluded.version, pending_sync=excluded.pending_sync',
-    [
-      id,
-      params.sku ?? null,
-      params.name,
-      params.categoryId ?? null,
-      unitId ?? null,
-      Math.max(0, Number(params.priceCents ?? 0)),
-      params.isActive ? 1 : 0,
-      now,
-      1,
-      1,
-    ],
-  )
-  return id
+  const isElectron = typeof (window as any)?.api?.db?.query === 'function'
+
+  try {
+    if (isElectron) {
+      // Modo Electron - usa banco local
+      await query(
+        'INSERT INTO products (id, sku, name, category_id, unit_id, price_cents, is_active, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET sku=excluded.sku, name=excluded.name, category_id=excluded.category_id, unit_id=excluded.unit_id, price_cents=excluded.price_cents, is_active=excluded.is_active, updated_at=excluded.updated_at, version=excluded.version, pending_sync=excluded.pending_sync',
+        [
+          id,
+          params.sku ?? null,
+          params.name,
+          params.categoryId ?? null,
+          unitId ?? null,
+          Math.max(0, Number(params.priceCents ?? 0)),
+          params.isActive ? 1 : 0,
+          now,
+          1,
+          1,
+        ],
+      )
+      return id
+    } else {
+      // Modo Navegador - usa Supabase
+      const { supabase } = await import('../../utils/supabase')
+      if (!supabase) {
+        console.warn('[productsService] Supabase não disponível para salvar produto')
+        throw new Error('Supabase não disponível')
+      }
+
+      const productData = {
+        id,
+        sku: params.sku ?? null,
+        name: params.name,
+        category_id: params.categoryId ?? null,
+        unit_id: unitId ?? null,
+        price_cents: Math.max(0, Number(params.priceCents ?? 0)),
+        is_active: params.isActive ?? true,
+        updated_at: now,
+        version: 1,
+        pending_sync: false,
+      }
+
+      const { error } = await supabase
+        .from('products')
+        .upsert(productData, { onConflict: 'id' })
+
+      if (error) {
+        console.error('[productsService] Erro ao salvar produto no Supabase:', error)
+        throw error
+      }
+      return id
+    }
+  } catch (err) {
+    // Fallback: tenta salvar no localStorage
+    try {
+      const raw = localStorage.getItem('menuItems')
+      const arr = raw ? JSON.parse(raw) : []
+      const idx = arr.findIndex((p: any) => String(p.id) === String(id))
+      const item = {
+        id,
+        code: params.sku,
+        name: params.name,
+        categoryId: params.categoryId,
+        price: params.priceCents / 100,
+        active: params.isActive ?? true,
+      }
+      if (idx >= 0) {
+        arr[idx] = { ...arr[idx], ...item }
+      } else {
+        arr.push(item)
+      }
+      localStorage.setItem('menuItems', JSON.stringify(arr))
+      console.warn('[productsService] Produto salvo no localStorage como fallback')
+      return id
+    } catch { }
+    throw err
+  }
 }
+
 
 export async function deleteProducts(ids: string[]) {
   for (const id of ids) {
