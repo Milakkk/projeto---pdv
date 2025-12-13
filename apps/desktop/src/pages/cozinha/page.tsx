@@ -780,7 +780,23 @@ export default function CozinhaPage() {
                   if (status === 'PREPARING') patch.preparing_start = nowIso;
                   if (status === 'READY') patch.ready_at = nowIso;
                   if (status === 'DELIVERED') patch.delivered_at = nowIso;
-                  await supabase.from('kds_phase_times').upsert(patch, { onConflict: 'order_id' });
+                  
+                  // Fix: Use SELECT -> UPDATE/INSERT instead of UPSERT to avoid 400 Bad Request if unique constraint is missing
+                  const { data: existingPhases } = await supabase
+                    .from('kds_phase_times')
+                    .select('id')
+                    .eq('order_id', orderId)
+                    .limit(1);
+                    
+                  if (existingPhases && existingPhases.length > 0) {
+                    await supabase.from('kds_phase_times').update(patch).eq('order_id', orderId);
+                  } else {
+                    const { error: insertErr } = await supabase.from('kds_phase_times').insert(patch);
+                    // Fallback for race condition or if row appeared
+                    if (insertErr) {
+                       await supabase.from('kds_phase_times').update(patch).eq('order_id', orderId);
+                    }
+                  }
                 } catch {}
                 
                 // Também atualiza orders para garantir consistência

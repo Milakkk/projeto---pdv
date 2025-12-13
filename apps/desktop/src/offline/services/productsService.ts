@@ -49,15 +49,30 @@ export async function listProducts() {
         isActive: ((p as any).is_active ?? true) ? 1 : 0,
       }))
 
+      // Client-side Deduplication: Filter out duplicates based on SKU or Name+Category
+      const uniqueMap = new Map<string, typeof mapped[0]>()
+      for (const p of mapped) {
+        const normalizedName = String(p.name || '').trim().toLowerCase()
+        // Key strategy: If SKU exists, use it. Otherwise use Name + Category.
+        const key = p.sku && String(p.sku).trim().length > 0 
+          ? `sku:${String(p.sku).trim().toLowerCase()}` 
+          : `name:${normalizedName}|cat:${p.categoryId}`
+        
+        if (!uniqueMap.has(key)) {
+          uniqueMap.set(key, p)
+        }
+      }
+      const deduped = Array.from(uniqueMap.values())
+
       // Fallback: Se Supabase retornar vazio mas tivermos dados locais (ex: falha de sync/409), usar local
-      if (mapped.length === 0) {
+      if (deduped.length === 0) {
         // Verifica se existe dado local antes de lançar erro para fallback
         const raw = localStorage.getItem('menuItems')
         if (raw && JSON.parse(raw).length > 0) {
           throw new Error('Fallback to local')
         }
       }
-      return mapped
+      return deduped
     }
     const raw = localStorage.getItem('menuItems')
     const arr = raw ? JSON.parse(raw) : []
