@@ -70,8 +70,8 @@ export async function getPhaseTimes(orderId: string): Promise<any> {
 
 async function setPhaseTime(orderId: string, patch: any) {
   const now = new Date().toISOString()
-  // [FIX] Supabase call disabled due to 400 Bad Request
-  /*
+  
+  // 1. Try SQLite (Local DB)
   try {
     await query(
       'INSERT INTO kds_phase_times (order_id, new_start, preparing_start, ready_at, delivered_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(order_id) DO UPDATE SET new_start=COALESCE(excluded.new_start, new_start), preparing_start=COALESCE(excluded.preparing_start, preparing_start), ready_at=COALESCE(excluded.ready_at, ready_at), delivered_at=COALESCE(excluded.delivered_at, delivered_at), updated_at=excluded.updated_at',
@@ -84,13 +84,41 @@ async function setPhaseTime(orderId: string, patch: any) {
         now,
       ],
     )
-  } catch {
-    if (supabase) {
-      // await supabase
-      //   .from('kds_phase_times')
-      //   .upsert({ order_id: orderId, new_start: patch?.newStart ?? null, preparing_start: patch?.preparingStart ?? null, ready_at: patch?.readyAt ?? null, delivered_at: patch?.deliveredAt ?? null, updated_at: now }, { onConflict: 'order_id' })
-    } else {
-  */
+  } catch (err) {
+    // console.warn('[KDS] SQLite phase time error:', err)
+  }
+
+  // 2. Try Supabase (Web Mode)
+  if (supabase) {
+    try {
+      // Check if record exists first to avoid UPSERT issues with constraints or missing columns
+      const { data: existing } = await supabase
+        .from('kds_phase_times')
+        .select('id')
+        .eq('order_id', orderId)
+        .maybeSingle()
+
+      const payload: any = {
+        order_id: orderId,
+        updated_at: now
+      }
+      
+      if (patch?.newStart) payload.new_start = patch.newStart
+      if (patch?.preparingStart) payload.preparing_start = patch.preparingStart
+      if (patch?.readyAt) payload.ready_at = patch.readyAt
+      if (patch?.deliveredAt) payload.delivered_at = patch.deliveredAt
+
+      if (existing?.id) {
+        await supabase.from('kds_phase_times').update(payload).eq('id', existing.id)
+      } else {
+        await supabase.from('kds_phase_times').insert(payload)
+      }
+    } catch (err) {
+      console.error('[KDS] Supabase phase time persistence error:', err)
+    }
+  }
+
+  // 3. Fallback to LocalStorage
   try {
     const raw = localStorage.getItem('kdsPhaseTimes')
     const obj = raw ? JSON.parse(raw) : {}
@@ -99,8 +127,8 @@ async function setPhaseTime(orderId: string, patch: any) {
     obj[String(orderId)] = next
     localStorage.setItem('kdsPhaseTimes', JSON.stringify(obj))
   } catch { }
-  //   }
-  // }
+
+  // 4. LAN Sync
   try { await pushLanEvents([{ table: 'kds_phase_times', row: { orderId, ...patch } }]) } catch { }
 }
 
