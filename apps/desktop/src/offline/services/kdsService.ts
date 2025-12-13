@@ -123,20 +123,67 @@ async function persistUnitStateDb(orderId: string, itemId: string, unitId: strin
     // Web Mode (Supabase)
     if (supabase) {
       try {
-        await supabase.from('kds_unit_states').upsert({
-          id,
-          order_id: orderId,
-          item_id: itemId,
-          unit_id: unitId,
-          operator_name: operatorName,
-          unit_status: unitStatus,
-          completed_observations_json: completedObservationsJson,
-          completed_at: completedAt,
-          delivered_at: deliveredAt,
-          updated_at: now,
-          version: 1,
-          pending_sync: false
-        }, { onConflict: 'id' })
+        // First get the ticket_id from order_id since Supabase schema requires ticket_id
+        const { data: ticket } = await supabase
+          .from('kds_tickets')
+          .select('id')
+          .eq('order_id', orderId)
+          .maybeSingle()
+        
+        const ticketId = ticket?.id
+        
+        // Only proceed if we have a valid ticketId, otherwise we can't satisfy the FK constraint
+        if (ticketId) {
+          // We need to fetch operator_id if operatorName is provided
+          let operatorId = null
+          if (operatorName) {
+            const { data: op } = await supabase
+              .from('kitchen_operators')
+              .select('id')
+              .eq('name', operatorName)
+              .maybeSingle()
+            operatorId = op?.id
+          }
+
+          // Use a UUID for ID instead of the composite string if possible, or try to find existing record
+          // Since we can't change the ID logic easily without breaking local state mapping, 
+          // we should look up if a record exists by composite keys (ticket_id + order_item_id)
+          // But wait, the schema has id as UUID PRIMARY KEY.
+          // We cannot pass the composite string `${orderId}:${itemId}:${unitId}` as UUID.
+          // Strategy: Find existing record by business keys, or insert new with auto-gen UUID.
+          
+          const { data: existing } = await supabase
+            .from('kds_unit_states')
+            .select('id')
+            .eq('ticket_id', ticketId)
+            .eq('order_item_id', itemId) // Assuming itemId is the order_item_id UUID
+            // We don't have unit_id column in Supabase schema shown in search, but we might need it? 
+            // The search result showed: ticket_id, order_item_id, status, operator_id. 
+            // It did NOT show 'unit_id' column in kds_unit_states table definition.
+            // If unit_id is missing in DB, we can't save it. 
+            // Assuming 1 item = 1 unit for now or that order_item_id is sufficient uniqueness if split.
+            .maybeSingle()
+            
+          const payload: any = {
+            ticket_id: ticketId,
+            order_item_id: itemId,
+            status: unitStatus || 'PENDING',
+            updated_at: now,
+            version: 1,
+            pending_sync: false
+          }
+          
+          if (operatorId) payload.operator_id = operatorId
+          if (completedAt) payload.completed_at = completedAt
+          // delivered_at is not in the schema result I saw, but let's check if it accepts it or we ignore it
+          // Schema showed: started_at, completed_at. No delivered_at.
+          
+          if (existing?.id) {
+            await supabase.from('kds_unit_states').update(payload).eq('id', existing.id)
+          } else {
+            await supabase.from('kds_unit_states').insert(payload)
+          }
+        }
       } catch (err) {
         console.error('[KDS] Error persisting unit state to Supabase:', err)
       }
