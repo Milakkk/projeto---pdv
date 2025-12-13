@@ -564,16 +564,61 @@ export default function CozinhaPage() {
         ]);
         const tk = ([] as any[]).concat(tkQueued || [], tkPrep || [], tkReady || [], tkDone || []);
         if (!mounted || !Array.isArray(tk)) return;
-        const mappedOrders: Order[] = (tk as any[]).map((t: any) => {
-          const items = Array.isArray(t.items) ? t.items.map((item: any) => ({
+        const supabaseItemsCache: Record<string, any[]> = {};
+        const fetchItemsFromSupabase = async (orderId: string) => {
+          try {
+            const { supabase } = await import('../../utils/supabase');
+            if (!supabase) return [];
+            const { data, error } = await supabase
+              .from('order_items')
+              .select(`id, qty, unit_price_cents, product_id, products:products(id, name, sla_minutes, skip_kitchen, unit_delivery_count, category_id)`) // join
+              .eq('order_id', orderId);
+            if (error) return [];
+            return (data || []).map((it: any) => ({
+              id: String(it.id),
+              quantity: Number(it.qty ?? 1),
+              skipKitchen: Boolean(it.products?.skip_kitchen ?? false),
+              menuItem: {
+                id: String(it.products?.id ?? ''),
+                name: String(it.products?.name ?? 'Item'),
+                unitDeliveryCount: Number(it.products?.unit_delivery_count ?? 1),
+                sla: Number(it.products?.sla_minutes ?? 15),
+                categoryId: String(it.products?.category_id ?? ''),
+              },
+              productionUnits: Array.from({ length: Math.max(1, Number(it.qty ?? 1)) }, (_, idx) => ({
+                unitId: `${String(it.id)}-${idx + 1}`,
+                unitStatus: 'PENDING' as ProductionUnit['unitStatus'],
+                operatorName: undefined,
+                completedObservations: [],
+                completedAt: undefined,
+              })),
+            }));
+          } catch { return [] }
+        };
+
+        const mappedOrders: Order[] = [];
+        for (const t of tk as any[]) {
+          const oid = String(t.order_id ?? t.orderId ?? '')
+          let items: any[] = Array.isArray(t.items) ? t.items : []
+          if (!items.length && oid) {
+            if (supabaseItemsCache[oid]) {
+              items = supabaseItemsCache[oid]
+            } else {
+              const fetched = await fetchItemsFromSupabase(oid)
+              supabaseItemsCache[oid] = fetched
+              items = fetched
+            }
+          }
+          items = items.map((item: any) => ({
             id: String(item.id ?? Math.random().toString(36)),
             quantity: Number(item.quantity ?? 1),
             skipKitchen: Boolean(item.skipKitchen ?? false),
             menuItem: {
-              id: String(item.menuItem?.id ?? ''),
-              name: String(item.menuItem?.name ?? 'Item'),
-              unitDeliveryCount: Number(item.menuItem?.unitDeliveryCount ?? 1),
-              sla: Number(item.menuItem?.sla ?? 15),
+              id: String(item.menuItem?.id ?? item.menuItemId ?? ''),
+              name: String(item.menuItem?.name ?? item.name ?? 'Item'),
+              unitDeliveryCount: Number(item.menuItem?.unitDeliveryCount ?? item.unitDeliveryCount ?? 1),
+              sla: Number(item.menuItem?.sla ?? item.sla ?? 15),
+              categoryId: String(item.menuItem?.categoryId ?? item.categoryId ?? ''),
             },
             productionUnits: Array.isArray(item.productionUnits) ? item.productionUnits.map((u: any) => ({
               unitId: String(u.unitId ?? Math.random().toString(36)),
@@ -581,8 +626,14 @@ export default function CozinhaPage() {
               operatorName: u.operatorName,
               completedObservations: Array.isArray(u.completedObservations) ? u.completedObservations : [],
               completedAt: u.completedAt ? new Date(u.completedAt) : undefined,
-            })) : [],
-          })) : []
+            })) : Array.from({ length: Math.max(1, Number(item.quantity ?? 1)) }, (_, idx) => ({
+              unitId: `${String(item.id)}-${idx + 1}`,
+              unitStatus: 'PENDING' as ProductionUnit['unitStatus'],
+              operatorName: undefined,
+              completedObservations: [],
+              completedAt: undefined,
+            })),
+          }))
           const slaMinutes = items.reduce((sum: number, it: any) => sum + (Number(it.menuItem?.sla ?? 15) * Math.max(1, Number(it.quantity ?? 1))), 0)
           const details = getOrderDetails(String(t.order_id ?? t.orderId ?? t.id ?? ''))
           const ord: Order = {
@@ -601,8 +652,8 @@ export default function CozinhaPage() {
             createdBy: 'KDS',
           }
             ; (ord as any).ticketId = String(t.id ?? t.ticketId ?? ord.id)
-          return ord
-        }) as Order[];
+          mappedOrders.push(ord as Order)
+        }
         const validOrders = mappedOrders.filter(o => o.id && String(o.id).trim().length > 0)
         const merged = validOrders.map(o => {
           const prev = previousOrdersRef.current.find(po => po.id === o.id)
@@ -632,7 +683,7 @@ export default function CozinhaPage() {
           if (lenNext > lenCur) { byId[o.id] = o; continue }
           if (lenNext === lenCur && rank(o.status) > rank(cur.status)) { byId[o.id] = o }
         }
-        const final = Object.values(byId).filter(o => (o.items || []).length > 0)
+        const final = Object.values(byId)
         startTransition(() => setOrders(final));
       } catch (error) {
       }
@@ -708,29 +759,39 @@ export default function CozinhaPage() {
         
         // Tenta usar Supabase diretamente se disponível (Web Mode)
         if (isOnline) {
-           const { supabase } = await import('../../utils/supabase');
-           if (supabase) {
-             const kdsStatus = mapToKds(status);
-             const { error } = await supabase
-               .from('kds_tickets')
-               .update({ status: kdsStatus, updated_at: new Date().toISOString() })
-               .eq('id', tId);
-               
-             if (error) {
-               console.error('[Cozinha] Erro ao atualizar Supabase:', error);
-               // Fallback para kdsService se falhar (pode ser ticket não encontrado ou outra tabela)
-             } else {
-               console.log('[Cozinha] Status atualizado no Supabase com sucesso:', { orderId, status });
-               
-               // Também atualiza orders para garantir consistência
-               await supabase
-                 .from('orders')
-                 .update({ status: status, updated_at: new Date().toISOString() })
-                 .eq('id', orderId);
-                 
-               return; // Sucesso, não precisa do kdsService
-             }
-           }
+            const { supabase } = await import('../../utils/supabase');
+            if (supabase) {
+              const kdsStatus = mapToKds(status);
+              const { error } = await supabase
+                .from('kds_tickets')
+                .update({ status: kdsStatus, updated_at: new Date().toISOString() })
+                .eq('id', tId);
+                
+              if (error) {
+                console.error('[Cozinha] Erro ao atualizar Supabase:', error);
+                // Fallback para kdsService se falhar (pode ser ticket não encontrado ou outra tabela)
+              } else {
+                console.log('[Cozinha] Status atualizado no Supabase com sucesso:', { orderId, status });
+                // Persistir timestamps de fase
+                try {
+                  const nowIso = new Date().toISOString();
+                  const patch: any = { orderId };
+                  if (status === 'NEW') patch.newStart = nowIso;
+                  if (status === 'PREPARING') patch.preparingStart = nowIso;
+                  if (status === 'READY') patch.readyAt = nowIso;
+                  if (status === 'DELIVERED') patch.deliveredAt = nowIso;
+                  await supabase.from('kds_phase_times').upsert(patch, { onConflict: 'orderId' });
+                } catch {}
+                
+                // Também atualiza orders para garantir consistência
+                await supabase
+                  .from('orders')
+                  .update({ status: status, updated_at: new Date().toISOString() })
+                  .eq('id', orderId);
+                
+                return; // Sucesso, não precisa do kdsService
+              }
+            }
         }
 
         await kdsService.setTicketStatus(String(tId), mapToKds(status));
@@ -1404,4 +1465,3 @@ export default function CozinhaPage() {
     </>
   );
 }
-
