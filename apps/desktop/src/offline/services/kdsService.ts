@@ -50,22 +50,23 @@ async function pushLanEvents(events: any[]) {
 }
 
 export async function getPhaseTimes(orderId: string): Promise<any> {
-  // [FIX] Supabase call disabled due to 400 Bad Request
-  // try {
-  //   if (supabase) {
-  //     const { data } = await supabase
-  //       .from('kds_phase_times')
-  //       .select('*')
-  //       .eq('order_id', orderId)
-  //       .maybeSingle()
-  //     return data || {}
-  //   }
+  // [FIX] Supabase call enabled after schema fix
+  try {
+    if (supabase) {
+      const { data } = await supabase
+        .from('kds_phase_times')
+        .select('*')
+        .eq('order_id', orderId)
+        .maybeSingle()
+      return data || {}
+    }
+  } catch { /* ignore */ }
+  
   try {
     const raw = localStorage.getItem('kdsPhaseTimes')
     const obj = raw ? JSON.parse(raw) : {}
     return obj[String(orderId)] || {}
   } catch { return {} }
-  // } catch { return {} }
 }
 
 async function setPhaseTime(orderId: string, patch: any) {
@@ -185,69 +186,73 @@ async function persistUnitStateDb(orderId: string, itemId: string, unitId: strin
   if (supabase) {
     try {
       console.log('[KDS-DEBUG] persistUnitStateDb: Trying Supabase...')
-      // First get the ticket_id from order_id since Supabase schema requires ticket_id
-      const { data: ticket, error: ticketError } = await supabase
+      
+      // Try to find ticket_id, but don't block if missing (we have order_id now)
+      const { data: ticket } = await supabase
         .from('kds_tickets')
         .select('id')
         .eq('order_id', orderId)
         .maybeSingle()
       
-      if (ticketError) console.error('[KDS-DEBUG] persistUnitStateDb: ticket fetch error:', ticketError)
+      const ticketId = ticket?.id ?? null
 
-      const ticketId = ticket?.id
+      // Look for existing record using production_unit_id if available, or order_item_id fallback
+      let query = supabase.from('kds_unit_states').select('id')
       
-      // Only proceed if we have a valid ticketId, otherwise we can't satisfy the FK constraint
-      if (ticketId) {
-        // We need to fetch operator_id if operatorName is provided
-        let operatorId = null
-        if (operatorName) {
-          const { data: op } = await supabase
-            .from('kitchen_operators')
-            .select('id')
-            .eq('name', operatorName)
-            .maybeSingle()
-          operatorId = op?.id
-        }
-
-        const { data: existing, error: fetchError } = await supabase
-          .from('kds_unit_states')
-          .select('id')
-          .eq('ticket_id', ticketId)
-          .eq('order_item_id', itemId)
-          .maybeSingle()
-          
-        if (fetchError) console.error('[KDS-DEBUG] persistUnitStateDb: unit fetch error:', fetchError)
-
-        const payload: any = {
-          ticket_id: ticketId,
-          order_item_id: itemId,
-          status: unitStatus || 'PENDING',
-          updated_at: now,
-          version: 1,
-          pending_sync: false
-        }
-        
-        if (operatorId) payload.operator_id = operatorId
-        if (completedAt) payload.completed_at = completedAt
-        
-        let opError = null;
-        if (existing?.id) {
-          console.log('[KDS-DEBUG] persistUnitStateDb: Updating Supabase record', existing.id)
-          const { error } = await supabase.from('kds_unit_states').update(payload).eq('id', existing.id)
-          opError = error
-        } else {
-          console.log('[KDS-DEBUG] persistUnitStateDb: Inserting Supabase record')
-          const { error } = await supabase.from('kds_unit_states').insert(payload)
-          opError = error
-        }
-        
-        if (opError) {
-          console.error('[KDS-DEBUG] persistUnitStateDb: Supabase error:', opError)
-        } else {
-          console.log('[KDS-DEBUG] persistUnitStateDb: Supabase success')
-        }
+      // Use the specific production unit ID for precision
+      if (unitId) {
+        query = query.eq('production_unit_id', unitId).eq('order_item_id', itemId)
       } else {
-        console.warn('[KDS-DEBUG] persistUnitStateDb: Ticket not found for orderId', orderId)
+        query = query.eq('order_item_id', itemId)
+        if (ticketId) query = query.eq('ticket_id', ticketId)
+      }
+
+      const { data: existing, error: fetchError } = await query.maybeSingle()
+          
+      if (fetchError) console.error('[KDS-DEBUG] persistUnitStateDb: unit fetch error:', fetchError)
+
+      // Fetch operator_id if possible, but we will save operator_name regardless
+      let operatorId = null
+      if (operatorName) {
+        const { data: op } = await supabase
+          .from('kitchen_operators')
+          .select('id')
+          .eq('name', operatorName)
+          .maybeSingle()
+        operatorId = op?.id
+      }
+
+      const payload: any = {
+        order_item_id: itemId,
+        status: unitStatus || 'PENDING',
+        updated_at: now,
+        version: 1,
+        pending_sync: false,
+        // New fields
+        operator_name: operatorName,
+        production_unit_id: unitId,
+        order_id: orderId
+      }
+      
+      if (ticketId) payload.ticket_id = ticketId
+      if (operatorId) payload.operator_id = operatorId
+      if (completedAt) payload.completed_at = completedAt
+      
+      let opError = null;
+      if (existing?.id) {
+        console.log('[KDS-DEBUG] persistUnitStateDb: Updating Supabase record', existing.id)
+        const { error } = await supabase.from('kds_unit_states').update(payload).eq('id', existing.id)
+        opError = error
+      } else {
+        console.log('[KDS-DEBUG] persistUnitStateDb: Inserting Supabase record')
+        const { error } = await supabase.from('kds_unit_states').insert(payload)
+        opError = error
+      }
+      
+      if (opError) {
+        console.error('[KDS-DEBUG] persistUnitStateDb: Supabase error:', opError)
+      } else {
+        console.log('[KDS-DEBUG] persistUnitStateDb: Supabase success')
       }
     } catch (err) {
       console.error('[KDS-DEBUG] Error persisting unit state to Supabase:', err)
