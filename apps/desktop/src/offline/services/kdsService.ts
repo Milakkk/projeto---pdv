@@ -471,6 +471,14 @@ export async function setTicketStatus(id: UUID, status: 'queued' | 'prep' | 'rea
           .eq('id', orderId)
 
         if (orderErr) console.error('[KDS] Error updating order status:', orderErr)
+
+        // [FIX] Ensure phase times are updated in Supabase
+        const phasePatch: any = {}
+        if (status === 'queued') phasePatch.newStart = now
+        if (status === 'prep') phasePatch.preparingStart = now
+        if (status === 'ready') phasePatch.readyAt = now
+        if (status === 'done') phasePatch.deliveredAt = now
+        await setPhaseTime(orderId, phasePatch)
       }
     } catch (err: any) {
       console.error('[KDS] Unexpected error in setTicketStatus supabase block:', err)
