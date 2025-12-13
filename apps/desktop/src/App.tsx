@@ -7,10 +7,14 @@ import { seedCatalogIfEmpty } from '@/offline/bootstrap/catalog.seed';
 import ErrorBoundary from './components/base/ErrorBoundary'
 import { ensureDeviceProfile, getDeviceProfile } from '@/offline/services/deviceProfileService'
 import * as kdsService from '@/offline/services/kdsService'
+import { useCatalogSync } from './hooks/useCatalogSync';
 
 // Componente Wrapper para lidar com o redirecionamento inicial
 function AppWrapper() {
   useAuth();
+  
+  // Hook para sincronizar catálogo (Categorias e Produtos) do Supabase
+  useCatalogSync();
   
   useEffect(() => {
     try {
