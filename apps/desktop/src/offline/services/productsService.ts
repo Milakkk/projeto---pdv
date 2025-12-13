@@ -509,15 +509,17 @@ export async function migrateLocalStorageCatalog() {
   // Migration logic
   const MIGRATION_KEY = 'catalog_migration_done_v5'
 
+  // Skip if already migrated
+  if (localStorage.getItem(MIGRATION_KEY)) {
+    return
+  }
+
   // Skip if not Electron (Web mode should rely on Supabase sync, not local storage migration)
   const isElectron = typeof (window as any)?.api?.db?.query === 'function'
   if (!isElectron) {
     console.log('[Migration] Web mode detected. Skipping localStorage migration to prevent conflicts.')
-    return
-  }
-
-  // Skip if already migrated
-  if (localStorage.getItem(MIGRATION_KEY)) {
+    // Mark as done to prevent future logs in this session
+    localStorage.setItem(MIGRATION_KEY, 'true')
     return
   }
 
