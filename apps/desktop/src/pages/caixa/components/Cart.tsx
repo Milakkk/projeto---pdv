@@ -367,13 +367,13 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [showCheckout, items.length, isMultiplePayment, selectedPayment, orderPassword, config.checkoutShortcut, paymentShortcuts, isConfirmDisabled]); 
 
-  // Função para gerar o número do pedido no formato P + mês + últimos 2 dígitos do ano + sequencial (4 dígitos)
+  // Função para gerar o número do pedido no formato # + mês + últimos 2 dígitos do ano + sequencial (4 dígitos)
   const generateOrderPin = () => {
     const now = new Date();
     const month = (now.getMonth() + 1).toString().padStart(2, '0');
     const year = now.getFullYear().toString().slice(-2);
     const sequential = orderCounter.toString().padStart(4, '0');
-    return `P${month}${year}${sequential}`;
+    return `#${month}${year}${sequential}`;
   };
 
   // Atualizar valor restante quando breakdown mudar

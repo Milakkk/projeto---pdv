@@ -362,6 +362,9 @@ export default function CozinhaPage() {
                   'ready': 'READY',
                   'done': 'DELIVERED',
                 }
+                const times = t.phase_times || t.phaseTimes || {}
+                // Fallback para createdAt se não tiver newStart
+                const createdAt = times?.newStart ? new Date(times.newStart) : (t.created_at ? new Date(t.created_at) : new Date())
                 out.push({
                   id: ordId,
                   ticketId: String(t.id),
@@ -370,7 +373,7 @@ export default function CozinhaPage() {
                   items,
                   total: 0,
                   status: statusMap[String(t.status)] || 'NEW',
-                  createdAt: times?.newStart ? new Date(times.newStart) : new Date(),
+                  createdAt,
                   readyAt: times?.readyAt ? new Date(times.readyAt) : undefined,
                   deliveredAt: times?.deliveredAt ? new Date(times.deliveredAt) : undefined,
                   slaMinutes: 30,
@@ -588,6 +591,26 @@ export default function CozinhaPage() {
 
         const tk = ([] as any[]).concat(tkQueued || [], tkPrep || [], tkReady || [], tkDone || []);
         if (!mounted || !Array.isArray(tk)) return;
+
+        // [FIX] Fetch order timestamps from 'orders' table to prevent reset on reload
+        const orderIds = tk.map((t: any) => String(t.order_id ?? t.orderId ?? '')).filter(id => id);
+        let ordersMap: Record<string, any> = {};
+        
+        if (orderIds.length > 0) {
+           try {
+              const { supabase } = await import('../../utils/supabase');
+              if (supabase) {
+                 const { data } = await supabase
+                    .from('orders')
+                    .select('id, opened_at, created_at')
+                    .in('id', orderIds);
+                 if (data) {
+                    ordersMap = data.reduce((acc: any, o: any) => ({ ...acc, [o.id]: o }), {});
+                 }
+              }
+           } catch {}
+        }
+
         const supabaseItemsCache: Record<string, any[]> = {};
         const fetchItemsFromSupabase = async (orderId: string) => {
           try {
@@ -690,7 +713,7 @@ export default function CozinhaPage() {
             pin: String(t.pin ?? t.orderPin ?? details.pin ?? ''),
             password: String(t.password ?? details.password ?? ''),
             status: mapStatus(String(t.status ?? 'queued')),
-            createdAt: t.createdAt ? new Date(t.createdAt) : new Date(),
+            createdAt: t.createdAt ? new Date(t.createdAt) : (ordersMap[String(t.order_id ?? t.orderId ?? '')]?.opened_at ? new Date(ordersMap[String(t.order_id ?? t.orderId ?? '')].opened_at) : (ordersMap[String(t.order_id ?? t.orderId ?? '')]?.created_at ? new Date(ordersMap[String(t.order_id ?? t.orderId ?? '')].created_at) : new Date())),
             updatedAt: t.updatedAt ? new Date(t.updatedAt) : undefined,
             readyAt: t.readyAt ? new Date(t.readyAt) : undefined,
             deliveredAt: t.deliveredAt ? new Date(t.deliveredAt) : undefined,
