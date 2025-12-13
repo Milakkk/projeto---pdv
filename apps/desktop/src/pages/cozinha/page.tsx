@@ -775,12 +775,12 @@ export default function CozinhaPage() {
                 // Persistir timestamps de fase
                 try {
                   const nowIso = new Date().toISOString();
-                  const patch: any = { orderId };
-                  if (status === 'NEW') patch.newStart = nowIso;
-                  if (status === 'PREPARING') patch.preparingStart = nowIso;
-                  if (status === 'READY') patch.readyAt = nowIso;
-                  if (status === 'DELIVERED') patch.deliveredAt = nowIso;
-                  await supabase.from('kds_phase_times').upsert(patch, { onConflict: 'orderId' });
+                  const patch: any = { order_id: orderId };
+                  if (status === 'NEW') patch.new_start = nowIso;
+                  if (status === 'PREPARING') patch.preparing_start = nowIso;
+                  if (status === 'READY') patch.ready_at = nowIso;
+                  if (status === 'DELIVERED') patch.delivered_at = nowIso;
+                  await supabase.from('kds_phase_times').upsert(patch, { onConflict: 'order_id' });
                 } catch {}
                 
                 // Também atualiza orders para garantir consistência
