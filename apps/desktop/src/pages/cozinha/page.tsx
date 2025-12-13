@@ -165,7 +165,14 @@ export default function CozinhaPage() {
               const ordersEv = events.filter((e: any) => String(e.table) === 'orders' && (e.row || e.rows))
               const phaseTimesEv = events.filter((e: any) => String(e.table) === 'kds_phase_times' && (e.row || e.rows))
               if (tickets.length) {
-                const mapToOrderStatus = (s: string) => s === 'ready' ? 'READY' : s === 'prep' ? 'PREPARING' : s === 'done' ? 'DELIVERED' : 'NEW'
+                const mapToOrderStatus = (s: string) => {
+                  const normalized = String(s).toUpperCase();
+                  if (normalized === 'QUEUED' || normalized === 'NEW') return 'NEW';
+                  if (normalized === 'PREP' || normalized === 'PREPARING') return 'PREPARING';
+                  if (normalized === 'READY') return 'READY';
+                  if (normalized === 'DONE' || normalized === 'DELIVERED') return 'DELIVERED';
+                  return 'NEW';
+                }
                 const byIdStatus: Record<string, string> = {}
                 for (const e of tickets) {
                   const r = e.row || {}
@@ -552,13 +559,12 @@ export default function CozinhaPage() {
   useEffect(() => {
     let mounted = true;
     const mapStatus = (s: string): Order['status'] => {
-      switch (s) {
-        case 'queued': return 'NEW';
-        case 'prep': return 'PREPARING';
-        case 'ready': return 'READY';
-        case 'done': return 'DELIVERED';
-        default: return 'NEW';
-      }
+      const normalized = String(s).toUpperCase();
+      if (normalized === 'QUEUED' || normalized === 'NEW') return 'NEW';
+      if (normalized === 'PREP' || normalized === 'PREPARING') return 'PREPARING';
+      if (normalized === 'READY') return 'READY';
+      if (normalized === 'DONE' || normalized === 'DELIVERED') return 'DELIVERED';
+      return 'NEW';
     };
     const fetchTickets = async () => {
       try {
