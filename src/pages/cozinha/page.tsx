@@ -242,6 +242,21 @@ export default function CozinhaPage() {
       return;
     }
     
+    // Validação de transição de status
+    const order = orders.find(o => o.id === orderId);
+    if (order) {
+      // Bloquear retorno de READY para NEW
+      if (order.status === 'READY' && status === 'NEW') {
+        displayAlert('Ação Bloqueada', 'Não é possível voltar de PRONTO para NOVO diretamente. Mude para PREPARANDO primeiro.', 'info');
+        return;
+      }
+      // Bloquear retorno de DELIVERED (embora a UI geralmente não mostre delivered na lista ativa)
+      if (order.status === 'DELIVERED') {
+        displayAlert('Ação Bloqueada', 'Pedido já entregue.', 'error');
+        return;
+      }
+    }
+
     startTransition(() => {
       setOrders(prevOrders => prevOrders.map(order => {
         if (order.id === orderId) {
@@ -259,6 +274,7 @@ export default function CozinhaPage() {
               }))
             }));
             updatedAt = now; 
+            showSuccess(`Pedido #${order.pin} em PREPARO.`);
             return { ...order, status, items: updatedItems, updatedAt, readyAt: undefined }; 
           }
           
@@ -272,6 +288,7 @@ export default function CozinhaPage() {
                       completedAt: unit.unitStatus === 'READY' ? unit.completedAt : now, 
                   }))
               }));
+              showSuccess(`Pedido #${order.pin} está PRONTO.`);
               return { ...order, status, items: updatedItems, updatedAt: order.updatedAt, readyAt }; 
           }
           
@@ -282,12 +299,15 @@ export default function CozinhaPage() {
           
           if (status === 'PREPARING' && order.status === 'READY') {
               readyAt = undefined;
+              showInfo(`Pedido #${order.pin} voltou para PREPARO.`);
               return { ...order, status, updatedAt: order.updatedAt, readyAt: undefined }; 
           }
           if (status === 'NEW' && order.status === 'PREPARING') {
+              showInfo(`Pedido #${order.pin} voltou para NOVO.`);
               return { ...order, status, updatedAt: undefined, readyAt: undefined };
           }
           
+          // Caso genérico
           return { ...order, status, updatedAt: now, readyAt };
         }
         return order;
