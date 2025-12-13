@@ -705,6 +705,34 @@ export default function CozinhaPage() {
         };
         const ord = orders.find(o => o.id === orderId)
         const tId = (ord as any)?.ticketId || orderId
+        
+        // Tenta usar Supabase diretamente se disponível (Web Mode)
+        if (isOnline) {
+           const { supabase } = await import('../../utils/supabase');
+           if (supabase) {
+             const kdsStatus = mapToKds(status);
+             const { error } = await supabase
+               .from('kds_tickets')
+               .update({ status: kdsStatus, updated_at: new Date().toISOString() })
+               .eq('id', tId);
+               
+             if (error) {
+               console.error('[Cozinha] Erro ao atualizar Supabase:', error);
+               // Fallback para kdsService se falhar (pode ser ticket não encontrado ou outra tabela)
+             } else {
+               console.log('[Cozinha] Status atualizado no Supabase com sucesso:', { orderId, status });
+               
+               // Também atualiza orders para garantir consistência
+               await supabase
+                 .from('orders')
+                 .update({ status: status, updated_at: new Date().toISOString() })
+                 .eq('id', orderId);
+                 
+               return; // Sucesso, não precisa do kdsService
+             }
+           }
+        }
+
         await kdsService.setTicketStatus(String(tId), mapToKds(status));
         console.log('[Cozinha] Status atualizado com sucesso:', { orderId, status, kdsStatus: mapToKds(status) });
       } catch (error) {

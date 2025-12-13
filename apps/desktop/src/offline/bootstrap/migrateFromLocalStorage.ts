@@ -50,8 +50,14 @@ const uuid = () =>
 
 export async function runMigrationOnce() {
   // Em ambiente web (sem Electron), o cliente SQLite não está disponível.
-  // Pule a migração para evitar erro de runtime.
-  if (!db) return;
+  // Pule a migração para evitar erro de runtime e conflitos com o hook de sync.
+  // A sincronização web é feita via useCatalogSync e realtime.ts
+  if (!db) {
+    console.log('[Migration] Ambiente Web detectado: Pulando migração SQLite.');
+    localStorage.setItem(LS_FLAG, "true"); // Marca como migrado para não tentar novamente
+    return;
+  }
+  
   if (localStorage.getItem(LS_FLAG) === "true") return;
 
   const now = new Date().toISOString();

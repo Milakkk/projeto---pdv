@@ -203,7 +203,10 @@ export async function upsertProduct(params: {
         id,
         sku: params.sku ?? null,
         name: params.name,
-        category_id: params.categoryId ?? null,
+        // Validate category_id is a UUID before sending to Supabase
+        category_id: (params.categoryId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(params.categoryId)) 
+          ? params.categoryId 
+          : null,
         unit_id: unitId ?? null,
         price_cents: Math.max(0, Number(params.priceCents ?? 0)),
         is_active: params.isActive ?? true,
@@ -490,6 +493,13 @@ export async function deleteCategories(ids: string[]) {
 export async function migrateLocalStorageCatalog() {
   // Migration logic
   const MIGRATION_KEY = 'catalog_migration_done_v5'
+
+  // Skip if not Electron (Web mode should rely on Supabase sync, not local storage migration)
+  const isElectron = typeof (window as any)?.api?.db?.query === 'function'
+  if (!isElectron) {
+    console.log('[Migration] Web mode detected. Skipping localStorage migration to prevent conflicts.')
+    return
+  }
 
   // Skip if already migrated
   if (localStorage.getItem(MIGRATION_KEY)) {
