@@ -615,31 +615,56 @@ export default function CozinhaPage() {
               items = fetched
             }
           }
-          items = items.map((item: any) => ({
-            id: String(item.id ?? Math.random().toString(36)),
-            quantity: Number(item.quantity ?? 1),
-            skipKitchen: Boolean(item.skipKitchen ?? false),
-            menuItem: {
-              id: String(item.menuItem?.id ?? item.menuItemId ?? ''),
-              name: String(item.menuItem?.name ?? item.name ?? 'Item'),
-              unitDeliveryCount: Number(item.menuItem?.unitDeliveryCount ?? item.unitDeliveryCount ?? 1),
-              sla: Number(item.menuItem?.sla ?? item.sla ?? 15),
-              categoryId: String(item.menuItem?.categoryId ?? item.categoryId ?? ''),
-            },
-            productionUnits: Array.isArray(item.productionUnits) ? item.productionUnits.map((u: any) => ({
-              unitId: String(u.unitId ?? Math.random().toString(36)),
-              unitStatus: String(u.unitStatus ?? 'PENDING'),
-              operatorName: u.operatorName,
-              completedObservations: Array.isArray(u.completedObservations) ? u.completedObservations : [],
-              completedAt: u.completedAt ? new Date(u.completedAt) : undefined,
-            })) : Array.from({ length: Math.max(1, Number(item.quantity ?? 1)) }, (_, idx) => ({
+
+          // [FIX] Load persisted unit states from Supabase/DB to prevent overwriting with PENDING
+          let unitMap: Record<string, any> = {}
+          try {
+             unitMap = await kdsService.loadUnitStatesForOrder(oid)
+          } catch {}
+
+          items = items.map((item: any) => {
+            // Base production units (default)
+            const defaultUnits = Array.from({ length: Math.max(1, Number(item.quantity ?? 1)) }, (_, idx) => ({
               unitId: `${String(item.id)}-${idx + 1}`,
               unitStatus: 'PENDING' as ProductionUnit['unitStatus'],
               operatorName: undefined,
               completedObservations: [],
               completedAt: undefined,
-            })),
-          }))
+            }))
+
+            // Use existing units if available, otherwise default
+            const currentUnits = Array.isArray(item.productionUnits) ? item.productionUnits : defaultUnits
+
+            // Merge with persisted state
+            const mergedUnits = currentUnits.map((u: any) => {
+               // Use consistent key format: orderId:itemId:unitId
+               const key = `${oid}:${String(item.id)}:${u.unitId}`
+               const s = unitMap[key] || {}
+               return {
+                 ...u,
+                 unitId: u.unitId ?? `${String(item.id)}-1`, // Ensure unitId exists
+                 operatorName: s.operatorName || u.operatorName,
+                 unitStatus: (s.unitStatus || u.unitStatus || 'PENDING'),
+                 completedObservations: Array.isArray(s.completedObservations) ? s.completedObservations : (u.completedObservations || []),
+                 completedAt: s.completedAt ? new Date(s.completedAt) : (u.completedAt ? new Date(u.completedAt) : undefined),
+                 deliveredAt: s.deliveredAt ? new Date(s.deliveredAt) : (u.deliveredAt ? new Date(u.deliveredAt) : undefined),
+               }
+            })
+
+            return {
+              id: String(item.id ?? Math.random().toString(36)),
+              quantity: Number(item.quantity ?? 1),
+              skipKitchen: Boolean(item.skipKitchen ?? false),
+              menuItem: {
+                id: String(item.menuItem?.id ?? item.menuItemId ?? ''),
+                name: String(item.menuItem?.name ?? item.name ?? 'Item'),
+                unitDeliveryCount: Number(item.menuItem?.unitDeliveryCount ?? item.unitDeliveryCount ?? 1),
+                sla: Number(item.menuItem?.sla ?? item.sla ?? 15),
+                categoryId: String(item.menuItem?.categoryId ?? item.categoryId ?? ''),
+              },
+              productionUnits: mergedUnits
+            }
+          })
           const slaMinutes = items.reduce((sum: number, it: any) => sum + (Number(it.menuItem?.sla ?? 15) * Math.max(1, Number(it.quantity ?? 1))), 0)
           const details = getOrderDetails(String(t.order_id ?? t.orderId ?? t.id ?? ''))
           const ord: Order = {
