@@ -232,6 +232,10 @@ export default function CozinhaPage() {
     }
   }, [showDeliveryConfirmation, orderToDeliver]);
 
+import { supabase } from '../../utils/supabase'; // Adicionado import
+
+// ...
+
   const updateOrderStatus = (orderId: string, status: Order['status']) => {
     if (status === 'DELIVERED') {
       const order = orders.find(o => o.id === orderId);
@@ -264,6 +268,9 @@ export default function CozinhaPage() {
           let readyAt = order.readyAt;
           let updatedAt = order.updatedAt;
           
+          // Lógica de atualização local (Optimistic UI)
+          let nextOrder = { ...order, status, updatedAt: now };
+
           if (status === 'PREPARING' && order.status === 'NEW') {
             const updatedItems = order.items.map(item => ({
               ...item,
@@ -275,10 +282,10 @@ export default function CozinhaPage() {
             }));
             updatedAt = now; 
             showSuccess(`Pedido #${order.pin} em PREPARO.`);
-            return { ...order, status, items: updatedItems, updatedAt, readyAt: undefined }; 
+            nextOrder = { ...order, status, items: updatedItems, updatedAt, readyAt: undefined }; 
           }
           
-          if (status === 'READY' && order.status === 'PREPARING') {
+          else if (status === 'READY' && order.status === 'PREPARING') {
               readyAt = now;
               const updatedItems = order.items.map(item => ({
                   ...item,
@@ -289,26 +296,44 @@ export default function CozinhaPage() {
                   }))
               }));
               showSuccess(`Pedido #${order.pin} está PRONTO.`);
-              return { ...order, status, items: updatedItems, updatedAt: order.updatedAt, readyAt }; 
+              nextOrder = { ...order, status, items: updatedItems, updatedAt: order.updatedAt, readyAt }; 
           }
           
-          if (status === 'DELIVERED' && order.status === 'READY') {
-              // Não sobrescreva updatedAt (início do preparo); registre o tempo de entrega em deliveredAt
-              return { ...order, status, deliveredAt: now, updatedAt: order.updatedAt, readyAt }; 
+          else if (status === 'DELIVERED' && order.status === 'READY') {
+              nextOrder = { ...order, status, deliveredAt: now, updatedAt: order.updatedAt, readyAt }; 
           }
           
-          if (status === 'PREPARING' && order.status === 'READY') {
+          else if (status === 'PREPARING' && order.status === 'READY') {
               readyAt = undefined;
               showInfo(`Pedido #${order.pin} voltou para PREPARO.`);
-              return { ...order, status, updatedAt: order.updatedAt, readyAt: undefined }; 
+              nextOrder = { ...order, status, updatedAt: order.updatedAt, readyAt: undefined }; 
           }
-          if (status === 'NEW' && order.status === 'PREPARING') {
+          else if (status === 'NEW' && order.status === 'PREPARING') {
               showInfo(`Pedido #${order.pin} voltou para NOVO.`);
-              return { ...order, status, updatedAt: undefined, readyAt: undefined };
+              nextOrder = { ...order, status, updatedAt: undefined, readyAt: undefined };
           }
           
-          // Caso genérico
-          return { ...order, status, updatedAt: now, readyAt };
+          // PERSISTÊNCIA NO SUPABASE (WEB)
+          if (isOnline && supabase) {
+            supabase
+              .from('orders')
+              .update({ 
+                status: nextOrder.status, 
+                updated_at: nextOrder.updatedAt ? nextOrder.updatedAt.toISOString() : new Date().toISOString()
+              })
+              .eq('id', orderId)
+              .then(({ error }) => {
+                if (error) {
+                  console.error('Erro ao atualizar status no Supabase:', error);
+                  showError('Falha ao sincronizar status com o servidor.');
+                  // Opcional: Reverter estado local se falhar?
+                } else {
+                  console.log('Status atualizado no Supabase:', status);
+                }
+              });
+          }
+
+          return nextOrder;
         }
         return order;
       }));
