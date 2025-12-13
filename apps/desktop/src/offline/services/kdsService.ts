@@ -179,11 +179,13 @@ async function persistUnitStateDb(orderId: string, itemId: string, unitId: strin
         if (ticketId) query = query.eq('ticket_id', ticketId)
       }
 
-      const { data: existing, error: fetchError } = await query.maybeSingle()
+      const { data: existingList, error: fetchError } = await query.limit(1)
           
       if (fetchError) {
         console.error('[KDS] unit fetch error:', fetchError)
       }
+
+      const existing = existingList?.[0]
 
       // Fetch operator_id if possible, but we will save operator_name regardless
       let operatorId = null
