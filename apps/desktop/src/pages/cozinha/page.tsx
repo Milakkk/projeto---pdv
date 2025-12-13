@@ -302,8 +302,14 @@ export default function CozinhaPage() {
                 const mergedItems = items.map((it: any) => ({
                   ...it,
                   productionUnits: it.productionUnits.map((u: any) => {
+                    // Use production_unit_id key format if available
+                    // The key format in kdsService.loadUnitStatesForOrder is:
+                    // `${orderId}:${itemId}:${unitId}`
+                    // unitId here is u.unitId which is `${itemId}-${idx+1}`
+                    // This matches the format we used when saving if we passed unitId correctly
                     const key = `${ordId}:${String(it.id)}:${u.unitId}`
                     const s = unitMap[key] || {}
+                    
                     return {
                       ...u,
                       operatorName: s.operatorName || u.operatorName,
