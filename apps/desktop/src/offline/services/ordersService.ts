@@ -410,27 +410,52 @@ export async function listOrdersDetailed(limit = 100): Promise<Array<{ order: an
       if (ordErr) throw ordErr
       const ids = (ords || []).map(r => String(r.id))
       if (!ids.length) return []
+      
       const { data: itemsData, error: itemsErr } = await supabase.from('order_items').select('id, order_id, product_id, product_name, quantity, unit_price_cents, total_cents').in('order_id', ids)
       if (itemsErr) throw itemsErr
+      
       const { data: paysData, error: paysErr } = await supabase.from('payments').select('order_id, method, amount_cents, change_cents').in('order_id', ids)
       if (paysErr) throw paysErr
+      
+      const { data: timesData } = await supabase.from('kds_phase_times').select('*').in('order_id', ids)
+      
       const prodIds = Array.from(new Set((itemsData || []).map(it => String(it.product_id)).filter(id => id && id !== 'null' && id !== 'undefined')))
       const { data: prods } = prodIds.length > 0 ? await supabase.from('products').select('id, category_id, name').in('id', prodIds) : { data: [] as any[] }
       const catByProd: Record<string, string | null> = {}
       for (const p of (prods || [])) catByProd[String(p.id)] = (p as any).category_id ?? null
+      
       const itemsByOrder: Record<string, any[]> = {}
       for (const it of (itemsData || [])) {
         const oid = String(it.order_id)
         itemsByOrder[oid] = itemsByOrder[oid] || []
         itemsByOrder[oid].push({ ...it, category_id: catByProd[String(it.product_id)] ?? null })
       }
+      
       const paysByOrder: Record<string, any[]> = {}
       for (const p of (paysData || [])) {
         const oid = String(p.order_id)
         paysByOrder[oid] = paysByOrder[oid] || []
         paysByOrder[oid].push(p)
       }
-      return (ords || []).map(r => ({ order: r, items: itemsByOrder[String(r.id)] || [], payments: paysByOrder[String(r.id)] || [], details: { pin: (r as any).pin, password: (r as any).password } }))
+      
+      const timesByOrder: Record<string, any> = {}
+      for (const t of (timesData || [])) {
+        const oid = String(t.order_id)
+        timesByOrder[oid] = {
+            newStart: t.new_start,
+            preparingStart: t.preparing_start,
+            readyAt: t.ready_at,
+            deliveredAt: t.delivered_at
+        }
+      }
+      
+      return (ords || []).map(r => ({ 
+        order: r, 
+        items: itemsByOrder[String(r.id)] || [], 
+        payments: paysByOrder[String(r.id)] || [], 
+        details: { pin: (r as any).pin, password: (r as any).password },
+        phaseTimes: timesByOrder[String(r.id)]
+      }))
     }
     return []
   } catch { return [] }
