@@ -141,6 +141,8 @@ function OrderTimeStatus({ order }: { order: Order }) {
     // CORREÇÃO: Se estiver em NEW, cozinha = espera. Se > NEW, cozinha = espera + preparo
     const currentKitchenEndTime = order.status === 'PREPARING' ? now : (order.status === 'NEW' ? now : productionEndTime);
     const tempoCozinhaMs = currentKitchenEndTime - createdAt;
+    // Se o pedido estiver em NEW, a métrica de "Cozinha (SLA)" deve ser apenas o tempo de espera
+    // Se já estiver em PREPARING ou READY/DELIVERED, é o tempo total
     const tempoCozinha = Math.floor(tempoCozinhaMs / 1000);
     const wasLate = (tempoCozinha / 60) > order.slaMinutes;
     

@@ -54,7 +54,7 @@ function OrderTimeStatus({ order }: { order: Order }) {
       const isOverdueTotal = (totalTimeSeconds / 60) > order.slaMinutes;
       return { isOverdueTotal, totalKitchenTimeSeconds: totalTimeSeconds };
     }
-    // Se está NEW ou PREPARING, o tempo total de cozinha é o tempo decorrido do timer (que começa em createdAt)
+    // Se está NEW, tempo cozinha = tempo espera. Se PREPARING, tempo cozinha = espera + preparo
     return { isOverdueTotal: isOverdue, totalKitchenTimeSeconds: timeElapsed };
   }, [order, isOverdue, timeElapsed]);
 
