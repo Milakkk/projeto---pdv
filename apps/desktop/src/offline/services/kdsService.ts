@@ -322,31 +322,51 @@ export async function enqueueTicket(params: { orderId: UUID; station?: string | 
 
 export async function setTicketStatus(id: UUID, status: 'queued' | 'prep' | 'ready' | 'done') {
   const now = new Date().toISOString()
+  console.log('[KDS] setTicketStatus called', { id, status, now })
   if ((await import('../../utils/supabase')).supabase) {
     const { supabase } = await import('../../utils/supabase')
     const map = { queued: 'NEW', prep: 'PREPARING', ready: 'READY', done: 'DELIVERED' } as Record<string, string>
-    const { data: tk } = await supabase
-      .from('kds_tickets')
-      .select('order_id')
-      .eq('id', id)
-      .maybeSingle()
-    const orderId = tk?.order_id ? String(tk.order_id) : undefined
-    await supabase
-      .from('kds_tickets')
-      .update({ status: map[status], updated_at: now })
-      .eq('id', id)
-    // FIXED: Update orders table for ALL statuses, not just 'done'
-    if (orderId) {
-      const orderUpdate: Record<string, any> = { status: map[status], updated_at: now }
-      if (status === 'ready') orderUpdate.ready_at = now
-      if (status === 'done') {
-        orderUpdate.delivered_at = now
-        orderUpdate.closed_at = now
+    console.log('[KDS] Updating supabase kds_tickets', { id, status: map[status] })
+    try {
+      const { data: tk, error: tkErr } = await supabase
+        .from('kds_tickets')
+        .select('order_id')
+        .eq('id', id)
+        .maybeSingle()
+
+      if (tkErr) console.error('[KDS] Error fetching ticket for update:', tkErr)
+
+      const orderId = tk?.order_id ? String(tk.order_id) : undefined
+
+      const { error: updateErr } = await supabase
+        .from('kds_tickets')
+        .update({ status: map[status], updated_at: now })
+        .eq('id', id)
+
+      if (updateErr) {
+        console.error('[KDS] Error updating kds_tickets status:', updateErr)
+      } else {
+        console.log('[KDS] Successfully updated kds_tickets status')
       }
-      await supabase
-        .from('orders')
-        .update(orderUpdate)
-        .eq('id', orderId)
+
+      // FIXED: Update orders table for ALL statuses, not just 'done'
+      if (orderId) {
+        console.log('[KDS] Updating associated order', { orderId, status: map[status] })
+        const orderUpdate: Record<string, any> = { status: map[status], updated_at: now }
+        if (status === 'ready') orderUpdate.ready_at = now
+        if (status === 'done') {
+          orderUpdate.delivered_at = now
+          orderUpdate.closed_at = now
+        }
+        const { error: orderErr } = await supabase
+          .from('orders')
+          .update(orderUpdate)
+          .eq('id', orderId)
+
+        if (orderErr) console.error('[KDS] Error updating order status:', orderErr)
+      }
+    } catch (err: any) {
+      console.error('[KDS] Unexpected error in setTicketStatus supabase block:', err)
     }
     // return - removido para garantir que o estado local também seja atualizado (optimistic/backup)
   }
@@ -485,6 +505,33 @@ export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 
 
     if (localTickets.length > 0) {
       const enrichedLocal = [] as any[]
+      // === CORREÇÃO DE REVERSÃO ===
+      // Verifica os tickets do Supabase contra o estado local real.
+      // Se já veio do Supabase mas o local diz que tem outro status mais recente, devemos confiar no local.
+      // Isso significa que se `tickets` tem um ID que localmente mudou de status, esse ID deve sair da lista de retornos deste status.
+      if (tickets.length > 0) {
+        const ids = tickets.map(t => t.id).map(id => `'${id}'`).join(',')
+        try {
+          // Busca estado atual local desses tickets
+          const localStates = await query(`SELECT id, status, pending_sync, updated_at FROM kds_tickets WHERE id IN (${ids})`)
+          const localMap = (localStates?.rows ?? []).reduce((acc: any, row: any) => ({ ...acc, [row.id]: row }), {})
+
+          // Filtra tickets
+          tickets = tickets.filter(t => {
+            const loc = localMap[t.id]
+            if (!loc) return true // Sem estado local, confia no remoto
+
+            // Se local tem status diferente E (pendente ou mais novo), o remoto está obsoleto
+            // O filtro da função é `status` (parametro). ex: 'queued'
+            // Se `loc.status` (ex: 'prep') != `status` ('queued'), então ele NÃO deveria estar aqui nesta lista de 'queued'.
+            if (loc.status !== status && (loc.pending_sync || new Date(loc.updated_at).getTime() >= new Date(t.updatedAt || t.updated_at).getTime())) {
+              return false // Remove da lista pois não pertence a este status
+            }
+            return true
+          })
+        } catch (e) { console.error('Error verifying local states', e) }
+      }
+
       for (const t of localTickets) {
         // Evita duplicatas se já veio do Supabase
         if (tickets.some(existing => String(existing.id) === String(t.id))) continue
