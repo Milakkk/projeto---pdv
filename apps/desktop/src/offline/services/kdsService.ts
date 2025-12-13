@@ -197,10 +197,13 @@ async function persistUnitStateDb(orderId: string, itemId: string, unitId: strin
       const ticketId = ticket?.id ?? null
 
       // Look for existing record using production_unit_id if available, or order_item_id fallback
+      // NOTE: Using type assertion or raw query to bypass stale Typescript definitions if needed
       let query = supabase.from('kds_unit_states').select('id')
       
       // Use the specific production unit ID for precision
       if (unitId) {
+        // [FIX] Ensure we handle the "column does not exist" error gracefully by falling back if needed, 
+        // but for now we assume migration is applied.
         query = query.eq('production_unit_id', unitId).eq('order_item_id', itemId)
       } else {
         query = query.eq('order_item_id', itemId)
@@ -209,7 +212,13 @@ async function persistUnitStateDb(orderId: string, itemId: string, unitId: strin
 
       const { data: existing, error: fetchError } = await query.maybeSingle()
           
-      if (fetchError) console.error('[KDS-DEBUG] persistUnitStateDb: unit fetch error:', fetchError)
+      if (fetchError) {
+        console.error('[KDS-DEBUG] persistUnitStateDb: unit fetch error:', fetchError)
+        // Check specifically for "column does not exist" which means migration didn't run
+        if (fetchError.message?.includes('does not exist')) {
+            console.error('[KDS-CRITICAL] Database migration missing! Please run migration 0005.')
+        }
+      }
 
       // Fetch operator_id if possible, but we will save operator_name regardless
       let operatorId = null
@@ -244,7 +253,7 @@ async function persistUnitStateDb(orderId: string, itemId: string, unitId: strin
         const { error } = await supabase.from('kds_unit_states').update(payload).eq('id', existing.id)
         opError = error
       } else {
-        console.log('[KDS-DEBUG] persistUnitStateDb: Inserting Supabase record')
+        console.log('[KDS-DEBUG] persistUnitStateDb: Inserting Supabase record', payload)
         const { error } = await supabase.from('kds_unit_states').insert(payload)
         opError = error
       }
