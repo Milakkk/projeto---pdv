@@ -70,9 +70,11 @@ export async function getPhaseTimes(orderId: string): Promise<any> {
 
 async function setPhaseTime(orderId: string, patch: any) {
   const now = new Date().toISOString()
+  console.log('[KDS-DEBUG] setPhaseTime called', { orderId, patch, now })
   
   // 1. Try SQLite (Local DB)
   try {
+    console.log('[KDS-DEBUG] setPhaseTime: Trying SQLite...')
     await query(
       'INSERT INTO kds_phase_times (order_id, new_start, preparing_start, ready_at, delivered_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(order_id) DO UPDATE SET new_start=COALESCE(excluded.new_start, new_start), preparing_start=COALESCE(excluded.preparing_start, preparing_start), ready_at=COALESCE(excluded.ready_at, ready_at), delivered_at=COALESCE(excluded.delivered_at, delivered_at), updated_at=excluded.updated_at',
       [
@@ -84,19 +86,27 @@ async function setPhaseTime(orderId: string, patch: any) {
         now,
       ],
     )
+    console.log('[KDS-DEBUG] setPhaseTime: SQLite success')
   } catch (err) {
-    // console.warn('[KDS] SQLite phase time error:', err)
+    console.warn('[KDS-DEBUG] setPhaseTime: SQLite error:', err)
   }
 
   // 2. Try Supabase (Web Mode)
   if (supabase) {
     try {
+      console.log('[KDS-DEBUG] setPhaseTime: Trying Supabase...')
       // Check if record exists first to avoid UPSERT issues with constraints or missing columns
-      const { data: existing } = await supabase
+      const { data: existing, error: fetchError } = await supabase
         .from('kds_phase_times')
         .select('id')
         .eq('order_id', orderId)
         .maybeSingle()
+
+      if (fetchError) {
+        console.error('[KDS-DEBUG] setPhaseTime: Supabase fetch error:', fetchError)
+      } else {
+        console.log('[KDS-DEBUG] setPhaseTime: Supabase fetch result:', existing)
+      }
 
       const payload: any = {
         order_id: orderId,
@@ -108,14 +118,28 @@ async function setPhaseTime(orderId: string, patch: any) {
       if (patch?.readyAt) payload.ready_at = patch.readyAt
       if (patch?.deliveredAt) payload.delivered_at = patch.deliveredAt
 
+      let opError = null;
       if (existing?.id) {
-        await supabase.from('kds_phase_times').update(payload).eq('id', existing.id)
+        console.log('[KDS-DEBUG] setPhaseTime: Updating existing record', existing.id, payload)
+        const { error } = await supabase.from('kds_phase_times').update(payload).eq('id', existing.id)
+        opError = error
       } else {
-        await supabase.from('kds_phase_times').insert(payload)
+        console.log('[KDS-DEBUG] setPhaseTime: Inserting new record', payload)
+        const { error } = await supabase.from('kds_phase_times').insert(payload)
+        opError = error
       }
+
+      if (opError) {
+        console.error('[KDS-DEBUG] setPhaseTime: Supabase update/insert error:', opError)
+      } else {
+        console.log('[KDS-DEBUG] setPhaseTime: Supabase success')
+      }
+
     } catch (err) {
-      console.error('[KDS] Supabase phase time persistence error:', err)
+      console.error('[KDS-DEBUG] setPhaseTime: Supabase exception:', err)
     }
+  } else {
+    console.log('[KDS-DEBUG] setPhaseTime: Supabase client not available')
   }
 
   // 3. Fallback to LocalStorage
@@ -126,6 +150,7 @@ async function setPhaseTime(orderId: string, patch: any) {
     const next = { ...cur, ...patch }
     obj[String(orderId)] = next
     localStorage.setItem('kdsPhaseTimes', JSON.stringify(obj))
+    console.log('[KDS-DEBUG] setPhaseTime: LocalStorage updated')
   } catch { }
 
   // 4. LAN Sync
@@ -142,92 +167,104 @@ async function persistUnitStateDb(orderId: string, itemId: string, unitId: strin
     : null
   const completedAt = patch?.completedAt ?? null
   const deliveredAt = patch?.deliveredAt ?? null
+  
+  console.log('[KDS-DEBUG] persistUnitStateDb called', { id, orderId, itemId, unitId, patch })
+
   try {
+    console.log('[KDS-DEBUG] persistUnitStateDb: Trying SQLite...')
     await query(
       'INSERT INTO kds_unit_states (id, order_id, item_id, unit_id, operator_name, unit_status, completed_observations_json, completed_at, delivered_at, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET operator_name=COALESCE(excluded.operator_name, operator_name), unit_status=COALESCE(excluded.unit_status, unit_status), completed_observations_json=COALESCE(excluded.completed_observations_json, completed_observations_json), completed_at=COALESCE(excluded.completed_at, completed_at), delivered_at=COALESCE(excluded.delivered_at, delivered_at), updated_at=excluded.updated_at, pending_sync=excluded.pending_sync',
       [id, orderId, itemId, unitId, operatorName, unitStatus, completedObservationsJson, completedAt, deliveredAt, now, 1, 1],
     )
-  } catch {
-    // Web Mode (Supabase)
-    if (supabase) {
-      try {
-        // First get the ticket_id from order_id since Supabase schema requires ticket_id
-        const { data: ticket } = await supabase
-          .from('kds_tickets')
-          .select('id')
-          .eq('order_id', orderId)
-          .maybeSingle()
-        
-        const ticketId = ticket?.id
-        
-        // Only proceed if we have a valid ticketId, otherwise we can't satisfy the FK constraint
-        if (ticketId) {
-          // We need to fetch operator_id if operatorName is provided
-          let operatorId = null
-          if (operatorName) {
-            const { data: op } = await supabase
-              .from('kitchen_operators')
-              .select('id')
-              .eq('name', operatorName)
-              .maybeSingle()
-            operatorId = op?.id
-          }
-
-          // Use a UUID for ID instead of the composite string if possible, or try to find existing record
-          // Since we can't change the ID logic easily without breaking local state mapping, 
-          // we should look up if a record exists by composite keys (ticket_id + order_item_id)
-          // But wait, the schema has id as UUID PRIMARY KEY.
-          // We cannot pass the composite string `${orderId}:${itemId}:${unitId}` as UUID.
-          // Strategy: Find existing record by business keys, or insert new with auto-gen UUID.
-          
-          const { data: existing } = await supabase
-            .from('kds_unit_states')
-            .select('id')
-            .eq('ticket_id', ticketId)
-            .eq('order_item_id', itemId) // Assuming itemId is the order_item_id UUID
-            // We don't have unit_id column in Supabase schema shown in search, but we might need it? 
-            // The search result showed: ticket_id, order_item_id, status, operator_id. 
-            // It did NOT show 'unit_id' column in kds_unit_states table definition.
-            // If unit_id is missing in DB, we can't save it. 
-            // Assuming 1 item = 1 unit for now or that order_item_id is sufficient uniqueness if split.
-            .maybeSingle()
-            
-          const payload: any = {
-            ticket_id: ticketId,
-            order_item_id: itemId,
-            status: unitStatus || 'PENDING',
-            updated_at: now,
-            version: 1,
-            pending_sync: false
-          }
-          
-          if (operatorId) payload.operator_id = operatorId
-          if (completedAt) payload.completed_at = completedAt
-          // delivered_at is not in the schema result I saw, but let's check if it accepts it or we ignore it
-          // Schema showed: started_at, completed_at. No delivered_at.
-          
-          if (existing?.id) {
-            await supabase.from('kds_unit_states').update(payload).eq('id', existing.id)
-          } else {
-            await supabase.from('kds_unit_states').insert(payload)
-          }
-        }
-      } catch (err) {
-        console.error('[KDS] Error persisting unit state to Supabase:', err)
-      }
-    }
-
-    // LocalStorage Fallback
-    try {
-      const raw = localStorage.getItem('kdsUnitState')
-      const state = raw ? JSON.parse(raw) : {}
-      const key = `${orderId}:${itemId}:${unitId}`
-      const current = state[key] || {}
-      const next = { ...current, ...patch }
-      state[key] = next
-      localStorage.setItem('kdsUnitState', JSON.stringify(state))
-    } catch { }
+    console.log('[KDS-DEBUG] persistUnitStateDb: SQLite success')
+  } catch (err) {
+    console.warn('[KDS-DEBUG] persistUnitStateDb: SQLite error:', err)
   }
+    
+  // Web Mode (Supabase)
+  if (supabase) {
+    try {
+      console.log('[KDS-DEBUG] persistUnitStateDb: Trying Supabase...')
+      // First get the ticket_id from order_id since Supabase schema requires ticket_id
+      const { data: ticket, error: ticketError } = await supabase
+        .from('kds_tickets')
+        .select('id')
+        .eq('order_id', orderId)
+        .maybeSingle()
+      
+      if (ticketError) console.error('[KDS-DEBUG] persistUnitStateDb: ticket fetch error:', ticketError)
+
+      const ticketId = ticket?.id
+      
+      // Only proceed if we have a valid ticketId, otherwise we can't satisfy the FK constraint
+      if (ticketId) {
+        // We need to fetch operator_id if operatorName is provided
+        let operatorId = null
+        if (operatorName) {
+          const { data: op } = await supabase
+            .from('kitchen_operators')
+            .select('id')
+            .eq('name', operatorName)
+            .maybeSingle()
+          operatorId = op?.id
+        }
+
+        const { data: existing, error: fetchError } = await supabase
+          .from('kds_unit_states')
+          .select('id')
+          .eq('ticket_id', ticketId)
+          .eq('order_item_id', itemId)
+          .maybeSingle()
+          
+        if (fetchError) console.error('[KDS-DEBUG] persistUnitStateDb: unit fetch error:', fetchError)
+
+        const payload: any = {
+          ticket_id: ticketId,
+          order_item_id: itemId,
+          status: unitStatus || 'PENDING',
+          updated_at: now,
+          version: 1,
+          pending_sync: false
+        }
+        
+        if (operatorId) payload.operator_id = operatorId
+        if (completedAt) payload.completed_at = completedAt
+        
+        let opError = null;
+        if (existing?.id) {
+          console.log('[KDS-DEBUG] persistUnitStateDb: Updating Supabase record', existing.id)
+          const { error } = await supabase.from('kds_unit_states').update(payload).eq('id', existing.id)
+          opError = error
+        } else {
+          console.log('[KDS-DEBUG] persistUnitStateDb: Inserting Supabase record')
+          const { error } = await supabase.from('kds_unit_states').insert(payload)
+          opError = error
+        }
+        
+        if (opError) {
+          console.error('[KDS-DEBUG] persistUnitStateDb: Supabase error:', opError)
+        } else {
+          console.log('[KDS-DEBUG] persistUnitStateDb: Supabase success')
+        }
+      } else {
+        console.warn('[KDS-DEBUG] persistUnitStateDb: Ticket not found for orderId', orderId)
+      }
+    } catch (err) {
+      console.error('[KDS-DEBUG] Error persisting unit state to Supabase:', err)
+    }
+  }
+
+  // LocalStorage Fallback
+  try {
+    const raw = localStorage.getItem('kdsUnitState')
+    const state = raw ? JSON.parse(raw) : {}
+    const key = `${orderId}:${itemId}:${unitId}`
+    const current = state[key] || {}
+    const next = { ...current, ...patch }
+    state[key] = next
+    localStorage.setItem('kdsUnitState', JSON.stringify(state))
+    console.log('[KDS-DEBUG] persistUnitStateDb: LocalStorage updated')
+  } catch { }
 }
 
 export async function loadUnitStatesForOrder(orderId: string): Promise<Record<string, any>> {
