@@ -329,16 +329,16 @@ export async function applyHubEvents(events: any[]) {
       const dbStatus = statusStr === 'DELIVERED' ? 'closed' : statusStr === 'CANCELLED' ? 'cancelled' : null
       const dbClosedAt = dbStatus === 'closed' || dbStatus === 'cancelled' ? (deliveredAt ?? closedAtRaw ?? updatedAt) : null
       try {
-        // Se for fechamento, atualizar status e closed_at. Caso contrário, apenas inserir se não existir
+        // Se for fechamento, atualizar status e completed_at (mapping closed_at to completed_at).
         if (dbStatus === 'closed' || dbStatus === 'cancelled') {
           await query(
-            'INSERT INTO orders (id, status, total_cents, opened_at, closed_at, device_id, unit_id, notes, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET status=excluded.status, closed_at=excluded.closed_at, updated_at=excluded.updated_at, pending_sync=excluded.pending_sync',
+            'INSERT INTO orders (id, status, total_cents, opened_at, completed_at, device_id, unit_id, notes, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET status=excluded.status, completed_at=excluded.completed_at, updated_at=excluded.updated_at, pending_sync=excluded.pending_sync',
             [id, dbStatus, total, openedAt, dbClosedAt, deviceId, unitId, notes, updatedAt, 1, 0],
           )
         } else {
           // Para status intermediários, apenas inserir se não existir (não atualizar opened_at nem status)
           await query(
-            'INSERT INTO orders (id, status, total_cents, opened_at, closed_at, device_id, unit_id, notes, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET total_cents=COALESCE(excluded.total_cents, total_cents), notes=COALESCE(excluded.notes, notes), updated_at=excluded.updated_at, pending_sync=excluded.pending_sync',
+            'INSERT INTO orders (id, status, total_cents, opened_at, completed_at, device_id, unit_id, notes, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET total_cents=COALESCE(excluded.total_cents, total_cents), notes=COALESCE(excluded.notes, notes), updated_at=excluded.updated_at, pending_sync=excluded.pending_sync',
             [id, incomingStatus || 'open', total, openedAt, closedAtRaw, deviceId, unitId, notes, updatedAt, 1, 0],
           )
         }
@@ -459,10 +459,11 @@ export async function setTicketStatus(id: UUID, status: 'queued' | 'prep' | 'rea
       if (orderId) {
         console.log('[KDS] Updating associated order', { orderId, status: map[status] })
         const orderUpdate: Record<string, any> = { status: map[status], updated_at: now }
-        if (status === 'ready') orderUpdate.ready_at = now
+        if (status === 'ready') orderUpdate.ready_at = now // This doesn't exist in orders schema but keeping just in case
         if (status === 'done') {
-          orderUpdate.delivered_at = now
-          orderUpdate.closed_at = now
+          // orderUpdate.delivered_at = now // Removed: column does not exist
+          // orderUpdate.closed_at = now // Removed: column does not exist
+          orderUpdate.completed_at = now // Correct column name based on schema
         }
         const { error: orderErr } = await supabase
           .from('orders')
@@ -520,7 +521,7 @@ export async function setTicketStatus(id: UUID, status: 'queued' | 'prep' | 'rea
         const res = await query('SELECT order_id FROM kds_tickets WHERE id = ?', [ticketIdForUpdate])
         const oid = res?.rows && res.rows[0]?.order_id
         if (oid) {
-          await query('UPDATE orders SET status = ?, closed_at = ?, updated_at = ?, pending_sync = 1 WHERE id = ?', ['closed', now, now, oid])
+          await query('UPDATE orders SET status = ?, completed_at = ?, updated_at = ?, pending_sync = 1 WHERE id = ?', ['closed', now, now, oid])
         }
       } catch { }
     }

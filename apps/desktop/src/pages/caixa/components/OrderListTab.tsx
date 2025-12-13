@@ -129,12 +129,18 @@ function OrderTimeStatus({ order }: { order: Order }) {
     // 2. Tempo de Preparo (PREPARING): Tempo entre início do preparo e fim da produção
     // Se o pedido está em PREPARING, o tempo de preparo é calculado em tempo real (usando now).
     // Se o pedido já saiu de PREPARING, o tempo de preparo é fixo (usando productionEndTime).
-    const currentProductionEndTime = order.status === 'PREPARING' ? now : productionEndTime;
-    const tempoPreparoMs = currentProductionEndTime - preparingStartTime;
+    // CORREÇÃO: Se estiver em NEW, tempo de preparo é 0
+    let tempoPreparoMs = 0;
+    if (order.status !== 'NEW') {
+        const currentProductionEndTime = order.status === 'PREPARING' ? now : productionEndTime;
+        tempoPreparoMs = currentProductionEndTime - preparingStartTime;
+    }
     const tempoPreparo = Math.floor(tempoPreparoMs / 1000);
     
     // 3. Tempo Cozinha (Total NEW + PREPARING): Tempo entre criação e fim da produção
-    const tempoCozinhaMs = currentProductionEndTime - createdAt;
+    // CORREÇÃO: Se estiver em NEW, cozinha = espera. Se > NEW, cozinha = espera + preparo
+    const currentKitchenEndTime = order.status === 'PREPARING' ? now : (order.status === 'NEW' ? now : productionEndTime);
+    const tempoCozinhaMs = currentKitchenEndTime - createdAt;
     const tempoCozinha = Math.floor(tempoCozinhaMs / 1000);
     const wasLate = (tempoCozinha / 60) > order.slaMinutes;
     
