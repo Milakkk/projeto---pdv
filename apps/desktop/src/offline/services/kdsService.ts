@@ -71,11 +71,9 @@ export async function getPhaseTimes(orderId: string): Promise<any> {
 
 async function setPhaseTime(orderId: string, patch: any) {
   const now = new Date().toISOString()
-  console.log('[KDS-DEBUG] setPhaseTime called', { orderId, patch, now })
   
   // 1. Try SQLite (Local DB)
   try {
-    console.log('[KDS-DEBUG] setPhaseTime: Trying SQLite...')
     await query(
       'INSERT INTO kds_phase_times (order_id, new_start, preparing_start, ready_at, delivered_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(order_id) DO UPDATE SET new_start=COALESCE(excluded.new_start, new_start), preparing_start=COALESCE(excluded.preparing_start, preparing_start), ready_at=COALESCE(excluded.ready_at, ready_at), delivered_at=COALESCE(excluded.delivered_at, delivered_at), updated_at=excluded.updated_at',
       [
@@ -87,27 +85,19 @@ async function setPhaseTime(orderId: string, patch: any) {
         now,
       ],
     )
-    console.log('[KDS-DEBUG] setPhaseTime: SQLite success')
   } catch (err) {
-    console.warn('[KDS-DEBUG] setPhaseTime: SQLite error:', err)
+    // console.warn('[KDS] SQLite phase time error:', err)
   }
 
   // 2. Try Supabase (Web Mode)
   if (supabase) {
     try {
-      console.log('[KDS-DEBUG] setPhaseTime: Trying Supabase...')
       // Check if record exists first to avoid UPSERT issues with constraints or missing columns
-      const { data: existing, error: fetchError } = await supabase
+      const { data: existing } = await supabase
         .from('kds_phase_times')
         .select('id')
         .eq('order_id', orderId)
         .maybeSingle()
-
-      if (fetchError) {
-        console.error('[KDS-DEBUG] setPhaseTime: Supabase fetch error:', fetchError)
-      } else {
-        console.log('[KDS-DEBUG] setPhaseTime: Supabase fetch result:', existing)
-      }
 
       const payload: any = {
         order_id: orderId,
@@ -119,28 +109,14 @@ async function setPhaseTime(orderId: string, patch: any) {
       if (patch?.readyAt) payload.ready_at = patch.readyAt
       if (patch?.deliveredAt) payload.delivered_at = patch.deliveredAt
 
-      let opError = null;
       if (existing?.id) {
-        console.log('[KDS-DEBUG] setPhaseTime: Updating existing record', existing.id, payload)
-        const { error } = await supabase.from('kds_phase_times').update(payload).eq('id', existing.id)
-        opError = error
+        await supabase.from('kds_phase_times').update(payload).eq('id', existing.id)
       } else {
-        console.log('[KDS-DEBUG] setPhaseTime: Inserting new record', payload)
-        const { error } = await supabase.from('kds_phase_times').insert(payload)
-        opError = error
+        await supabase.from('kds_phase_times').insert(payload)
       }
-
-      if (opError) {
-        console.error('[KDS-DEBUG] setPhaseTime: Supabase update/insert error:', opError)
-      } else {
-        console.log('[KDS-DEBUG] setPhaseTime: Supabase success')
-      }
-
     } catch (err) {
-      console.error('[KDS-DEBUG] setPhaseTime: Supabase exception:', err)
+      console.error('[KDS] Supabase phase time persistence error:', err)
     }
-  } else {
-    console.log('[KDS-DEBUG] setPhaseTime: Supabase client not available')
   }
 
   // 3. Fallback to LocalStorage
@@ -151,7 +127,6 @@ async function setPhaseTime(orderId: string, patch: any) {
     const next = { ...cur, ...patch }
     obj[String(orderId)] = next
     localStorage.setItem('kdsPhaseTimes', JSON.stringify(obj))
-    console.log('[KDS-DEBUG] setPhaseTime: LocalStorage updated')
   } catch { }
 
   // 4. LAN Sync
@@ -169,24 +144,18 @@ async function persistUnitStateDb(orderId: string, itemId: string, unitId: strin
   const completedAt = patch?.completedAt ?? null
   const deliveredAt = patch?.deliveredAt ?? null
   
-  console.log('[KDS-DEBUG] persistUnitStateDb called', { id, orderId, itemId, unitId, patch })
-
   try {
-    console.log('[KDS-DEBUG] persistUnitStateDb: Trying SQLite...')
     await query(
       'INSERT INTO kds_unit_states (id, order_id, item_id, unit_id, operator_name, unit_status, completed_observations_json, completed_at, delivered_at, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET operator_name=COALESCE(excluded.operator_name, operator_name), unit_status=COALESCE(excluded.unit_status, unit_status), completed_observations_json=COALESCE(excluded.completed_observations_json, completed_observations_json), completed_at=COALESCE(excluded.completed_at, completed_at), delivered_at=COALESCE(excluded.delivered_at, delivered_at), updated_at=excluded.updated_at, pending_sync=excluded.pending_sync',
       [id, orderId, itemId, unitId, operatorName, unitStatus, completedObservationsJson, completedAt, deliveredAt, now, 1, 1],
     )
-    console.log('[KDS-DEBUG] persistUnitStateDb: SQLite success')
   } catch (err) {
-    console.warn('[KDS-DEBUG] persistUnitStateDb: SQLite error:', err)
+    // console.warn('[KDS] SQLite error:', err)
   }
     
   // Web Mode (Supabase)
   if (supabase) {
     try {
-      console.log('[KDS-DEBUG] persistUnitStateDb: Trying Supabase...')
-      
       // Try to find ticket_id, but don't block if missing (we have order_id now)
       const { data: ticket } = await supabase
         .from('kds_tickets')
@@ -213,11 +182,7 @@ async function persistUnitStateDb(orderId: string, itemId: string, unitId: strin
       const { data: existing, error: fetchError } = await query.maybeSingle()
           
       if (fetchError) {
-        console.error('[KDS-DEBUG] persistUnitStateDb: unit fetch error:', fetchError)
-        // Check specifically for "column does not exist" which means migration didn't run
-        if (fetchError.message?.includes('does not exist')) {
-            console.error('[KDS-CRITICAL] Database migration missing! Please run migration 0005.')
-        }
+        console.error('[KDS] unit fetch error:', fetchError)
       }
 
       // Fetch operator_id if possible, but we will save operator_name regardless
@@ -247,24 +212,13 @@ async function persistUnitStateDb(orderId: string, itemId: string, unitId: strin
       if (operatorId) payload.operator_id = operatorId
       if (completedAt) payload.completed_at = completedAt
       
-      let opError = null;
       if (existing?.id) {
-        console.log('[KDS-DEBUG] persistUnitStateDb: Updating Supabase record', existing.id)
-        const { error } = await supabase.from('kds_unit_states').update(payload).eq('id', existing.id)
-        opError = error
+        await supabase.from('kds_unit_states').update(payload).eq('id', existing.id)
       } else {
-        console.log('[KDS-DEBUG] persistUnitStateDb: Inserting Supabase record', payload)
-        const { error } = await supabase.from('kds_unit_states').insert(payload)
-        opError = error
-      }
-      
-      if (opError) {
-        console.error('[KDS-DEBUG] persistUnitStateDb: Supabase error:', opError)
-      } else {
-        console.log('[KDS-DEBUG] persistUnitStateDb: Supabase success')
+        await supabase.from('kds_unit_states').insert(payload)
       }
     } catch (err) {
-      console.error('[KDS-DEBUG] Error persisting unit state to Supabase:', err)
+      console.error('[KDS] Error persisting unit state to Supabase:', err)
     }
   }
 
@@ -277,7 +231,6 @@ async function persistUnitStateDb(orderId: string, itemId: string, unitId: strin
     const next = { ...current, ...patch }
     state[key] = next
     localStorage.setItem('kdsUnitState', JSON.stringify(state))
-    console.log('[KDS-DEBUG] persistUnitStateDb: LocalStorage updated')
   } catch { }
 }
 
@@ -303,12 +256,14 @@ export async function loadUnitStatesForOrder(orderId: string): Promise<Record<st
         .eq('order_id', orderId)
       const out: Record<string, any> = {}
       for (const r of (data || [])) {
-        const key = `${String(r.order_id)}:${String(r.item_id)}:${String(r.unit_id)}`
+        // [FIX] Use new columns for correct key mapping
+        const unitId = r.production_unit_id || r.unit_id
+        const key = `${String(r.order_id)}:${String(r.order_item_id || r.item_id)}:${String(unitId)}`
         out[key] = {
           operatorName: r.operator_name ?? undefined,
-          unitStatus: r.unit_status ?? undefined,
+          unitStatus: r.status || r.unit_status || undefined,
           completedObservations: (() => { try { const arr = JSON.parse(String(r.completed_observations_json ?? 'null')); return Array.isArray(arr) ? arr : [] } catch { return [] } })(),
-          completedAt: r.completed_at ?? undefined,
+          completedAt: r.completed_at || r.updated_at || undefined,
         }
       }
       return out
