@@ -568,6 +568,18 @@ export default function CozinhaPage() {
           kdsService.listTicketsByStatus('ready'),
           kdsService.listTicketsByStatus('done'),
         ]);
+
+        console.log('[DEBUG] fetchTickets counts:', {
+          queued: tkQueued?.length,
+          prep: tkPrep?.length,
+          ready: tkReady?.length,
+          done: tkDone?.length
+        });
+
+        if (tkPrep && tkPrep.length > 0) {
+            console.log('[DEBUG] Prep tickets IDs:', tkPrep.map((t: any) => t.id || t.ticketId));
+        }
+
         const tk = ([] as any[]).concat(tkQueued || [], tkPrep || [], tkReady || [], tkDone || []);
         if (!mounted || !Array.isArray(tk)) return;
         const supabaseItemsCache: Record<string, any[]> = {};
@@ -777,6 +789,7 @@ export default function CozinhaPage() {
     // Atualiza status via serviço KDS PRIMEIRO, aguarda confirmação, depois atualiza UI
     (async () => {
       try {
+        console.log('[DEBUG] updateOrderStatus called', { orderId, status });
         // Correção CRÍTICA: NEW → queued, PREPARING → prep, READY → ready, DELIVERED → done
         const mapToKds = (s: Order['status']) => {
           if (s === 'NEW') return 'queued';
@@ -790,12 +803,17 @@ export default function CozinhaPage() {
         
         // Tenta usar Supabase diretamente se disponível (Web Mode)
         if (isOnline) {
+            console.log('[DEBUG] isOnline=true, trying Supabase direct update');
             const { supabase } = await import('../../utils/supabase');
             if (supabase) {
-              const kdsStatus = mapToKds(status);
+              // Fix: Supabase expects 'PREPARING', 'NEW', 'READY', 'DELIVERED' in kds_tickets
+              // But mapToKds returns 'prep', 'queued', etc.
+              // We should use the uppercase status for the DB value to match kdsService expectations.
+              const dbStatus = status; 
+              console.log('[DEBUG] updating kds_tickets status to', dbStatus);
               const { error } = await supabase
                 .from('kds_tickets')
-                .update({ status: kdsStatus, updated_at: new Date().toISOString() })
+                .update({ status: dbStatus, updated_at: new Date().toISOString() })
                 .eq('id', tId);
                 
               if (error) {
