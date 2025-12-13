@@ -326,6 +326,7 @@ export default function CozinhaPage() {
 
                 out.push({
                   id: ordId,
+                  ticketId: String(t.id),
                   pin: pin || '',
                   password: password || '',
                   items: mergedItems,
@@ -337,7 +338,7 @@ export default function CozinhaPage() {
                   slaMinutes: 30,
                   createdBy: 'Sistema',
                   updatedAt: times?.preparingStart ? new Date(times.preparingStart) : undefined,
-                } as Order)
+                } as unknown as Order)
               } catch {
                 // Fallback sem unit states
                 const pin = t.pin
@@ -350,6 +351,7 @@ export default function CozinhaPage() {
                 }
                 out.push({
                   id: ordId,
+                  ticketId: String(t.id),
                   pin: pin || '',
                   password: password || '',
                   items,
@@ -361,7 +363,7 @@ export default function CozinhaPage() {
                   slaMinutes: 30,
                   createdBy: 'Sistema',
                   updatedAt: times?.preparingStart ? new Date(times.preparingStart) : undefined,
-                } as Order)
+                } as unknown as Order)
               }
             }
 
