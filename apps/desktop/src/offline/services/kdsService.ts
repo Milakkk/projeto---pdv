@@ -749,6 +749,16 @@ export async function listTicketsByStation(station: string) {
 }
 
 export async function listOperators() {
+  // Web Mode (Supabase)
+  if (supabase) {
+    try {
+      const { data } = await supabase.from('kitchen_operators').select('*')
+      if (data) return data
+    } catch (e) {
+      console.warn('[KDS] Failed to fetch operators from Supabase:', e)
+    }
+  }
+
   try {
     const res = await query('SELECT * FROM kitchen_operators', [])
     const rows = res?.rows ?? []
