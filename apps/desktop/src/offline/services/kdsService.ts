@@ -50,35 +50,28 @@ async function pushLanEvents(events: any[]) {
 }
 
 export async function getPhaseTimes(orderId: string): Promise<any> {
+  // [FIX] Supabase call disabled due to 400 Bad Request
+  // try {
+  //   if (supabase) {
+  //     const { data } = await supabase
+  //       .from('kds_phase_times')
+  //       .select('*')
+  //       .eq('order_id', orderId)
+  //       .maybeSingle()
+  //     return data || {}
+  //   }
   try {
-    const res = await query('SELECT * FROM kds_phase_times WHERE order_id = ?', [orderId])
-    const row = (res?.rows ?? [])[0]
-    if (row) {
-      return {
-        newStart: row.new_start ?? row.newStart,
-        preparingStart: row.preparing_start ?? row.preparingStart,
-        readyAt: row.ready_at ?? row.readyAt,
-        deliveredAt: row.delivered_at ?? row.deliveredAt,
-      }
-    }
-  } catch { }
-  try {
-    if (supabase) {
-      const { data } = await supabase
-        .from('kds_phase_times')
-        .select('*')
-        .eq('order_id', orderId)
-        .maybeSingle()
-      return data || {}
-    }
     const raw = localStorage.getItem('kdsPhaseTimes')
     const obj = raw ? JSON.parse(raw) : {}
     return obj[String(orderId)] || {}
   } catch { return {} }
+  // } catch { return {} }
 }
 
 async function setPhaseTime(orderId: string, patch: any) {
   const now = new Date().toISOString()
+  // [FIX] Supabase call disabled due to 400 Bad Request
+  /*
   try {
     await query(
       'INSERT INTO kds_phase_times (order_id, new_start, preparing_start, ready_at, delivered_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(order_id) DO UPDATE SET new_start=COALESCE(excluded.new_start, new_start), preparing_start=COALESCE(excluded.preparing_start, preparing_start), ready_at=COALESCE(excluded.ready_at, ready_at), delivered_at=COALESCE(excluded.delivered_at, delivered_at), updated_at=excluded.updated_at',
@@ -93,20 +86,21 @@ async function setPhaseTime(orderId: string, patch: any) {
     )
   } catch {
     if (supabase) {
-      await supabase
-        .from('kds_phase_times')
-        .upsert({ order_id: orderId, new_start: patch?.newStart ?? null, preparing_start: patch?.preparingStart ?? null, ready_at: patch?.readyAt ?? null, delivered_at: patch?.deliveredAt ?? null, updated_at: now }, { onConflict: 'order_id' })
+      // await supabase
+      //   .from('kds_phase_times')
+      //   .upsert({ order_id: orderId, new_start: patch?.newStart ?? null, preparing_start: patch?.preparingStart ?? null, ready_at: patch?.readyAt ?? null, delivered_at: patch?.deliveredAt ?? null, updated_at: now }, { onConflict: 'order_id' })
     } else {
-      try {
-        const raw = localStorage.getItem('kdsPhaseTimes')
-        const obj = raw ? JSON.parse(raw) : {}
-        const cur = obj[String(orderId)] || {}
-        const next = { ...cur, ...patch }
-        obj[String(orderId)] = next
-        localStorage.setItem('kdsPhaseTimes', JSON.stringify(obj))
-      } catch { }
-    }
-  }
+  */
+  try {
+    const raw = localStorage.getItem('kdsPhaseTimes')
+    const obj = raw ? JSON.parse(raw) : {}
+    const cur = obj[String(orderId)] || {}
+    const next = { ...cur, ...patch }
+    obj[String(orderId)] = next
+    localStorage.setItem('kdsPhaseTimes', JSON.stringify(obj))
+  } catch { }
+  //   }
+  // }
   try { await pushLanEvents([{ table: 'kds_phase_times', row: { orderId, ...patch } }]) } catch { }
 }
 
