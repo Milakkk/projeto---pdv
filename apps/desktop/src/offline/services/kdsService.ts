@@ -120,6 +120,29 @@ async function persistUnitStateDb(orderId: string, itemId: string, unitId: strin
       [id, orderId, itemId, unitId, operatorName, unitStatus, completedObservationsJson, completedAt, deliveredAt, now, 1, 1],
     )
   } catch {
+    // Web Mode (Supabase)
+    if (supabase) {
+      try {
+        await supabase.from('kds_unit_states').upsert({
+          id,
+          order_id: orderId,
+          item_id: itemId,
+          unit_id: unitId,
+          operator_name: operatorName,
+          unit_status: unitStatus,
+          completed_observations_json: completedObservationsJson,
+          completed_at: completedAt,
+          delivered_at: deliveredAt,
+          updated_at: now,
+          version: 1,
+          pending_sync: false
+        }, { onConflict: 'id' })
+      } catch (err) {
+        console.error('[KDS] Error persisting unit state to Supabase:', err)
+      }
+    }
+
+    // LocalStorage Fallback
     try {
       const raw = localStorage.getItem('kdsUnitState')
       const state = raw ? JSON.parse(raw) : {}
@@ -666,6 +689,22 @@ export async function upsertOperator(params: { id?: string; name: string; role?:
       [id, params.name, role, now, 1, 1],
     )
   } catch {
+    // Web Mode (Supabase)
+    if (supabase) {
+      try {
+        await supabase.from('kitchen_operators').upsert({
+          id,
+          name: params.name,
+          role: role,
+          updated_at: now,
+          version: 1,
+          pending_sync: false
+        }, { onConflict: 'id' })
+      } catch (err) {
+        console.error('[KDS] Error persisting operator to Supabase:', err)
+      }
+    }
+
     try {
       const raw = localStorage.getItem('kitchenOperators')
       const arr = raw ? JSON.parse(raw) : []
@@ -681,6 +720,15 @@ export async function deleteOperator(id: string) {
   try {
     await query('DELETE FROM kitchen_operators WHERE id = ?', [id])
   } catch {
+    // Web Mode (Supabase)
+    if (supabase) {
+      try {
+        await supabase.from('kitchen_operators').delete().eq('id', id)
+      } catch (err) {
+        console.error('[KDS] Error deleting operator from Supabase:', err)
+      }
+    }
+
     try {
       const raw = localStorage.getItem('kitchenOperators')
       const arr = raw ? JSON.parse(raw) : []
