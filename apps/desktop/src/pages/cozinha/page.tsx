@@ -48,6 +48,7 @@ export default function CozinhaPage() {
   const [currentOperatorName, setCurrentOperatorName] = useLocalStorage<string>('kds_current_operator', '');
 
   const [orders, setOrders] = useState<Order[]>([]);
+  const pendingStatusRef = useRef<Record<string, { status: Order['status']; until: number }>>({});
   const [operators, setOperators] = useLocalStorage<KitchenOperator[]>('kitchenOperators', []);
   useEffect(() => {
     (async () => { try { await kdsService.broadcastOperators(operators) } catch { } })()
@@ -89,6 +90,83 @@ export default function CozinhaPage() {
   }
 
   const isOperationalSessionOpen = useMemo(() => !!operationalSession && operationalSession.status === 'OPEN', [operationalSession]);
+
+  const statusRank = (s: Order['status']) => {
+    if (s === 'DELIVERED' || s === 'CANCELLED') return 3
+    if (s === 'READY') return 2
+    if (s === 'PREPARING') return 1
+    return 0
+  }
+
+  const resolveStatus = (orderId: string, prev: Order['status'] | undefined, candidate: Order['status']) => {
+    const prevStatus = prev ?? candidate
+    let next = statusRank(candidate) < statusRank(prevStatus) ? prevStatus : candidate
+    const pending = pendingStatusRef.current[orderId]
+    const now = Date.now()
+    if (pending && pending.until > now) {
+      if (statusRank(pending.status) > statusRank(next)) next = pending.status
+      if (statusRank(next) >= statusRank(pending.status)) delete pendingStatusRef.current[orderId]
+    } else if (pending) {
+      delete pendingStatusRef.current[orderId]
+    }
+    return next
+  }
+
+  const mergeOrdersList = (prevOrders: Order[], nextOrders: Order[]) => {
+    const prevById: Record<string, Order> = {}
+    for (const o of prevOrders) prevById[String(o.id)] = o
+
+    return nextOrders.map(next => {
+      const prev = prevById[String(next.id)]
+      const status = resolveStatus(String(next.id), prev?.status, next.status)
+
+      const pickMinDate = (a?: Date, b?: Date) => {
+        if (a && b) return a.getTime() <= b.getTime() ? a : b
+        return a ?? b
+      }
+
+      const createdAt = pickMinDate(prev?.createdAt, next.createdAt) ?? next.createdAt
+      const updatedAt = pickMinDate(prev?.updatedAt, next.updatedAt)
+      const readyAt = pickMinDate(prev?.readyAt, next.readyAt)
+      const deliveredAt = pickMinDate(prev?.deliveredAt, next.deliveredAt)
+
+      const pin = (next.pin && String(next.pin).trim()) ? next.pin : (prev?.pin ?? '')
+      const password = (next.password && String(next.password).trim()) ? next.password : (prev?.password ?? '')
+
+      const prevItems = Array.isArray(prev?.items) ? prev!.items : []
+      const nextItems = Array.isArray(next.items) ? next.items : []
+      const baseItems = nextItems.length ? nextItems : prevItems
+
+      const prevItemById: Record<string, any> = {}
+      for (const it of prevItems) prevItemById[String(it.id)] = it
+
+      const mergedItems = baseItems.map((it: any) => {
+        const pit = prevItemById[String(it.id)]
+        if (!pit || !Array.isArray(pit.productionUnits) || !Array.isArray(it.productionUnits)) return it
+
+        const prevUnitsById: Record<string, any> = {}
+        for (const u of pit.productionUnits) prevUnitsById[String(u.unitId)] = u
+
+        const mergedUnits = it.productionUnits.map((u: any) => {
+          const pu = prevUnitsById[String(u.unitId)]
+          if (!pu) return u
+          const unitStatus = (String(pu.unitStatus).toUpperCase() === 'READY' || String(u.unitStatus).toUpperCase() === 'READY') ? 'READY' : 'PENDING'
+          return {
+            ...u,
+            operatorName: u.operatorName ?? pu.operatorName,
+            unitStatus,
+            completedObservations: Array.isArray(u.completedObservations) ? u.completedObservations : pu.completedObservations,
+            completedAt: u.completedAt ?? pu.completedAt,
+            deliveredAt: u.deliveredAt ?? pu.deliveredAt,
+          }
+        })
+
+        return { ...it, productionUnits: mergedUnits }
+      })
+
+      return { ...next, status, createdAt, updatedAt, readyAt, deliveredAt, pin, password, items: mergedItems }
+    })
+  }
 
   const activeProductionOrders = useMemo(() => {
     return orders.filter(order => ['NEW', 'PREPARING', 'READY'].includes(order.status));
@@ -185,10 +263,12 @@ export default function CozinhaPage() {
                     const oid = String(o.id)
                     const st = byIdStatus[oid]
                     if (!st) return o
-                    if (st === 'DELIVERED') return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date(), updatedAt: o.updatedAt }
-                    if (st === 'READY') return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
-                    if (st === 'PREPARING') return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date(), readyAt: undefined }
-                    if (st === 'NEW') return { ...o, status: 'NEW', updatedAt: undefined, readyAt: undefined }
+                    const nextStatus = resolveStatus(oid, o.status, st as any)
+                    if (nextStatus === o.status) return o
+                    if (nextStatus === 'DELIVERED') return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date(), updatedAt: o.updatedAt }
+                    if (nextStatus === 'READY') return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
+                    if (nextStatus === 'PREPARING') return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date(), readyAt: undefined }
+                    if (nextStatus === 'NEW') return { ...o, status: 'NEW', updatedAt: undefined, readyAt: undefined }
                     return o
                   }))
                 })
@@ -383,7 +463,9 @@ export default function CozinhaPage() {
               }
             }
 
-            setOrders(out)
+            startTransition(() => {
+              setOrders(prev => mergeOrdersList(prev, out))
+            })
           } catch (err) {
             console.warn('Erro ao recarregar pedidos após mudança no banco:', err)
           }
@@ -578,17 +660,6 @@ export default function CozinhaPage() {
           kdsService.listTicketsByStatus('done'),
         ]);
 
-        console.log('[DEBUG] fetchTickets counts:', {
-          queued: tkQueued?.length,
-          prep: tkPrep?.length,
-          ready: tkReady?.length,
-          done: tkDone?.length
-        });
-
-        if (tkPrep && tkPrep.length > 0) {
-            console.log('[DEBUG] Prep tickets IDs:', tkPrep.map((t: any) => t.id || t.ticketId));
-        }
-
         const tk = ([] as any[]).concat(tkQueued || [], tkPrep || [], tkReady || [], tkDone || []);
         if (!mounted || !Array.isArray(tk)) return;
 
@@ -727,36 +798,19 @@ export default function CozinhaPage() {
           mappedOrders.push(ord as Order)
         }
         const validOrders = mappedOrders.filter(o => o.id && String(o.id).trim().length > 0)
-        const merged = validOrders.map(o => {
-          const prev = previousOrdersRef.current.find(po => po.id === o.id)
-          const prevItems = prev?.items || []
-          const createdAt = (() => {
-            if (prev?.createdAt && o.createdAt) return prev.createdAt.getTime() <= o.createdAt.getTime() ? prev.createdAt : o.createdAt
-            return prev?.createdAt ?? o.createdAt
-          })()
-          const updatedAt = (() => {
-            if (prev?.updatedAt && o.updatedAt) return prev.updatedAt.getTime() <= o.updatedAt.getTime() ? prev.updatedAt : o.updatedAt
-            return o.updatedAt ?? prev?.updatedAt
-          })()
-          const readyAt = o.readyAt ?? prev?.readyAt
-          const deliveredAt = o.deliveredAt ?? prev?.deliveredAt
-          const items = (o.items && o.items.length > 0 ? o.items : prevItems).filter(it => !(it.skipKitchen || it.menuItem?.skipKitchen))
-          const pin = (o.pin && String(o.pin).trim()) ? o.pin : (prev?.pin ?? '')
-          const password = (o.password && String(o.password).trim()) ? o.password : (prev?.password ?? '')
-          return { ...o, items, createdAt, updatedAt, readyAt, deliveredAt, pin, password }
-        })
-        const rank = (s: Order['status']) => s === 'DELIVERED' ? 3 : s === 'READY' ? 2 : s === 'PREPARING' ? 1 : 0
         const byId: Record<string, Order> = {}
-        for (const o of merged) {
+        for (const o of validOrders) {
           const cur = byId[o.id]
           if (!cur) { byId[o.id] = o; continue }
           const lenCur = (cur.items || []).length
           const lenNext = (o.items || []).length
           if (lenNext > lenCur) { byId[o.id] = o; continue }
-          if (lenNext === lenCur && rank(o.status) > rank(cur.status)) { byId[o.id] = o }
+          if (lenNext === lenCur && statusRank(o.status) > statusRank(cur.status)) { byId[o.id] = o }
         }
         const final = Object.values(byId)
-        startTransition(() => setOrders(final));
+        startTransition(() => {
+          setOrders(prev => mergeOrdersList(prev, final))
+        });
       } catch (error) {
       }
     };
@@ -815,10 +869,11 @@ export default function CozinhaPage() {
       return;
     }
 
+    pendingStatusRef.current[String(orderId)] = { status, until: Date.now() + 8000 }
+
     // Atualiza status via serviço KDS PRIMEIRO, aguarda confirmação, depois atualiza UI
     (async () => {
       try {
-        console.log('[DEBUG] updateOrderStatus called', { orderId, status });
         // Correção CRÍTICA: NEW → queued, PREPARING → prep, READY → ready, DELIVERED → done
         const mapToKds = (s: Order['status']) => {
           if (s === 'NEW') return 'queued';
@@ -832,14 +887,12 @@ export default function CozinhaPage() {
         
         // Tenta usar Supabase diretamente se disponível (Web Mode)
         if (isOnline) {
-            console.log('[DEBUG] isOnline=true, trying Supabase direct update');
             const { supabase } = await import('../../utils/supabase');
             if (supabase) {
               // Fix: Supabase expects 'PREPARING', 'NEW', 'READY', 'DELIVERED' in kds_tickets
               // But mapToKds returns 'prep', 'queued', etc.
               // We should use the uppercase status for the DB value to match kdsService expectations.
               const dbStatus = status; 
-              console.log('[DEBUG] updating kds_tickets status to', dbStatus);
               const { error } = await supabase
                 .from('kds_tickets')
                 .update({ status: dbStatus, updated_at: new Date().toISOString() })
@@ -849,7 +902,6 @@ export default function CozinhaPage() {
                 console.error('[Cozinha] Erro ao atualizar Supabase:', error);
                 // Fallback para kdsService se falhar (pode ser ticket não encontrado ou outra tabela)
               } else {
-                console.log('[Cozinha] Status atualizado no Supabase com sucesso:', { orderId, status });
                 // Persistir timestamps de fase
                 try {
                   const nowIso = new Date().toISOString();
@@ -889,7 +941,6 @@ export default function CozinhaPage() {
         }
 
         await kdsService.setTicketStatus(String(tId), mapToKds(status));
-        console.log('[Cozinha] Status atualizado com sucesso:', { orderId, status, kdsStatus: mapToKds(status) });
       } catch (error) {
         console.error('[Cozinha] ERRO ao atualizar status:', error);
       }
@@ -986,6 +1037,7 @@ export default function CozinhaPage() {
 
   const confirmDelivery = () => {
     if (!orderToDeliver) return;
+    pendingStatusRef.current[String(orderToDeliver.id)] = { status: 'DELIVERED', until: Date.now() + 8000 }
     startTransition(() => {
       setOrders(prevOrders => prevOrders.map(order => {
         if (order.id === orderToDeliver.id) {
@@ -1006,6 +1058,7 @@ export default function CozinhaPage() {
 
   // NOVO: confirmar entrega diretamente (sem abrir checklist/modal do Caixa)
   const confirmDeliveryImmediate = (orderId: string) => {
+    pendingStatusRef.current[String(orderId)] = { status: 'DELIVERED', until: Date.now() + 8000 }
     startTransition(() => {
       setOrders(prevOrders => prevOrders.map(order => {
         if (order.id === orderId) {
