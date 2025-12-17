@@ -222,7 +222,7 @@ export default function CaixaPage() {
         if (!supabase) return
         const { data: anyAssoc } = await supabase.from('category_kitchens').select('id').limit(1)
         if ((anyAssoc||[]).length > 0) {
-          console.log('[Caixa] Já existem associações categoria-cozinha, pulando bootstrap')
+          if (import.meta.env.DEV) console.log('[Caixa] Já existem associações categoria-cozinha, pulando bootstrap')
           return
         }
         const { data: ks } = await supabase.from('kitchens').select('id,name').eq('is_active', true)
@@ -233,12 +233,12 @@ export default function CaixaPage() {
         const { data: cats } = await supabase.from('categories').select('id')
         if (!Array.isArray(cats) || cats.length===0) return
         const rows = cats.map(c => ({ category_id: c.id, kitchen_id: kid, updated_at: new Date().toISOString() }))
-        console.log('[Caixa] Criando associações automáticas para cozinha Mexicano:', { cozinhaId: kid, categorias: cats.length })
+        if (import.meta.env.DEV) console.log('[Caixa] Criando associações automáticas para cozinha Mexicano:', { cozinhaId: kid, categorias: cats.length })
         const { error } = await supabase.from('category_kitchens').insert(rows)
         if (error) {
           console.error('[Caixa] Erro ao criar associações:', error)
         } else {
-          console.log('[Caixa] Associações criadas com sucesso')
+          if (import.meta.env.DEV) console.log('[Caixa] Associações criadas com sucesso')
         }
       } catch (err) {
         console.error('[Caixa] Erro no bootstrap de associações:', err)
@@ -271,6 +271,7 @@ export default function CaixaPage() {
   const quickSearchRef = useRef<HTMLInputElement>(null);
   const navScopeRef = useRef<HTMLDivElement>(null);
   const previousOrdersRef = useRef<Order[]>([]);
+  const readyAlertedRef = useRef<Set<string>>(new Set());
 
   const { isOnline, addPendingAction } = useOffline();
 
@@ -426,11 +427,23 @@ export default function CaixaPage() {
   // Efeito para monitorar pedidos prontos e disparar notificação
   useEffect(() => {
     const previousOrders = previousOrdersRef.current;
-    
+    const alerted = readyAlertedRef.current
+
     orders.forEach(currentOrder => {
-      const previousOrder = previousOrders.find(o => o.id === currentOrder.id);
-      
-      if (currentOrder.status === 'READY' && previousOrder?.status !== 'READY') {
+      if (currentOrder.status !== 'READY') return
+
+      const currentId = String(currentOrder.id)
+      const previousOrder = previousOrders.find(o => String(o.id) === currentId);
+
+      const currentReadyAtMs = currentOrder.readyAt ? new Date(currentOrder.readyAt).getTime() : null
+      const previousReadyAtMs = previousOrder?.readyAt ? new Date(previousOrder.readyAt).getTime() : null
+      const readyKey = `${currentId}:${currentReadyAtMs ?? 'no-readyAt'}`
+
+      const becameReady = previousOrder?.status !== 'READY'
+      const changedReadyAt = currentReadyAtMs != null && currentReadyAtMs !== previousReadyAtMs
+
+      if ((becameReady || changedReadyAt) && !alerted.has(readyKey)) {
+        alerted.add(readyKey)
         showReadyAlert(`Pedido #${currentOrder.pin} (Senha: ${currentOrder.password}) está PRONTO para retirada!`);
       }
     });
@@ -562,7 +575,7 @@ export default function CaixaPage() {
           if (doneIds.includes(oid)) return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date() }
           if (readyIds.includes(oid)) return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
           if (prepIds.includes(oid)) return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date() }
-          if (queuedIds.includes(oid)) return { ...o, status: 'NEW', updatedAt: undefined, readyAt: undefined }
+          if (queuedIds.includes(oid)) return o.status === 'NEW' ? o : o
           return o
         }))
       } catch {}
@@ -684,38 +697,26 @@ export default function CaixaPage() {
         setTimeout(async () => {
           try {
             const detailed = await ordersService.listOrdersDetailed(200)
-            const out: Order[] = []
-            for (const d of detailed) {
-              const r = d.order as any
-              const items = d.items || []
-              const payments = d.payments || []
-              const pinVal = d.details?.pin
-              const passVal = d.details?.password
-              const phaseTimes = d.phaseTimes || {}
-              const paid = (payments || []).reduce((s: number, p: any) => s + Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100), 0)
-              const breakdown = (payments || []).length > 1 ? Object.fromEntries((payments || []).map((p: any) => [String(p.method).toUpperCase(), Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100)])) : undefined
-              const method = (payments || []).length > 1 ? 'MÚLTIPLO' : ((payments || [])[0]?.method ? String((payments || [])[0].method).toUpperCase() : '')
-              const ord: Order = {
-                id: String(r.id),
-                pin: pinVal || '',
-                password: passVal || '',
-                items: (items || []).map((it: any) => ({
-                  id: String(it.id),
-                  quantity: Number(it.qty ?? 1),
-                  menuItem: {
-                    id: String(it.product_id ?? ''),
-                    name: String(it.product_name ?? 'Item'),
-                    price: Math.max(0, Number(it.unit_price_cents ?? 0) / 100),
-                    unitDeliveryCount: 1,
-                    categoryId: String(it.category_id ?? ''),
-                  },
-                  productionUnits: [],
-                  skipKitchen: false,
-                })),
-                total: Math.max(0, Number(r.total_cents ?? 0) / 100),
-                customerWhatsApp: undefined,
-                paymentMethod: method,
-                status: (() => {
+            setOrders(prev => {
+              const byId: Record<string, Order> = {}
+              for (const o of prev) byId[String(o.id)] = o
+
+              const out: Order[] = []
+              for (const d of detailed) {
+                const r = d.order as any
+                const id = String(r.id)
+                const existing = byId[id]
+
+                const items = d.items || []
+                const payments = d.payments || []
+                const pinVal = d.details?.pin
+                const passVal = d.details?.password
+                const phaseTimes = d.phaseTimes || {}
+                const paid = (payments || []).reduce((s: number, p: any) => s + Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100), 0)
+                const breakdown = (payments || []).length > 1 ? Object.fromEntries((payments || []).map((p: any) => [String(p.method).toUpperCase(), Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100)])) : undefined
+                const method = (payments || []).length > 1 ? 'MÚLTIPLO' : ((payments || [])[0]?.method ? String((payments || [])[0].method).toUpperCase() : '')
+
+                const status: Order['status'] = (() => {
                   const rawLower = String(r.status || '').toLowerCase()
                   const rawUpper = String(r.status || '').toUpperCase()
                   if (rawLower === 'cancelled' || rawUpper === 'CANCELLED') return 'CANCELLED'
@@ -725,22 +726,45 @@ export default function CaixaPage() {
                   if (phaseTimes?.preparingStart) return 'PREPARING'
                   if (rawUpper === 'READY') return 'READY'
                   if (rawUpper === 'PREPARING') return 'PREPARING'
-                  if (rawLower === 'open' || rawUpper === 'NEW') return 'NEW'
-                  return 'NEW'
-                })(),
-                createdAt: r.opened_at ? new Date(r.opened_at) : new Date(),
-                readyAt: phaseTimes?.readyAt ? new Date(phaseTimes.readyAt) : undefined,
-                deliveredAt: phaseTimes?.deliveredAt ? new Date(phaseTimes.deliveredAt) : (r.closed_at ? new Date(r.closed_at) : undefined),
-                slaMinutes: 30,
-                createdBy: 'Sistema',
-                amountPaid: paid > 0 ? paid : undefined,
-                changeAmount: undefined,
-                updatedAt: phaseTimes?.preparingStart ? new Date(phaseTimes.preparingStart) : (r.updated_at ? new Date(r.updated_at) : undefined),
-                operationalSessionId: r.operational_session_id ? String(r.operational_session_id) : undefined,
+                  if (rawLower === 'open' || rawUpper === 'NEW') return existing?.status || 'NEW'
+                  return existing?.status || 'NEW'
+                })()
+
+                const ord: Order = {
+                  id,
+                  pin: pinVal || existing?.pin || '',
+                  password: passVal || existing?.password || '',
+                  items: (items || []).map((it: any) => ({
+                    id: String(it.id),
+                    quantity: Number(it.qty ?? 1),
+                    menuItem: {
+                      id: String(it.product_id ?? ''),
+                      name: String(it.product_name ?? 'Item'),
+                      price: Math.max(0, Number(it.unit_price_cents ?? 0) / 100),
+                      unitDeliveryCount: 1,
+                      categoryId: String(it.category_id ?? ''),
+                    },
+                    productionUnits: existing?.items?.find(x => String(x.id) === String(it.id))?.productionUnits || [],
+                    skipKitchen: false,
+                  })),
+                  total: Math.max(0, Number(r.total_cents ?? 0) / 100),
+                  customerWhatsApp: existing?.customerWhatsApp,
+                  paymentMethod: method,
+                  status,
+                  createdAt: r.opened_at ? new Date(r.opened_at) : (existing?.createdAt || new Date()),
+                  readyAt: phaseTimes?.readyAt ? new Date(phaseTimes.readyAt) : existing?.readyAt,
+                  deliveredAt: phaseTimes?.deliveredAt ? new Date(phaseTimes.deliveredAt) : (r.closed_at ? new Date(r.closed_at) : existing?.deliveredAt),
+                  slaMinutes: existing?.slaMinutes ?? 30,
+                  createdBy: existing?.createdBy ?? 'Sistema',
+                  amountPaid: paid > 0 ? paid : existing?.amountPaid,
+                  changeAmount: existing?.changeAmount,
+                  updatedAt: phaseTimes?.preparingStart ? new Date(phaseTimes.preparingStart) : (r.updated_at ? new Date(r.updated_at) : existing?.updatedAt),
+                  operationalSessionId: r.operational_session_id ? String(r.operational_session_id) : existing?.operationalSessionId,
+                } as any
+                out.push(ord)
               }
-              out.push(ord)
-            }
-            setOrders(out)
+              return out
+            })
           } catch (err) {
             console.warn('Erro ao recarregar pedidos após mudança no banco:', err)
           }
@@ -808,7 +832,7 @@ export default function CaixaPage() {
               if (st==='DELIVERED') return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date() }
               if (st==='READY') return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
               if (st==='PREPARING') return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date() }
-              if (st==='NEW') return { ...o, status: 'NEW', updatedAt: undefined, readyAt: undefined }
+              if (st==='NEW') return o.status === 'NEW' ? o : o
               return o
             }))
           }
@@ -822,14 +846,19 @@ export default function CaixaPage() {
               incoming[id] = r
             }
             setOrders(prev => {
+              const statusRank: Record<string, number> = { NEW: 0, PREPARING: 1, READY: 2, DELIVERED: 3, CANCELLED: 3 }
               const map: Record<string, Order> = {}
               for (const o of prev) map[String(o.id)] = o
               for (const [id, r] of Object.entries(incoming)){
                 const existing = map[id]
                 if (existing){
+                  const incomingStatus = (r as any).status ? String((r as any).status).toUpperCase() : undefined
+                  const currentStatus = String(existing.status || 'NEW').toUpperCase()
+                  const keepStatus = incomingStatus && (statusRank[incomingStatus] ?? 0) < (statusRank[currentStatus] ?? 0)
                   map[id] = {
                     ...existing,
                     ...r,
+                    status: keepStatus ? existing.status : ((r as any).status ?? existing.status),
                     createdAt: r.createdAt ? new Date(r.createdAt) : existing.createdAt,
                     updatedAt: r.updatedAt ? new Date(r.updatedAt) : (existing.updatedAt ?? new Date()),
                     readyAt: r.readyAt ? new Date(r.readyAt) : existing.readyAt,

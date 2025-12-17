@@ -517,7 +517,7 @@ export async function migrateLocalStorageCatalog() {
   // Skip if not Electron (Web mode should rely on Supabase sync, not local storage migration)
   const isElectron = typeof (window as any)?.api?.db?.query === 'function'
   if (!isElectron) {
-    console.log('[Migration] Web mode detected. Skipping localStorage migration to prevent conflicts.')
+    if (import.meta.env.DEV) console.log('[Migration] Web mode detected. Skipping localStorage migration to prevent conflicts.')
     // Mark as done to prevent future logs in this session
     localStorage.setItem(MIGRATION_KEY, 'true')
     return
@@ -559,7 +559,7 @@ export async function migrateLocalStorageCatalog() {
           idMap[newId] = actualId
         }
 
-        console.log(`[Migration] Mapped Category: '${name}' | Old: ${oldId} -> New: ${actualId}`)
+        if (import.meta.env.DEV) console.log(`[Migration] Mapped Category: '${name}' | Old: ${oldId} -> New: ${actualId}`)
 
         updatedCats.push({ ...c, id: actualId })
       }
@@ -581,10 +581,10 @@ export async function migrateLocalStorageCatalog() {
 
         // 1. Try mapping via ID Map (Old ID -> New ID)
         if (categoryId && idMap[categoryId]) {
-          console.log(`[Migration] Product '${name}': remaped cat ${categoryId} -> ${idMap[categoryId]}`)
+          if (import.meta.env.DEV) console.log(`[Migration] Product '${name}': remaped cat ${categoryId} -> ${idMap[categoryId]}`)
           categoryId = idMap[categoryId]
         } else if (categoryId) {
-          console.warn(`[Migration] Product '${name}': category ${categoryId} NOT FOUND in map. Keys:`, Object.keys(idMap).slice(0, 5))
+          if (import.meta.env.DEV) console.warn(`[Migration] Product '${name}': category ${categoryId} NOT FOUND in map. Keys:`, Object.keys(idMap).slice(0, 5))
           // Tenta encontrar por nome no nameToIdMap se não achou por ID? 
           // Não temos o nome da categoria no produto, infelizmente.
         }
@@ -603,9 +603,8 @@ export async function migrateLocalStorageCatalog() {
 
     // Mark migration as complete
     localStorage.setItem(MIGRATION_KEY, 'true')
-    console.log('[productsService] ✅ Catalog migration completed successfully')
+    if (import.meta.env.DEV) console.log('[productsService] ✅ Catalog migration completed successfully')
   } catch (err) {
     console.error('[productsService] Migration error:', err)
   }
 }
-

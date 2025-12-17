@@ -1,7 +1,9 @@
-import { Toaster, toast } from 'react-hot-toast';
+import type { ReactNode } from 'react'
+import { Toaster, resolveValue, toast, useToasterStore } from 'react-hot-toast';
+import type { Toast } from 'react-hot-toast'
 
 // Componente customizado para incluir o botão de fechar e aplicar estilos baseados no tipo
-const CustomToast = ({ t, children }) => {
+const CustomToast = ({ t, children }: { t: Toast; children: ReactNode }) => {
   let bgColor = 'bg-white';
   let borderColor = 'border-gray-200';
   let textColor = 'text-gray-900';
@@ -54,40 +56,58 @@ const CustomToast = ({ t, children }) => {
 };
 
 export default function ToastProvider() {
+  const { toasts } = useToasterStore()
+  const hasToasts = (toasts || []).length > 0
+
   return (
-    <Toaster 
-      position="top-right"
-      toastOptions={{
-        duration: 5000,
-        custom: (t) => (
+    <>
+      {hasToasts && (
+        <div className="fixed bottom-4 right-4 z-[9999] pointer-events-none">
+          <button
+            type="button"
+            className="pointer-events-auto inline-flex items-center gap-2 rounded-md bg-gray-900 px-3 py-2 text-sm font-medium text-white shadow-lg hover:bg-gray-800"
+            onClick={() => toast.dismiss()}
+          >
+            <i className="ri-notification-off-line text-base" aria-hidden="true" />
+            Fechar notificações
+          </button>
+        </div>
+      )}
+      <Toaster 
+        position="top-right"
+        toastOptions={{
+          duration: 5000,
+          style: {
+            padding: '0',
+            boxShadow: 'none',
+          },
+          success: {
+            iconTheme: {
+              primary: '#10b981',
+              secondary: '#fff',
+            },
+          },
+          error: {
+            iconTheme: {
+              primary: '#ef4444',
+              secondary: '#fff',
+            },
+          },
+          loading: {
+            iconTheme: {
+              primary: '#3b82f6',
+              secondary: '#fff',
+            },
+          },
+        }}
+      >
+        {(t) => (
           <CustomToast t={t}>
             {t.icon && <span className="mr-2">{t.icon}</span>}
-            {t.message}
+            {resolveValue(t.message, t)}
           </CustomToast>
-        ),
-        style: {
-          padding: '0',
-          boxShadow: 'none',
-        },
-        success: {
-          iconTheme: {
-            primary: '#10b981',
-            secondary: '#fff',
-          },
-        },
-        error: {
-          iconTheme: {
-            primary: '#ef4444',
-            secondary: '#fff',
-          },
-        },
-        loading: {
-          iconTheme: {
-            primary: '#3b82f6',
-            secondary: '#fff',
-          },
-        },
-      }}
-    />
+        )}
+      </Toaster>
+    </>
   );
 }

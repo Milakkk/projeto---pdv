@@ -1,20 +1,25 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { supabase } from '../utils/supabase';
 import { useLocalStorage } from './useLocalStorage';
-import { Category, MenuItem } from '../types';
+import type { Category, MenuItem } from '../types';
 import { useOffline } from './useOffline';
 
 export function useCatalogSync() {
   const { isOnline } = useOffline();
-  const [categories, setCategories] = useLocalStorage<Category[]>('categories', []);
-  const [menuItems, setMenuItems] = useLocalStorage<MenuItem[]>('menuItems', []);
+  const [, setCategories] = useLocalStorage<Category[]>('categories', []);
+  const [, setMenuItems] = useLocalStorage<MenuItem[]>('menuItems', []);
+  const lastSyncAtRef = useRef(0);
 
   useEffect(() => {
     if (!isOnline || !supabase) return;
 
+    const now = Date.now();
+    if (now - lastSyncAtRef.current < 60_000) return;
+    lastSyncAtRef.current = now;
+
     const syncCatalog = async () => {
       try {
-        console.log('[CatalogSync] Iniciando sincronização do catálogo...');
+        if (import.meta.env.DEV) console.log('[CatalogSync] Iniciando sincronização do catálogo...');
 
         // 1. Fetch Categories
         const { data: categoriesData, error: catError } = await supabase
@@ -34,27 +39,25 @@ export function useCatalogSync() {
             kitchenIds: [],
           }));
           
-          setCategories(prev => {
-            const kitchenMap = new Map(prev.map(p => [p.id, p.kitchenIds]));
+          setCategories(() => {
             const byName = new Map<string, Category>();
             for (const c of mappedCategories) {
               const key = String(c.name || '').trim().toLowerCase();
               if (!key) continue;
               const prevC = byName.get(key);
-              const next = { ...c, kitchenIds: kitchenMap.get(c.id) || [] };
               // Mantém o mais recente (se existir updated_at)
               if (!prevC) {
-                byName.set(key, next);
+                byName.set(key, c);
               } else {
                 const prevUpdated = (prevC as any).updated_at ? new Date((prevC as any).updated_at).getTime() : 0;
                 const nextUpdated = (c as any).updated_at ? new Date((c as any).updated_at).getTime() : 0;
-                byName.set(key, nextUpdated >= prevUpdated ? next : prevC);
+                byName.set(key, nextUpdated >= prevUpdated ? c : prevC);
               }
             }
             return Array.from(byName.values());
           });
-          
-          console.log(`[CatalogSync] ${mappedCategories.length} categorias sincronizadas.`);
+
+          if (import.meta.env.DEV) console.log(`[CatalogSync] ${mappedCategories.length} categorias sincronizadas.`);
         }
 
         // 2. Fetch Products
@@ -82,7 +85,7 @@ export function useCatalogSync() {
             unitDeliveryCount: p.unit_delivery_count || 1
           }));
 
-          setMenuItems(prev => {
+          setMenuItems(() => {
             const byKey = new Map<string, MenuItem>();
             for (const i of mappedItems) {
               const key = (i.code && String(i.code).trim().length > 0)
@@ -95,7 +98,7 @@ export function useCatalogSync() {
             }
             return Array.from(byKey.values());
           });
-          console.log(`[CatalogSync] ${mappedItems.length} produtos sincronizados.`);
+          if (import.meta.env.DEV) console.log(`[CatalogSync] ${mappedItems.length} produtos sincronizados.`);
         }
 
       } catch (error) {
