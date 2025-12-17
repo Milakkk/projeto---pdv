@@ -196,30 +196,12 @@ export async function addItem(params: {
         [subtotal, now, params.orderId],
       )
       
-      let kitchenIds: string[] = []
-      if (params.productId) {
-        try {
-          const resCats = await query(
-            'SELECT kitchen_id FROM category_kitchens WHERE category_id IN (SELECT category_id FROM products WHERE id = ?)',
-            [params.productId]
-          )
-          kitchenIds = (resCats?.rows ?? []).map((r: any) => String(r.kitchen_id)).filter(Boolean)
-        } catch {}
-      }
-      
-      if (kitchenIds.length > 0) {
-        for (const kid of kitchenIds) {
-          await query(
-            'INSERT INTO kds_tickets (id, order_id, status, updated_at, version, pending_sync, kitchen_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [uuid(), params.orderId, 'NEW', now, 1, 1, kid]
-          )
-        }
-      } else {
-        await query(
-          'INSERT INTO kds_tickets (id, order_id, status, updated_at, version, pending_sync, kitchen_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          [uuid(), params.orderId, 'NEW', now, 1, 1, null]
-        )
-      }
+      const unitId = await getCurrentUnitId()
+      const ticketId = uuid()
+      await query(
+        'INSERT INTO kds_tickets (id, order_id, unit_id, status, station, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(order_id) DO NOTHING',
+        [ticketId, params.orderId, unitId ?? null, 'queued', null, now, 1, 1],
+      )
     } catch {
       const rawItems = localStorage.getItem('order_items')
       const arrItems = rawItems ? JSON.parse(rawItems) : []

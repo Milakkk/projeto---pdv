@@ -547,7 +547,11 @@ export default function CaixaPage() {
           kdsService.listTicketsByStatus('ready'),
           kdsService.listTicketsByStatus('done'),
         ]);
-        const mapIds = (arr: any[]) => (Array.isArray(arr) ? arr : []).map((t:any)=> String(t.order_id ?? t.orderId ?? t.id));
+        const mapIds = (arr: any[]) =>
+          (Array.isArray(arr) ? arr : [])
+            .map((t: any) => t?.order_id ?? t?.orderId)
+            .filter(Boolean)
+            .map((id: any) => String(id));
         const queuedIds = mapIds(tkQueued)
         const prepIds = mapIds(tkPrep)
         const readyIds = mapIds(tkReady)
@@ -582,14 +586,20 @@ export default function CaixaPage() {
             const r: any = d.order;
             const id = String(r.id);
             const existing = map[id];
-            const rawStatus = String(r.status || '').toLowerCase();
-            const status: Order['status'] = r.closed_at
-              ? 'DELIVERED'
-              : rawStatus === 'closed'
-              ? 'DELIVERED'
-              : rawStatus === 'cancelled'
-              ? 'CANCELLED'
-              : existing?.status || 'NEW';
+            const times = (d as any).phaseTimes || {}
+            const rawLower = String(r.status || '').toLowerCase()
+            const rawUpper = String(r.status || '').toUpperCase()
+            const status: Order['status'] = (() => {
+              if (rawLower === 'cancelled' || rawUpper === 'CANCELLED') return 'CANCELLED'
+              if (r.closed_at || r.completed_at || rawLower === 'closed' || rawUpper === 'DELIVERED') return 'DELIVERED'
+              if (times.deliveredAt) return 'DELIVERED'
+              if (times.readyAt) return 'READY'
+              if (times.preparingStart) return 'PREPARING'
+              if (rawUpper === 'READY') return 'READY'
+              if (rawUpper === 'PREPARING') return 'PREPARING'
+              if (rawLower === 'open' || rawUpper === 'NEW') return existing?.status || 'NEW'
+              return existing?.status || 'NEW'
+            })()
             const parsedSessionId = r.operational_session_id ? String(r.operational_session_id) : undefined;
             const unitStates = (d as any).unitStates || {}
             const items = (d.items || []).map((it: any) => {
@@ -627,7 +637,6 @@ export default function CaixaPage() {
             const paid = (payments || []).reduce((s: number, p: any) => s + Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100), 0);
             const breakdown = (payments || []).length > 1 ? Object.fromEntries((payments || []).map((p: any) => [String(p.method).toUpperCase(), Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100)])) : undefined;
             const method = (payments || []).length > 1 ? 'MÚLTIPLO' : ((payments || [])[0]?.method ? String((payments || [])[0].method).toUpperCase() : '');
-            const times = (d as any).phaseTimes || {}
             map[id] = {
               id,
               pin: (d.details?.pin || existing?.pin || id),
@@ -706,7 +715,19 @@ export default function CaixaPage() {
                 total: Math.max(0, Number(r.total_cents ?? 0) / 100),
                 customerWhatsApp: undefined,
                 paymentMethod: method,
-                status: String(r.status).toUpperCase() === 'CLOSED' ? 'DELIVERED' : String(r.status).toUpperCase() === 'CANCELLED' ? 'CANCELLED' : 'NEW',
+                status: (() => {
+                  const rawLower = String(r.status || '').toLowerCase()
+                  const rawUpper = String(r.status || '').toUpperCase()
+                  if (rawLower === 'cancelled' || rawUpper === 'CANCELLED') return 'CANCELLED'
+                  if (r.closed_at || r.completed_at || rawLower === 'closed' || rawUpper === 'DELIVERED') return 'DELIVERED'
+                  if (phaseTimes?.deliveredAt) return 'DELIVERED'
+                  if (phaseTimes?.readyAt) return 'READY'
+                  if (phaseTimes?.preparingStart) return 'PREPARING'
+                  if (rawUpper === 'READY') return 'READY'
+                  if (rawUpper === 'PREPARING') return 'PREPARING'
+                  if (rawLower === 'open' || rawUpper === 'NEW') return 'NEW'
+                  return 'NEW'
+                })(),
                 createdAt: r.opened_at ? new Date(r.opened_at) : new Date(),
                 readyAt: phaseTimes?.readyAt ? new Date(phaseTimes.readyAt) : undefined,
                 deliveredAt: phaseTimes?.deliveredAt ? new Date(phaseTimes.deliveredAt) : (r.closed_at ? new Date(r.closed_at) : undefined),
@@ -764,11 +785,19 @@ export default function CaixaPage() {
           try { (async()=>{ await kdsService.applyHubEvents(events) })() } catch {}
           const tickets = events.filter((e:any)=> String(e.table)==='kdsTickets' && (e.row || e.rows))
           if (tickets.length){
-            const mapToOrderStatus = (s:string)=> s==='ready'?'READY': s==='prep'?'PREPARING': s==='done'?'DELIVERED': 'NEW'
+            const mapToOrderStatus = (s: string) => {
+              const low = String(s || '').toLowerCase()
+              if (low === 'done' || low === 'delivered') return 'DELIVERED'
+              if (low === 'ready') return 'READY'
+              if (low === 'prep' || low === 'preparing') return 'PREPARING'
+              return 'NEW'
+            }
             const byIdStatus: Record<string,string> = {}
             for (const e of tickets){
               const r = e.row || {}
-              const id = String(r.order_id ?? r.orderId ?? r.id)
+              const oid = r.order_id ?? r.orderId ?? null
+              if (!oid) continue
+              const id = String(oid)
               const st = mapToOrderStatus(String(r.status ?? e.status ?? 'queued'))
               byIdStatus[id] = st
             }
@@ -830,70 +859,6 @@ export default function CaixaPage() {
           ws.addEventListener('close', () => { scheduleReconnect() })
         }
         connect()
-        
-        const onMessage2 = (ev: MessageEvent) => {
-              if (!mounted) return
-              let events: any[] = []
-              try { const msg = JSON.parse(String((ev as MessageEvent).data)); if (msg?.type==='events') events = msg.events || [] } catch {}
-              try { (async()=>{ await kdsService.applyHubEvents(events) })() } catch {}
-              const tickets = events.filter((e:any)=> String(e.table)==='kdsTickets' && (e.row || e.rows))
-              if (tickets.length){
-                const mapToOrderStatus = (s:string)=> s==='ready'?'READY': s==='prep'?'PREPARING': s==='done'?'DELIVERED': 'NEW'
-                const byIdStatus: Record<string,string> = {}
-                for (const e of tickets){
-                  const r = e.row || {}
-                  const id = String(r.order_id ?? r.orderId ?? r.id)
-                  const st = mapToOrderStatus(String(r.status ?? e.status ?? 'queued'))
-                  byIdStatus[id] = st
-                }
-                setOrders(prev => prev.map(o => {
-                  const oid = String(o.id)
-                  const st = byIdStatus[oid]
-                  if (!st) return o
-                  if (st==='DELIVERED') return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date() }
-                  if (st==='READY') return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
-                  if (st==='PREPARING') return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date() }
-                  if (st==='NEW') return { ...o, status: 'NEW', updatedAt: undefined, readyAt: undefined }
-                  return o
-                }))
-              }
-              const ordEvents = events.filter((e:any)=> String(e.table)==='orders' && (e.row || e.rows))
-              if (ordEvents.length){
-                const incoming: Record<string, any> = {}
-                for (const e of ordEvents){
-                  const r = e.row || {}
-                  const id = String(r.id ?? '')
-                  if (!id) continue
-                  incoming[id] = r
-                }
-                setOrders(prev => {
-                  const map: Record<string, Order> = {}
-                  for (const o of prev) map[String(o.id)] = o
-                  for (const [id, r] of Object.entries(incoming)){
-                    const existing = map[id]
-                    if (existing){
-                      map[id] = {
-                        ...existing,
-                        ...r,
-                        createdAt: r.createdAt ? new Date(r.createdAt) : existing.createdAt,
-                        updatedAt: r.updatedAt ? new Date(r.updatedAt) : (existing.updatedAt ?? new Date()),
-                        readyAt: r.readyAt ? new Date(r.readyAt) : existing.readyAt,
-                        deliveredAt: r.deliveredAt ? new Date(r.deliveredAt) : existing.deliveredAt,
-                      } as any
-                    } else {
-                      map[id] = {
-                        ...(r as any),
-                        createdAt: r.createdAt ? new Date(r.createdAt) : new Date(),
-                        updatedAt: r.updatedAt ? new Date(r.updatedAt) : new Date(),
-                        readyAt: r.readyAt ? new Date(r.readyAt) : undefined,
-                        deliveredAt: r.deliveredAt ? new Date(r.deliveredAt) : undefined,
-                      }
-                    }
-                  }
-                  return Object.values(map)
-                })
-              }
-            }
         // handler unificado com backoff; removido ws2 duplicado
       } catch {}
     })()
