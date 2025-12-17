@@ -49,15 +49,18 @@ const calculateDeliveryMetrics = (order: Order) => {
 
   // 1. Tempo Final (Entrega ou Cancelamento)
   let finalTime = now;
-  if (isFinalStatus && order.updatedAt) {
-    finalTime = new Date(order.updatedAt).getTime();
+  if (order.status === 'DELIVERED') {
+    finalTime = new Date(order.deliveredAt || order.updatedAt || order.createdAt).getTime();
+  } else if (order.status === 'CANCELLED') {
+    finalTime = new Date(order.updatedAt || order.createdAt).getTime();
   }
 
   // 2. Tempo de Início do Preparo (Fim da fase NEW)
   // Se o pedido está em status final, usamos o updatedAt fixo. Caso contrário, usamos o updatedAt se existir, ou createdAt.
-  const preparingStartTime = (isFinalStatus && order.updatedAt) || order.status !== 'NEW'
-    ? new Date(order.updatedAt || order.createdAt).getTime() 
-    : createdAt;
+  const preparingStartTime = (() => {
+    if (order.status === 'NEW') return createdAt
+    return new Date(order.updatedAt || order.createdAt).getTime()
+  })();
 
   // 3. Tempo Final de Produção (Fim da fase PREPARING / Início da fase READY)
   let productionEndTime: number;
@@ -67,7 +70,6 @@ const calculateDeliveryMetrics = (order: Order) => {
   } else if (order.status === 'READY' && order.updatedAt) {
       productionEndTime = new Date(order.updatedAt).getTime();
   } else if (isFinalStatus) {
-      // Se está em status final (DELIVERED/CANCELLED) sem readyAt, usamos o tempo de início do preparo
       productionEndTime = preparingStartTime;
   } else {
       // Se está NEW ou PREPARING, o fim da produção é o tempo atual (para cálculo em tempo real)

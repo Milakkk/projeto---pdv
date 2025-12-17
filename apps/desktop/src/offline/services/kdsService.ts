@@ -75,7 +75,7 @@ async function setPhaseTime(orderId: string, patch: any) {
   // 1. Try SQLite (Local DB)
   try {
     await query(
-      'INSERT INTO kds_phase_times (order_id, new_start, preparing_start, ready_at, delivered_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(order_id) DO UPDATE SET new_start=COALESCE(excluded.new_start, new_start), preparing_start=COALESCE(excluded.preparing_start, preparing_start), ready_at=COALESCE(excluded.ready_at, ready_at), delivered_at=COALESCE(excluded.delivered_at, delivered_at), updated_at=excluded.updated_at',
+      'INSERT INTO kds_phase_times (order_id, new_start, preparing_start, ready_at, delivered_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(order_id) DO UPDATE SET new_start=COALESCE(new_start, excluded.new_start), preparing_start=COALESCE(preparing_start, excluded.preparing_start), ready_at=COALESCE(ready_at, excluded.ready_at), delivered_at=COALESCE(delivered_at, excluded.delivered_at), updated_at=excluded.updated_at',
       [
         orderId,
         patch?.newStart ?? null,
@@ -95,7 +95,7 @@ async function setPhaseTime(orderId: string, patch: any) {
       // Check if record exists first to avoid UPSERT issues with constraints or missing columns
       const { data: existing } = await supabase
         .from('kds_phase_times')
-        .select('id')
+        .select('id, new_start, preparing_start, ready_at, delivered_at')
         .eq('order_id', orderId)
         .maybeSingle()
 
@@ -104,10 +104,11 @@ async function setPhaseTime(orderId: string, patch: any) {
         updated_at: now
       }
       
-      if (patch?.newStart) payload.new_start = patch.newStart
-      if (patch?.preparingStart) payload.preparing_start = patch.preparingStart
-      if (patch?.readyAt) payload.ready_at = patch.readyAt
-      if (patch?.deliveredAt) payload.delivered_at = patch.deliveredAt
+      const ex: any = existing || {}
+      if (patch?.newStart && !ex.new_start) payload.new_start = patch.newStart
+      if (patch?.preparingStart && !ex.preparing_start) payload.preparing_start = patch.preparingStart
+      if (patch?.readyAt && !ex.ready_at) payload.ready_at = patch.readyAt
+      if (patch?.deliveredAt && !ex.delivered_at) payload.delivered_at = patch.deliveredAt
 
       if (existing?.id) {
         await supabase.from('kds_phase_times').update(payload).eq('id', existing.id)
@@ -124,7 +125,11 @@ async function setPhaseTime(orderId: string, patch: any) {
     const raw = localStorage.getItem('kdsPhaseTimes')
     const obj = raw ? JSON.parse(raw) : {}
     const cur = obj[String(orderId)] || {}
-    const next = { ...cur, ...patch }
+    const next: any = { ...cur }
+    if (patch?.newStart && !cur.newStart) next.newStart = patch.newStart
+    if (patch?.preparingStart && !cur.preparingStart) next.preparingStart = patch.preparingStart
+    if (patch?.readyAt && !cur.readyAt) next.readyAt = patch.readyAt
+    if (patch?.deliveredAt && !cur.deliveredAt) next.deliveredAt = patch.deliveredAt
     obj[String(orderId)] = next
     localStorage.setItem('kdsPhaseTimes', JSON.stringify(obj))
   } catch { }

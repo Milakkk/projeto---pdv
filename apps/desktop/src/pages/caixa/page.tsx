@@ -602,7 +602,7 @@ export default function CaixaPage() {
             const times = (d as any).phaseTimes || {}
             const rawLower = String(r.status || '').toLowerCase()
             const rawUpper = String(r.status || '').toUpperCase()
-            const status: Order['status'] = (() => {
+            const statusCandidate: Order['status'] = (() => {
               if (rawLower === 'cancelled' || rawUpper === 'CANCELLED') return 'CANCELLED'
               if (r.closed_at || r.completed_at || rawLower === 'closed' || rawUpper === 'DELIVERED') return 'DELIVERED'
               if (times.deliveredAt) return 'DELIVERED'
@@ -613,6 +613,12 @@ export default function CaixaPage() {
               if (rawLower === 'open' || rawUpper === 'NEW') return existing?.status || 'NEW'
               return existing?.status || 'NEW'
             })()
+
+            const statusRank: Record<string, number> = { NEW: 0, PREPARING: 1, READY: 2, DELIVERED: 3, CANCELLED: 3 }
+            const currentStatus = existing?.status ? String(existing.status).toUpperCase() : undefined
+            const nextRank = statusRank[String(statusCandidate).toUpperCase()] ?? 0
+            const curRank = statusRank[currentStatus || 'NEW'] ?? 0
+            const status: Order['status'] = (nextRank < curRank ? (existing?.status || statusCandidate) : (nextRank > curRank ? statusCandidate : (existing?.status || statusCandidate))) as any
             const parsedSessionId = r.operational_session_id ? String(r.operational_session_id) : undefined;
             const unitStates = (d as any).unitStates || {}
             const items = (d.items || []).map((it: any) => {
@@ -1518,6 +1524,38 @@ export default function CaixaPage() {
                 Pedidos
               </Button>
             </div>
+
+            {activeTab === 'orders' && (
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => {
+                  setConfirmationData({
+                    title: 'Limpar pedidos',
+                    message: 'Isso apaga todos os pedidos e tempos deste dispositivo. Esta ação não pode ser desfeita.',
+                    variant: 'danger',
+                    confirmText: 'Apagar tudo',
+                    onConfirm: () => {
+                      ;(async () => {
+                        try {
+                          await ordersService.clearLocalOrders()
+                          setOrders([])
+                          showSuccess('Pedidos limpos com sucesso.')
+                        } catch {
+                          showError('Falha ao limpar pedidos.')
+                        } finally {
+                          setConfirmationData(null)
+                        }
+                      })()
+                    },
+                  })
+                }}
+                className="!rounded-md"
+              >
+                <i className="ri-delete-bin-6-line mr-2"></i>
+                Limpar pedidos
+              </Button>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <Button
@@ -1847,6 +1885,15 @@ export default function CaixaPage() {
                           await fetch(hubUrl + '/push', { method: 'POST', headers, body: JSON.stringify({ events }) })
                         } catch {}
                       })()
+                      ;(async () => {
+                        try {
+                          await ordersService.closeOrder(String(checklistOrder.id) as any)
+                        } catch {}
+                        try {
+                          const tId = (checklistOrder as any)?.ticketId || checklistOrder.id
+                          await kdsService.setTicketStatus(String(tId), 'done')
+                        } catch {}
+                      })()
                       showSuccess(`Pedido #${checklistOrder.pin} marcado como entregue.`);
                     } else {
                       showInfo('Entrega parcial registrada. Conclua as unidades restantes depois.');
@@ -1870,6 +1917,15 @@ export default function CaixaPage() {
                           const row = { ...checklistOrder, status: 'DELIVERED', deliveredAt: now }
                           const events = [{ table: 'orders', row, unit_id: unitId }]
                           await fetch(hubUrl + '/push', { method: 'POST', headers, body: JSON.stringify({ events }) })
+                        } catch {}
+                      })()
+                      ;(async () => {
+                        try {
+                          await ordersService.closeOrder(String(checklistOrder.id) as any)
+                        } catch {}
+                        try {
+                          const tId = (checklistOrder as any)?.ticketId || checklistOrder.id
+                          await kdsService.setTicketStatus(String(tId), 'done')
                         } catch {}
                       })()
                       showSuccess(`Pedido #${checklistOrder.pin} marcado como entregue.`);

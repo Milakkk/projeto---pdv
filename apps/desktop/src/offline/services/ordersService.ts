@@ -22,6 +22,45 @@ const uuid = () =>
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`
 
+async function setDeliveredPhaseTime(orderId: UUID, deliveredAtIso: string) {
+  const now = new Date().toISOString()
+
+  try {
+    await query(
+      'INSERT INTO kds_phase_times (order_id, new_start, preparing_start, ready_at, delivered_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(order_id) DO UPDATE SET delivered_at=COALESCE(delivered_at, excluded.delivered_at), updated_at=excluded.updated_at',
+      [orderId, null, null, null, deliveredAtIso, now],
+    )
+    return
+  } catch {}
+
+  if (supabase) {
+    try {
+      const { data: existing } = await supabase
+        .from('kds_phase_times')
+        .select('id, delivered_at')
+        .eq('order_id', orderId)
+        .maybeSingle()
+
+      const payload: any = { order_id: orderId, updated_at: now }
+      if (!existing?.delivered_at) payload.delivered_at = deliveredAtIso
+      if (existing?.id) {
+        await supabase.from('kds_phase_times').update(payload).eq('id', existing.id)
+      } else {
+        await supabase.from('kds_phase_times').insert({ ...payload, delivered_at: deliveredAtIso })
+      }
+      return
+    } catch {}
+  }
+
+  try {
+    const raw = localStorage.getItem('kdsPhaseTimes')
+    const obj = raw ? JSON.parse(raw) : {}
+    const cur = obj[String(orderId)] || {}
+    obj[String(orderId)] = { ...cur, deliveredAt: cur.deliveredAt ?? deliveredAtIso, updatedAt: now }
+    localStorage.setItem('kdsPhaseTimes', JSON.stringify(obj))
+  } catch {}
+}
+
 export async function createOrder(payload?: {
   id?: UUID
   deviceId?: string | null
@@ -249,19 +288,28 @@ export async function removeItem(itemId: UUID) {
 export async function closeOrder(orderId: UUID) {
   const now = new Date().toISOString()
   if (supabase) {
+    const { data: existing, error: selErr } = await supabase
+      .from('orders')
+      .select('completed_at')
+      .eq('id', orderId)
+      .maybeSingle()
+    if (selErr) throw selErr
+    const completedAt = (existing as any)?.completed_at ?? now
     const { error } = await supabase
       .from('orders')
-      .update({ status: 'DELIVERED', completed_at: now, updated_at: now })
+      .update({ status: 'DELIVERED', completed_at: completedAt, updated_at: now })
       .eq('id', orderId)
     if (error) throw error
   } else {
-    await query('UPDATE orders SET status = ?, closed_at = ?, updated_at = ?, pending_sync = 1 WHERE id = ?', [
+    await query('UPDATE orders SET status = ?, closed_at = COALESCE(closed_at, ?), updated_at = ?, pending_sync = 1 WHERE id = ?', [
       'closed',
       now,
       now,
       orderId,
     ])
   }
+
+  await setDeliveredPhaseTime(orderId, now)
 }
 
 export async function cancelOrder(orderId: UUID) {
@@ -273,13 +321,47 @@ export async function cancelOrder(orderId: UUID) {
       .eq('id', orderId)
     if (error) throw error
   } else {
-    await query('UPDATE orders SET status = ?, closed_at = ?, updated_at = ?, pending_sync = 1 WHERE id = ?', [
+    await query('UPDATE orders SET status = ?, closed_at = COALESCE(closed_at, ?), updated_at = ?, pending_sync = 1 WHERE id = ?', [
       'cancelled',
       now,
       now,
       orderId,
     ])
   }
+}
+
+export async function clearLocalOrders() {
+  try {
+    const api = (window as any)?.api?.db?.query
+    if (typeof api === 'function') {
+      const statements = [
+        'DELETE FROM kds_unit_states',
+        'DELETE FROM kds_phase_times',
+        'DELETE FROM kds_tickets',
+        'DELETE FROM payments',
+        'DELETE FROM order_items',
+        'DELETE FROM orders_details',
+        'DELETE FROM orders',
+      ]
+
+      for (const sql of statements) {
+        try {
+          await query(sql)
+        } catch {}
+      }
+      return
+    }
+  } catch {}
+
+  try {
+    localStorage.removeItem('orders')
+    localStorage.removeItem('order_items')
+    localStorage.removeItem('payments')
+    localStorage.removeItem('orders_details')
+    localStorage.removeItem('kdsTickets')
+    localStorage.removeItem('kdsPhaseTimes')
+    localStorage.removeItem('kdsUnitState')
+  } catch {}
 }
 
 export async function listOrders(limit = 100) {
