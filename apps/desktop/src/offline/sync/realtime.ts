@@ -9,12 +9,29 @@ function upsertLocal(tableKey: keyof typeof ALL_TABLES, payload: any) {
   // @ts-expect-error dynamic table
   const table = ALL_TABLES[tableKey]
   const row = payload?.new ?? payload?.record ?? payload
-  if (!row || !row.id) return
-  db
-    .insert(table)
-    .values({ ...row, pendingSync: 0 })
-    .onConflictDoUpdate({ target: [table.id], set: { ...row, pendingSync: 0 } })
-    .run?.()
+  if (!row) return
+
+  try {
+    const conflictTarget = table.id || table.orderId || table.key;
+    if (!conflictTarget) return;
+
+    const cleanRow: any = { ...row, pendingSync: 0 };
+    // Mapeamento de nomes de colunas se necessário (Supabase snake_case para Drizzle camelCase se não houver mapeamento automático)
+    // O Drizzle costuma lidar com isso se as colunas forem definidas com o nome correto no DB.
+    
+    // Se a tabela local não tem 'id' mas o payload tem, e o PK local é outro (ex: order_id)
+    if (row.id && !table.id && table.orderId && row.order_id) {
+        delete cleanRow.id;
+    }
+
+    db
+      .insert(table)
+      .values(cleanRow)
+      .onConflictDoUpdate({ target: [conflictTarget], set: cleanRow })
+      .run?.()
+  } catch (e) {
+    console.error(`[Realtime] DB Insert failed for ${String(tableKey)}`, e)
+  }
 }
 
 export function startRealtime() {
@@ -37,6 +54,8 @@ export function startRealtime() {
     'savedCarts',
     'kitchenOperators',
     'globalObservations',
+    'kdsUnitStates',
+    'kdsPhaseTimes',
   ]
 
   for (const key of tables) {

@@ -229,7 +229,7 @@ async function persistUnitStateDb(orderId: string, itemId: string, unitId: strin
   
   try {
     await query(
-      'INSERT INTO kds_unit_states (id, order_id, item_id, unit_id, operator_name, unit_status, completed_observations_json, completed_at, delivered_at, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET operator_name=COALESCE(excluded.operator_name, operator_name), unit_status=COALESCE(excluded.unit_status, unit_status), completed_observations_json=COALESCE(excluded.completed_observations_json, completed_observations_json), completed_at=COALESCE(excluded.completed_at, completed_at), delivered_at=COALESCE(excluded.delivered_at, delivered_at), updated_at=excluded.updated_at, pending_sync=excluded.pending_sync',
+      'INSERT INTO kds_unit_states (id, order_id, order_item_id, production_unit_id, operator_name, unit_status, completed_observations_json, completed_at, delivered_at, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET operator_name=COALESCE(excluded.operator_name, operator_name), unit_status=COALESCE(excluded.unit_status, unit_status), completed_observations_json=COALESCE(excluded.completed_observations_json, completed_observations_json), completed_at=COALESCE(excluded.completed_at, completed_at), delivered_at=COALESCE(excluded.delivered_at, delivered_at), updated_at=excluded.updated_at, pending_sync=excluded.pending_sync',
       [id, orderId, itemId, unitId, operatorName, unitStatus, completedObservationsJson, completedAt, deliveredAt, now, 1, 1],
     )
   } catch (err) {
@@ -324,7 +324,10 @@ export async function loadUnitStatesForOrder(orderId: string): Promise<Record<st
   try {
     const res = await query('SELECT * FROM kds_unit_states WHERE order_id = ?', [orderId])
     for (const r of (res?.rows ?? [])) {
-      const key = `${String(r.order_id ?? r.orderId)}:${String(r.item_id ?? r.itemId)}:${String(r.unit_id ?? r.unitId)}`
+      // Use both new and old column names for compatibility during transition
+      const itemId = r.order_item_id ?? r.orderItemId ?? r.item_id ?? r.itemId
+      const unitId = r.production_unit_id ?? r.productionUnitId ?? r.unit_id ?? r.unitId
+      const key = `${String(r.order_id ?? r.orderId)}:${String(itemId)}:${String(unitId)}`
       map[key] = {
         operatorName: r.operator_name ?? r.operatorName ?? undefined,
         unitStatus: r.unit_status ?? r.unitStatus ?? undefined,

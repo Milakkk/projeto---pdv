@@ -38,7 +38,7 @@ export default defineConfig({
   },
   build: {
     sourcemap: false, // Desabilitar sourcemaps em produção para build mais rápido
-    outDir: 'out',
+    outDir: 'dist',
     emptyOutDir: true,
     rollupOptions: {
       external: ['better-sqlite3'],

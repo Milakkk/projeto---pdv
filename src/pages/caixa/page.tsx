@@ -322,6 +322,11 @@ export default function CaixaPage() {
   // --- Funções de Manipulação do Carrinho ---
 
   const handleAddToCart = (item: MenuItem, observations?: string) => {
+    if (!isOperationalSessionOpen) {
+      displayAlert('Sessão Necessária', 'É necessário iniciar uma sessão operacional para registrar vendas.', 'info');
+      return;
+    }
+
     if (!isCashOpen) {
       displayAlert('Caixa Fechado', 'É necessário abrir o caixa para registrar vendas.', 'info');
       return;

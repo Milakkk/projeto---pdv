@@ -12,7 +12,8 @@ import { Order, KitchenOperator, Category, ProductionUnit, OperationalSession } 
 import { useOffline } from '../../hooks/useOffline';
 import Button from '../../components/base/Button';
 import { mockCategories } from '../../mocks/data';
-import { showSuccess } from '../../utils/toast';
+import { showSuccess, showError, showInfo } from '../../utils/toast';
+import { supabase } from '../../utils/supabase';
 import ReadyOrderTable from './components/ReadyOrderTable';
 import { useAuth } from '../../context/AuthContext';
 import Modal from '../../components/base/Modal';
@@ -36,6 +37,7 @@ export default function CozinhaPage() {
   const { kitchens } = useKitchens();
   const { openKitchenSession, closeKitchenSession, isKitchenOnline, getKitchenSession } = useKitchenSessions();
   
+  const { isOnline } = useOffline();
   const [orders, setOrders] = useLocalStorage<Order[]>('orders', []);
   const [operators, setOperators] = useLocalStorage<KitchenOperator[]>('kitchenOperators', []);
   const [categories] = useLocalStorage<Category[]>('categories', mockCategories);
@@ -89,7 +91,7 @@ export default function CozinhaPage() {
     if (!selectedKitchen) return true;
     
     // Verifica se algum item do pedido pertence a uma categoria da cozinha selecionada
-    return order.items.some(item => {
+    return (order.items || []).some(item => {
       const category = categories.find(c => c.id === item.menuItem?.categoryId);
       if (!category) return true; // Item sem categoria aparece em todas as cozinhas
       
@@ -232,10 +234,6 @@ export default function CozinhaPage() {
     }
   }, [showDeliveryConfirmation, orderToDeliver]);
 
-import { supabase } from '../../utils/supabase'; // Adicionado import
-
-// ...
-
   const updateOrderStatus = (orderId: string, status: Order['status']) => {
     if (status === 'DELIVERED') {
       const order = orders.find(o => o.id === orderId);
@@ -272,9 +270,9 @@ import { supabase } from '../../utils/supabase'; // Adicionado import
           let nextOrder = { ...order, status, updatedAt: now };
 
           if (status === 'PREPARING' && order.status === 'NEW') {
-            const updatedItems = order.items.map(item => ({
+            const updatedItems = (order.items || []).map(item => ({
               ...item,
-              productionUnits: item.productionUnits.map(unit => ({
+              productionUnits: (item.productionUnits || []).map(unit => ({
                 ...unit,
                 unitStatus: unit.unitStatus || 'PENDING',
                 completedAt: undefined, 
@@ -287,9 +285,9 @@ import { supabase } from '../../utils/supabase'; // Adicionado import
           
           else if (status === 'READY' && order.status === 'PREPARING') {
               readyAt = now;
-              const updatedItems = order.items.map(item => ({
+              const updatedItems = (order.items || []).map(item => ({
                   ...item,
-                  productionUnits: item.productionUnits.map(unit => ({
+                  productionUnits: (item.productionUnits || []).map(unit => ({
                       ...unit,
                       unitStatus: 'READY' as ProductionUnit['unitStatus'],
                       completedAt: unit.unitStatus === 'READY' ? unit.completedAt : now, 
@@ -518,8 +516,6 @@ import { supabase } from '../../utils/supabase'; // Adicionado import
     });
   };
 
-  const { isOnline } = useOffline();
-  
   const productionOrders = useMemo(() => {
     return orders.filter(order => ['NEW', 'PREPARING'].includes(order.status));
   }, [orders]);

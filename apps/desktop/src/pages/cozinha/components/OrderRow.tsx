@@ -199,29 +199,9 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
     const nextStatus = getNextStatus(order.status);
     if (!nextStatus) return;
 
-    // Validação de atribuição de operador para NEW -> PREPARING
+    // Validação de atribuição de operador para NEW -> PREPARING (RELAXADA: Apenas alerta se não houver operadores)
     if (order.status === 'NEW' && nextStatus === 'PREPARING') {
-      if (operators.length === 0) {
-        onDisplayAlert(
-          'Ação Necessária', 
-          'Não há operadores cadastrados. Adicione um operador para iniciar o preparo.', 
-          'info'
-        );
-        return;
-      }
-      
-      // Verifica se TODAS as unidades têm um operador
-      const allAssigned = kitchenItems.every(item => 
-        (item.productionUnits || []).every(unit => !!unit.operatorName)
-      );
-      if (!allAssigned) {
-        onDisplayAlert(
-          'Ação Necessária', 
-          'É necessário atribuir um operador a todas as unidades antes de iniciar o preparo.', 
-          'info'
-        );
-        return;
-      }
+      console.log('Iniciando preparo (sem validação estrita de operadores)');
     }
     
     // Validação para PREPARING -> READY
@@ -480,7 +460,7 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
               onClick={handleAction} 
               className="w-full lg:w-auto whitespace-nowrap"
               variant={getActionVariant(order.status)}
-              disabled={(order.status === 'NEW' && (operators.length === 0 || !allUnitsAssignedStatus)) || (order.status === 'PREPARING' && !allUnitsReadyStatus)}
+              disabled={(order.status === 'PREPARING' && !allUnitsReadyStatus)}
             >
               {getStatusAction(order.status)}
             </Button>
@@ -757,7 +737,7 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
                     className="flex-1 min-w-[45%]"
                     size="sm"
                     variant={getActionVariant(order.status)}
-                    disabled={(order.status === 'NEW' && (operators.length === 0 || !allUnitsAssignedStatus)) || (order.status === 'PREPARING' && !isOrderReadyForNextStepStatus)} 
+                    disabled={(order.status === 'PREPARING' && !isOrderReadyForNextStepStatus)} 
                   >
                     {nextStatusAction}
                   </Button>

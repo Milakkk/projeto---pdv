@@ -114,20 +114,37 @@ async function fetchFullOrder(orderId: string) {
 
 async function upsertLocal(tableKey: keyof typeof ALL_TABLES, payload: any) {
   const row = payload?.new ?? payload?.record ?? payload
-  if (!row || !row.id) return
+  if (!row) return
 
   // 1. Electron / DB Mode
   if (db) {
     // @ts-expect-error dynamic table
     const table = ALL_TABLES[tableKey]
     try {
+        // Encontrar a coluna de ID correta para o onConflict
+        // A maioria usa 'id', mas alguns usam 'orderId'
+        const conflictTarget = table.id || table.orderId || table.key;
+        
+        if (!conflictTarget) {
+            console.warn(`[Realtime] No primary key found for table ${String(tableKey)}`);
+            return;
+        }
+
+        // Remover campos que não existem no schema local para evitar erros de inserção
+        const cleanRow: any = { ...row, pendingSync: 0 };
+        
+        // Se a tabela local não tem 'id' mas o payload tem, e o PK local é outro (ex: order_id)
+        if (row.id && !table.id && table.orderId && row.order_id) {
+            delete cleanRow.id;
+        }
+
         db
         .insert(table)
-        .values({ ...row, pendingSync: 0 })
-        .onConflictDoUpdate({ target: [table.id], set: { ...row, pendingSync: 0 } })
+        .values(cleanRow)
+        .onConflictDoUpdate({ target: [conflictTarget], set: cleanRow })
         .run?.()
     } catch (e) {
-        console.error('[Realtime] DB Insert failed', e)
+        console.error(`[Realtime] DB Insert failed for ${String(tableKey)}`, e)
     }
   } 
   
@@ -137,7 +154,8 @@ async function upsertLocal(tableKey: keyof typeof ALL_TABLES, payload: any) {
         'orders': 'orders',
         'categories': 'categories',
         'products': 'menuItems',
-        'kitchen_operators': 'kitchenOperators',
+        'kitchenOperators': 'kitchenOperators',
+        'kdsUnitStates': 'kdsUnitStates',
       };
 
       const storageKey = storageMap[tableKey as string];
@@ -205,6 +223,8 @@ export function startRealtime() {
     'savedCarts',
     'kitchenOperators',
     'globalObservations',
+    'kdsUnitStates',
+    'kdsPhaseTimes',
   ]
 
   for (const key of tables) {

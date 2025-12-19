@@ -1,6 +1,7 @@
 node_modules
 .git
 .vercel
+dist
 .trae
 electron
 release
@@ -19,21 +20,20 @@ apps/desktop/scripts
 apps/web-dashboard
 apps/mobile
 apps/hub
-packages
 scripts
 lan-sync-store
 *.exe
 *.asar
 *.7z
-out
 apps/**/out
+apps/**/dist
 apps/desktop/out
+apps/desktop/dist
 *.bat
 *.ps1
 *.sh
 SERVIDOR-STATUS.txt
 start-server.bat
 INICIAR-SERVIDOR.ps1
-
 
 

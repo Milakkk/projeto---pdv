@@ -50,6 +50,7 @@ export const deviceProfile = sqliteTable(
     deviceId: text("device_id").notNull(),
     role: text("role", { enum: ["pos", "kds", "admin"] }).notNull(),
     station: text("station"),
+    acknowledgedAt: text("acknowledged_at"),
     updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   (t) => ({
@@ -231,8 +232,8 @@ export const kdsUnitStates = sqliteTable(
     orderId: text("order_id")
       .notNull()
       .references(() => orders.id, { onDelete: "cascade" }),
-    itemId: text("item_id").notNull(),
-    unitId: text("unit_id").notNull(),
+    orderItemId: text("order_item_id").notNull(),
+    productionUnitId: text("production_unit_id").notNull(),
     operatorName: text("operator_name"),
     unitStatus: text("unit_status"),
     completedObservationsJson: text("completed_observations_json"),
@@ -245,9 +246,19 @@ export const kdsUnitStates = sqliteTable(
       .default(false),
   },
   (t) => ({
-    uniqueKey: uniqueIndex("ux_kds_unit_key").on(t.orderId, t.itemId, t.unitId),
+    uniqueKey: uniqueIndex("ux_kds_unit_key").on(t.orderId, t.orderItemId, t.productionUnitId),
   }),
 );
+
+export const kdsSyncLogs = sqliteTable("kds_sync_logs", {
+  id: text("id").primaryKey(),
+  ticketId: text("ticket_id").references(() => kdsTickets.id),
+  orderId: text("order_id"),
+  eventType: text("event_type").notNull(), // 'RECEIVED', 'SYNC_DELAY'
+  latencyMs: integer("latency_ms"),
+  payload: text("payload"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
 
 // Detalhes adicionais dos pedidos (pin, password)
 export const ordersDetails = sqliteTable("orders_details", {

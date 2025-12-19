@@ -38,6 +38,7 @@ const createProductionUnits = (quantity: number): ProductionUnit[] => {
 };
 
 export default function CozinhaPage() {
+  const { isOnline } = useOffline();
   const { user, store } = useAuth();
   const navigate = useNavigate();
 
@@ -1004,6 +1005,9 @@ export default function CozinhaPage() {
   }, [showDeliveryConfirmation, orderToDeliver]);
 
   const updateOrderStatus = (orderId: string, status: Order['status']) => {
+    // Debug
+    console.log(`[Cozinha] updateOrderStatus chamado para pedido ${orderId} com status ${status}`);
+
     if (status === 'DELIVERED') {
       const order = orders.find(o => o.id === orderId);
       if (order) {
@@ -1012,6 +1016,14 @@ export default function CozinhaPage() {
       }
       return;
     }
+
+    // Optimistic Update: Atualiza UI imediatamente
+    setOrders(prev => prev.map(o => {
+      if (o.id === orderId) {
+        return { ...o, status: status, updatedAt: new Date() };
+      }
+      return o;
+    }));
 
     pendingStatusRef.current[String(orderId)] = { status, until: Date.now() + 8000 }
 
@@ -1094,17 +1106,17 @@ export default function CozinhaPage() {
       }
     })();
 
-    startTransition(() => {
-      setOrders(prevOrders => prevOrders.map(order => {
-        if (order.id === orderId) {
-          const now = new Date();
+    // Atualização local imediata para feedback instantâneo
+    setOrders(prevOrders => prevOrders.map(order => {
+      if (String(order.id) === String(orderId)) {
+        const now = new Date();
           let readyAt = order.readyAt;
           let updatedAt = order.updatedAt;
 
           if (status === 'PREPARING' && order.status === 'NEW') {
-            const updatedItems = order.items.map(item => ({
+            const updatedItems = (order.items || []).map(item => ({
               ...item,
-              productionUnits: item.productionUnits.map(unit => ({
+              productionUnits: (item.productionUnits || []).map(unit => ({
                 ...unit,
                 unitStatus: unit.unitStatus || 'PENDING',
                 completedAt: undefined,
@@ -1116,9 +1128,9 @@ export default function CozinhaPage() {
 
           if (status === 'READY' && order.status === 'PREPARING') {
             readyAt = now;
-            const updatedItems = order.items.map(item => ({
+            const updatedItems = (order.items || []).map(item => ({
               ...item,
-              productionUnits: item.productionUnits.map(unit => ({
+              productionUnits: (item.productionUnits || []).map(unit => ({
                 ...unit,
                 unitStatus: 'READY' as ProductionUnit['unitStatus'],
                 completedAt: unit.unitStatus === 'READY' ? unit.completedAt : now,
@@ -1143,8 +1155,7 @@ export default function CozinhaPage() {
           return { ...order, status, updatedAt: now, readyAt };
         }
         return order;
-      }));
-    });
+    }));
   };
 
   // NOVO: Atualizar progresso de entrega direta por item (salvar entrega parcial)

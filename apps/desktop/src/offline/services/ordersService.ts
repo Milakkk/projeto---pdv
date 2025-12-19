@@ -516,8 +516,8 @@ export async function listOrdersDetailed(limit = 100): Promise<Array<{ order: an
       const unitStatesByOrder: Record<string, any> = {}
       for (const u of (unitStatesRes?.rows ?? [])) {
         const oid = String((u as any).order_id ?? (u as any).orderId ?? '')
-        const itemId = String((u as any).item_id ?? (u as any).itemId ?? '')
-        const unitId = String((u as any).unit_id ?? (u as any).unitId ?? '')
+        const itemId = String((u as any).order_item_id ?? (u as any).orderItemId ?? (u as any).item_id ?? (u as any).itemId ?? '')
+        const unitId = String((u as any).production_unit_id ?? (u as any).productionUnitId ?? (u as any).unit_id ?? (u as any).unitId ?? '')
         if (!unitStatesByOrder[oid]) unitStatesByOrder[oid] = {}
         const key = `${itemId}:${unitId}`
         unitStatesByOrder[oid][key] = {

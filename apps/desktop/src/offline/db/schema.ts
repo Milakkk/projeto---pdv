@@ -272,8 +272,8 @@ export const kdsUnitStates = sqliteTable(
     orderId: text("order_id")
       .notNull()
       .references(() => orders.id, { onDelete: "cascade" }),
-    itemId: text("item_id").notNull(),
-    unitId: text("unit_id").notNull(),
+    orderItemId: text("order_item_id").notNull(),
+    productionUnitId: text("production_unit_id").notNull(),
     operatorName: text("operator_name"),
     unitStatus: text("unit_status"),
     completedObservationsJson: text("completed_observations_json"),
@@ -286,7 +286,7 @@ export const kdsUnitStates = sqliteTable(
       .default(false),
   },
   (t) => ({
-    uniqueKey: uniqueIndex("ux_kds_unit_key").on(t.orderId, t.itemId, t.unitId),
+    uniqueKey: uniqueIndex("ux_kds_unit_key").on(t.orderId, t.orderItemId, t.productionUnitId),
   }),
 );
 
