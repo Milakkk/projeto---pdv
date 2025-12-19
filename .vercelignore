@@ -1,5 +1,7 @@
 node_modules
 .git
+.vercel
+.trae
 electron
 release
 .data
@@ -9,9 +11,11 @@ release
 .env.local
 .DS_Store
 *.log
+*.md
 _nao-usar-producao
 apps/desktop/release
 apps/desktop/electron
+apps/desktop/scripts
 apps/web-dashboard
 apps/mobile
 apps/hub

@@ -2,9 +2,9 @@
   "projectId": "prj_pdv_sistema",
   "orgId": "team_vercel",
   "settings": {
-    "buildCommand": "cd apps/desktop && npm run build",
-    "outputDirectory": "apps/desktop/dist",
-    "devCommand": "cd apps/desktop && npm run dev:browser",
-    "installCommand": "cd apps/desktop && npm install"
+    "buildCommand": "pnpm --filter desktop build",
+    "outputDirectory": "apps/desktop/out",
+    "devCommand": "pnpm --filter desktop dev:browser",
+    "installCommand": "pnpm install --frozen-lockfile"
   }
 }
