@@ -5,6 +5,7 @@ import { useTimer } from '../../../hooks/useTimer'; // Importando useTimer
 import { printOrder } from '../../../utils/print'; // Importando a função de impressão
 import { useAuth } from '../../../context/AuthContext';
 import Modal from '../../../components/base/Modal';
+import { formatDurationSeconds, normalizeSlaMinutes } from '../../../utils/time';
 
 interface ReadyOrderTableProps {
   readyOrders: Order[];
@@ -15,20 +16,6 @@ interface ReadyOrderTableProps {
   // NOVO: Confirmar entrega diretamente na Cozinha sem abrir checklist do Caixa
   onConfirmDelivery?: (orderId: string) => void;
 }
-
-// Função auxiliar para formatar a duração (copiada de DeliveredOrderList)
-const formatDuration = (seconds: number) => {
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  
-  if (mins === 0 && secs === 0) return '0s';
-  
-  const parts = [];
-  if (mins > 0) parts.push(`${mins.toString().padStart(2, '0')}m`);
-  if (secs > 0) parts.push(`${secs.toString().padStart(2, '0')}s`);
-  
-  return parts.join(' ');
-};
 
 // Função auxiliar para extrair opções obrigatórias (agora com nome do grupo)
 const extractRequiredOptions = (observations: string | undefined): string[] => {
@@ -49,6 +36,12 @@ const extractOptionalObservations = (observations: string | undefined): string[]
         .filter(p => p.length > 0);
 };
 
+const formatOrderPin = (pin: string) => {
+  const raw = String(pin ?? '').trim()
+  if (!raw) return '#-'
+  return `#${raw.replace(/^#+/, '')}`
+}
+
 // Componente auxiliar para exibir o tempo de espera (tempo desde que ficou pronto)
 function ReadyTimeStatus({ order }: { order: Order }) {
   // O timer deve medir o tempo desde que o status mudou para READY (usando readyAt ou updatedAt)
@@ -67,6 +60,7 @@ function ReadyTimeStatus({ order }: { order: Order }) {
 
 // Componente auxiliar para exibir o tempo de produção e SLA
 function KitchenTimeStatus({ order }: { order: Order }) {
+  const slaMinutes = normalizeSlaMinutes(order.slaMinutes, 15)
   const { totalTimeSeconds, wasLate, newTimeSeconds, preparingTimeSeconds } = useMemo(() => {
     const createdAt = new Date(order.createdAt).getTime();
     
@@ -81,7 +75,7 @@ function KitchenTimeStatus({ order }: { order: Order }) {
       
     // 1. Tempo Cozinha (Total NEW + PREPARING)
     const totalTimeSeconds = Math.floor((readyAtTime - createdAt) / 1000);
-    const wasLate = (totalTimeSeconds / 60) > order.slaMinutes;
+    const wasLate = (totalTimeSeconds / 60) > slaMinutes;
     
     // 2. Tempo de Espera (NEW)
     const newTimeSeconds = Math.floor((preparingStartTime - createdAt) / 1000);
@@ -95,21 +89,21 @@ function KitchenTimeStatus({ order }: { order: Order }) {
       newTimeSeconds: Math.max(0, newTimeSeconds),
       preparingTimeSeconds: Math.max(0, preparingTimeSeconds),
     };
-  }, [order]);
+  }, [order, slaMinutes]);
 
   return (
     <div className="text-sm font-medium flex flex-col space-y-1">
       <span className="text-gray-600">Tempo Cozinha:</span>
       <span className={`font-bold text-lg ${wasLate ? 'text-red-600' : 'text-green-600'}`}>
-        {formatDuration(totalTimeSeconds)}
+        {formatDurationSeconds(totalTimeSeconds)}
       </span>
       <span className="text-xs text-gray-500">
-        Espera: {formatDuration(newTimeSeconds)}
+        Espera: {formatDurationSeconds(newTimeSeconds)}
       </span>
       <span className="text-xs text-gray-500">
-        Preparo: {formatDuration(preparingTimeSeconds)}
+        Preparo: {formatDurationSeconds(preparingTimeSeconds, { minSeconds: 1 })}
       </span>
-      <span className="text-xs text-gray-500">SLA: {order.slaMinutes}m</span>
+      <span className="text-xs text-gray-500">SLA: {slaMinutes}m</span>
     </div>
   );
 }
@@ -183,14 +177,18 @@ export default function ReadyOrderTable({ readyOrders, onUpdateStatus, onUpdateD
                   const unitsPerItem = Math.max(1, di.menuItem.unitDeliveryCount || 1);
                   return acc + Math.max(1, di.quantity * unitsPerItem);
                 }, 0);
-                const deliveredUnitsSum = order.items.reduce((acc, di) => acc + Math.max(0, di.directDeliveredUnitCount || 0), 0);
+                const deliveredUnitsSum = order.items.reduce((acc, di) => {
+                  const units = Array.isArray(di.productionUnits) ? di.productionUnits : [];
+                  const deliveredPerItem = units.filter(u => !!u.deliveredAt || order.status === 'DELIVERED').length;
+                  return acc + deliveredPerItem;
+                }, 0);
                 const isPartiallyDelivered = deliveredUnitsSum > 0 && deliveredUnitsSum < totalUnitsSum;
                 
                 return (
                   <tr key={order.id} className="hover:bg-green-50/50">
                     <td className="px-4 py-4 align-top">
                       <span className="bg-amber-100 text-amber-800 px-2 py-1 rounded-full text-xs font-bold inline-block w-fit">
-                        #{order.pin}
+                        {formatOrderPin(order.pin)}
                       </span>
                       {isPartiallyDelivered && (
                         <div className="mt-1 inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200">
@@ -227,7 +225,9 @@ export default function ReadyOrderTable({ readyOrders, onUpdateStatus, onUpdateD
                         {order.items.map((item, index) => {
                           const requiredOptions = extractRequiredOptions(item.observations);
                           const optionalObservations = extractOptionalObservations(item.observations);
-                          const deliveredCountForItem = Math.max(0, item.directDeliveredUnitCount || 0);
+                          const deliveredCountForItem = Array.isArray(item.productionUnits)
+                            ? item.productionUnits.filter(u => !!u.deliveredAt || order.status === 'DELIVERED').length
+                            : Math.max(0, item.directDeliveredUnitCount || 0);
                           const totalUnitsForItem = Math.max(1, item.quantity * Math.max(1, item.menuItem.unitDeliveryCount || 1));
                           const isItemPartiallyDelivered = deliveredCountForItem > 0 && deliveredCountForItem < totalUnitsForItem;
                           
@@ -277,13 +277,13 @@ export default function ReadyOrderTable({ readyOrders, onUpdateStatus, onUpdateD
                                     : 'N/A';
                                   // Indicação de entrega por unidade: usar timestamp por índice quando existir; senão, entregue quando o pedido estiver DELIVERED
                                   const deliveredTimesArr = item.directDeliveredUnitTimes || [];
-                                  const isUnitDelivered = !!deliveredTimesArr[unitIndex] || (order.status === 'DELIVERED');
+                                  const isUnitDelivered = !!unit.deliveredAt || !!deliveredTimesArr[unitIndex] || (order.status === 'DELIVERED');
                                   // Exibir horário de entrega:
                                   // - Entrega direta: quando a unidade está entregue, usar timestamp por unidade ou fallback do pedido
                                   // - Itens de cozinha: quando o pedido inteiro está entregue, usar order.deliveredAt
                                   const shouldShowDeliveredTime = isUnitDelivered;
                                   const deliveredDate = shouldShowDeliveredTime
-                                    ? (deliveredTimesArr[unitIndex] || (order.status === 'DELIVERED' && order.deliveredAt ? new Date(order.deliveredAt) : undefined))
+                                    ? (unit.deliveredAt ? new Date(unit.deliveredAt) : (deliveredTimesArr[unitIndex] || (order.status === 'DELIVERED' && order.deliveredAt ? new Date(order.deliveredAt) : undefined)))
                                     : undefined;
                                   const deliveredTime = deliveredDate
                                     ? new Date(deliveredDate).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })

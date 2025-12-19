@@ -51,35 +51,70 @@ export async function listPrices() {
 }
 
 export async function upsertPrice(params: { id?: UUID; ingredientId: string; unit: string; pricePerUnitCents: number }) {
-  const id = params.id ?? uuid()
   const now = new Date().toISOString()
   const cents = Math.max(0, params.pricePerUnitCents)
+  
   try {
+    // Primeiro, verifica se já existe um preço para esse ingrediente e unidade
     const prev = await query('SELECT id, price_per_unit_cents FROM ingredient_prices WHERE ingredient_id = ? AND unit = ?', [params.ingredientId, params.unit])
-    const oldCents = prev.rows && prev.rows[0]?.price_per_unit_cents
-    await query(
-      'INSERT INTO ingredient_prices (id, ingredient_id, unit, price_per_unit_cents, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET ingredient_id=excluded.ingredient_id, unit=excluded.unit, price_per_unit_cents=excluded.price_per_unit_cents, updated_at=excluded.updated_at',
-      [id, params.ingredientId, params.unit, cents, now]
-    )
-    if (typeof oldCents === 'number' && oldCents !== cents) {
-      const hid = uuid()
-      await query('INSERT INTO ingredient_price_history (id, ingredient_id, unit, old_price_cents, new_price_cents, changed_at) VALUES (?, ?, ?, ?, ?, ?)', [hid, params.ingredientId, params.unit, oldCents, cents, now])
+    const existingRow = prev.rows && prev.rows[0]
+    const existingId = existingRow?.id
+    const oldCents = existingRow?.price_per_unit_cents
+    
+    // Se já existe, atualiza; caso contrário, insere novo
+    if (existingId) {
+      await query(
+        'UPDATE ingredient_prices SET price_per_unit_cents = ?, updated_at = ? WHERE id = ?',
+        [cents, now, existingId]
+      )
+      // Registra histórico se preço mudou
+      if (typeof oldCents === 'number' && oldCents !== cents) {
+        const hid = uuid()
+        await query('INSERT INTO ingredient_price_history (id, ingredient_id, unit, old_price_cents, new_price_cents, changed_at) VALUES (?, ?, ?, ?, ?, ?)', [hid, params.ingredientId, params.unit, oldCents, cents, now])
+      }
+      return existingId
+    } else {
+      const id = params.id ?? uuid()
+      await query(
+        'INSERT INTO ingredient_prices (id, ingredient_id, unit, price_per_unit_cents, updated_at) VALUES (?, ?, ?, ?, ?)',
+        [id, params.ingredientId, params.unit, cents, now]
+      )
+      return id
     }
   } catch {
+    // Fallback: localStorage
     const list = await listPrices()
-    const next = [{ id, ingredient_id: params.ingredientId, unit: params.unit, price_per_unit_cents: cents, updated_at: now }, ...list.filter((p:any)=>p.id!==id)]
+    
+    // Verifica se já existe no localStorage
+    const existingIndex = list.findIndex((p:any) => 
+      String(p.ingredient_id) === String(params.ingredientId) && 
+      String(p.unit).toLowerCase() === String(params.unit).toLowerCase()
+    )
+    const oldPrice = existingIndex >= 0 ? list[existingIndex] : null
+    const id = oldPrice?.id || params.id || uuid()
+    
+    // Remove o antigo se existir
+    const filtered = list.filter((p:any) => 
+      !(String(p.ingredient_id) === String(params.ingredientId) && 
+        String(p.unit).toLowerCase() === String(params.unit).toLowerCase())
+    )
+    
+    // Adiciona o novo/atualizado
+    const next = [{ id, ingredient_id: params.ingredientId, unit: params.unit, price_per_unit_cents: cents, updated_at: now }, ...filtered]
     localStorage.setItem('ingredientPrices', JSON.stringify(next))
+    
+    // Histórico de preços
     try {
-      const historyRaw = localStorage.getItem('ingredientPriceHistory')
-      const hist = historyRaw ? JSON.parse(historyRaw) : []
-      const old = list.find((p:any)=> String(p.ingredient_id) === String(params.ingredientId) && String(p.unit).toLowerCase() === String(params.unit).toLowerCase())
-      if (old && old.price_per_unit_cents !== cents) {
-        hist.push({ id: uuid(), ingredient_id: params.ingredientId, unit: params.unit, old_price_cents: old.price_per_unit_cents, new_price_cents: cents, changed_at: now })
+      if (oldPrice && oldPrice.price_per_unit_cents !== cents) {
+        const historyRaw = localStorage.getItem('ingredientPriceHistory')
+        const hist = historyRaw ? JSON.parse(historyRaw) : []
+        hist.push({ id: uuid(), ingredient_id: params.ingredientId, unit: params.unit, old_price_cents: oldPrice.price_per_unit_cents, new_price_cents: cents, changed_at: now })
         localStorage.setItem('ingredientPriceHistory', JSON.stringify(hist))
       }
     } catch {}
+    
+    return id
   }
-  return id
 }
 
 export async function deletePrice(id: string) {

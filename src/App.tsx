@@ -6,10 +6,14 @@ import ToastProvider from './components/feature/ToastProvider';
 import { runMigrationOnce } from '@/offline/bootstrap/migrateFromLocalStorage';
 import { startRealtime, stopRealtime } from '@/offline/sync/realtime';
 import { pushAll, pullAll } from '@/offline/sync/worker';
+import { useCatalogSync } from './hooks/useCatalogSync';
 
 // Componente Wrapper para lidar com o redirecionamento inicial
 function AppWrapper() {
   const { isAuthenticated } = useAuth();
+  
+  // Hook para sincronizar catálogo (Categorias e Produtos) do Supabase
+  useCatalogSync();
   
   // Rodar migração após primeiro mount
   useEffect(() => {

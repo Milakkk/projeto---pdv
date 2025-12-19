@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
-import { supabaseClient } from '../../../lib/supabaseClient'
+import { supabaseClient } from '../../../../lib/supabaseClient'
 
 export default function ExecPage({ params }: { params: { id: string } }) {
   const checklistId = params.id
@@ -73,4 +73,3 @@ export default function ExecPage({ params }: { params: { id: string } }) {
     </div>
   )
 }
-

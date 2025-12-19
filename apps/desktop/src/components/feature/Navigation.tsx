@@ -99,7 +99,7 @@ export default function Navigation() {
         
         {/* Botão de Voltar para o Dashboard */}
         <Link 
-          to="/role" 
+          to="/module-selector" 
           className="text-gray-500 hover:text-gray-700 text-sm font-medium flex items-center space-x-1"
           title="Voltar para a seleção de módulos"
         >

@@ -69,6 +69,9 @@ export default defineConfig({
     }),
   ],
   base, // Base dinâmica: './' para Electron (offline), '/' para preview
+  optimizeDeps: {
+    exclude: ['drizzle-orm/sqlite-core', 'better-sqlite3']
+  },
   build: {
     sourcemap: true,
     outDir: 'out',
@@ -80,6 +83,8 @@ export default defineConfig({
       '@db': resolve(__dirname, './packages/db/src'),
       '@auth': resolve(__dirname, './packages/auth/src'),
       '@ui': resolve(__dirname, './packages/ui/src'),
+      '@/offline/db/schema': resolve(__dirname, './src/offline/db/schema.browser.ts'),
+      'drizzle-orm/sqlite-core': resolve(__dirname, './apps/desktop/src/offline/db/sqlite-core-stub.ts'),
     }
   },
   server: {

@@ -15,12 +15,14 @@ import ConfirmationModal from '../../components/base/ConfirmationModal';
 import MovementConfirmationModal from './components/MovementConfirmationModal';
 import CodeListModal from './components/CodeListModal';
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom'
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import type { Category, MenuItem, OrderItem, Order, SavedCart, ProductionUnit, OperationalSession } from '../../types';
 import * as productsService from '../../offline/services/productsService';
 import * as cashService from '../../offline/services/cashService';
 import * as ordersService from '../../offline/services/ordersService';
 import * as kdsService from '../../offline/services/kdsService';
+import * as stationsService from '../../offline/services/stationsService';
 import { useOffline } from '../../hooks/useOffline';
 import Input from '../../components/base/Input';
 import Button from '../../components/base/Button';
@@ -58,8 +60,14 @@ interface CashSessionHistory extends CashOpeningData {
   finalAmountInputMode?: 'total' | 'breakdown'; // Adicionado
 }
 
+interface Kitchen {
+  id: string;
+  name: string;
+}
+
 export default function CaixaPage() {
   const { user, store } = useAuth();
+  const navigate = useNavigate()
   const [categories, setCategories] = useLocalStorage<Category[]>('categories', []);
   const [menuItemsLS] = useLocalStorage<MenuItem[]>('menuItems', []);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
@@ -69,6 +77,28 @@ export default function CaixaPage() {
   const [cartItems, setCartItems] = useState<OrderItem[]>([]);
   const [quickSearchCode, setQuickSearchCode] = useState('');
   const [selectedItemIndex, setSelectedItemIndex] = useState(0);
+  
+  // Filtro de Cozinha
+  const [kitchens, setKitchens] = useState<Kitchen[]>([]);
+  const [selectedKitchenId, setSelectedKitchenId] = useLocalStorage<string | null>('pdv_selected_kitchen_id', null);
+  const [categoryIdsByKitchen, setCategoryIdsByKitchen] = useState<Record<string,string[]>>({})
+  
+  // Seleção de Estação
+  const [showStationModal, setShowStationModal] = useState(false);
+  const [stations, setStations] = useState<any[]>([]);
+  const [currentStationId, setCurrentStationId] = useLocalStorage<string>('currentStationId', '');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const unitId = await productsService.getCurrentUnitId();
+        if (unitId) {
+          const list = await stationsService.listStations(unitId);
+          setStations(list || []);
+        }
+      } catch {}
+    })()
+  }, []);
   
   // Estados de Sessão e Caixa
   const [operationalSession, setOperationalSession] = useLocalStorage<OperationalSession | null>('currentOperationalSession', null);
@@ -144,9 +174,80 @@ export default function CaixaPage() {
       }
     })();
   }, []);
+
+  // Carregar cozinhas (Electron → DB local; Browser → Supabase)
+  useEffect(() => {
+    (async () => {
+      const api = (window as any)?.api;
+      try {
+        if (api?.db?.query) {
+          const result = await api.db.query('SELECT * FROM kitchens WHERE is_active = 1 ORDER BY display_order, name');
+          if (result?.rows) setKitchens(result.rows.map((k: any) => ({ id: k.id, name: k.name })));
+          return
+        }
+        const { supabase } = await import('../../utils/supabase')
+        if (!supabase) return
+        const { data, error } = await supabase
+          .from('kitchens')
+          .select('id,name,is_active,display_order')
+          .eq('is_active', true)
+          .order('display_order', { ascending: true })
+          .order('name', { ascending: true })
+        if (error) { console.error('Supabase kitchens error', error); return }
+        setKitchens((data || []).map((k:any)=>({ id:k.id, name:k.name })))
+        const { data: assoc } = await supabase
+          .from('category_kitchens')
+          .select('category_id,kitchen_id')
+        const map: Record<string,string[]> = {}
+        for (const r of (assoc||[])) {
+          const kid = String(r.kitchen_id)
+          const cid = String(r.category_id)
+          map[kid] = map[kid] || []
+          if (!map[kid].includes(cid)) map[kid].push(cid)
+        }
+        setCategoryIdsByKitchen(map)
+      } catch (err) {
+        console.error('Erro ao carregar cozinhas:', err);
+      }
+    })();
+  }, []);
+
+  // Inicializar associações padrão: mapear todas categorias para a cozinha "Mexicano" se ainda não houver associações
+  useEffect(() => {
+    (async () => {
+      const api = (window as any)?.api;
+      if (api?.db?.query) return;
+      try {
+        const { supabase } = await import('../../utils/supabase')
+        if (!supabase) return
+        const { data: anyAssoc } = await supabase.from('category_kitchens').select('id').limit(1)
+        if ((anyAssoc||[]).length > 0) {
+          if (import.meta.env.DEV) console.log('[Caixa] Já existem associações categoria-cozinha, pulando bootstrap')
+          return
+        }
+        const { data: ks } = await supabase.from('kitchens').select('id,name').eq('is_active', true)
+        if (!Array.isArray(ks) || ks.length===0) return
+        const mexican = ks.find(k=> String(k.name).toLowerCase()==='mexicano') || ks[0]
+        const kid = mexican?.id
+        if (!kid) return
+        const { data: cats } = await supabase.from('categories').select('id')
+        if (!Array.isArray(cats) || cats.length===0) return
+        const rows = cats.map(c => ({ category_id: c.id, kitchen_id: kid, updated_at: new Date().toISOString() }))
+        if (import.meta.env.DEV) console.log('[Caixa] Criando associações automáticas para cozinha Mexicano:', { cozinhaId: kid, categorias: cats.length })
+        const { error } = await supabase.from('category_kitchens').insert(rows)
+        if (error) {
+          console.error('[Caixa] Erro ao criar associações:', error)
+        } else {
+          if (import.meta.env.DEV) console.log('[Caixa] Associações criadas com sucesso')
+        }
+      } catch (err) {
+        console.error('[Caixa] Erro no bootstrap de associações:', err)
+      }
+    })()
+  }, [kitchens])
   
   // Acessando orders e savedCarts
-  const [orders, setOrders] = useLocalStorage<Order[]>('orders', []);
+  const [orders, setOrders] = useState<Order[]>([]);
   const [, setSavedCarts] = useLocalStorage<SavedCart[]>('savedCarts', []);
   
   // Estados para Modais
@@ -169,7 +270,8 @@ export default function CaixaPage() {
 
   const quickSearchRef = useRef<HTMLInputElement>(null);
   const navScopeRef = useRef<HTMLDivElement>(null);
-  const previousOrdersRef = useRef<Order[]>(orders);
+  const previousOrdersRef = useRef<Order[]>([]);
+  const readyAlertedRef = useRef<Set<string>>(new Set());
 
   const { isOnline, addPendingAction } = useOffline();
 
@@ -177,18 +279,22 @@ export default function CaixaPage() {
     const activeItems = menuItems.filter(item => item.active)
     if (!selectedCategory) return []
     if (selectedCategory === 'promo-combos') return activeItems.filter(it => it.isPromo)
-    const byDb = activeItems.filter(item => item.categoryId === selectedCategory)
+    let byDb = activeItems.filter(item => item.categoryId === selectedCategory)
+    const allowed = selectedKitchenId ? (categoryIdsByKitchen[selectedKitchenId] || []) : null
+    if (allowed) {
+      byDb = byDb.filter((it)=> allowed.includes(String(it.categoryId)))
+    }
     if (byDb.length > 0) return byDb
     const lsItems = (menuItemsLS || []).filter(it => it.active)
     const byLs = lsItems.filter(it => it.categoryId === selectedCategory)
     return byLs
-  }, [menuItems, selectedCategory, menuItemsLS])
+  }, [menuItems, selectedCategory, menuItemsLS, selectedKitchenId, categoryIdsByKitchen])
   useEffect(() => { setSelectedItemIndex(0) }, [selectedCategory])
 
   // Pedidos da sessão atual (apenas os vinculados à sessão operacional aberta)
   const sessionOrders = useMemo(() => {
     if (!operationalSession || operationalSession.status !== 'OPEN') return [] as Order[];
-    return orders.filter(o => o.operationalSessionId === operationalSession.id);
+    return orders.filter(o => (o.operationalSessionId === operationalSession.id) || !o.operationalSessionId);
   }, [orders, operationalSession]);
   
   // Pedidos ativos (NEW, PREPARING, READY) exclusivos da sessão atual
@@ -283,7 +389,8 @@ export default function CaixaPage() {
             active: true,
             isPromo: true,
           }
-          const finalCategories = [...baseCategories, promoCategory]
+          const withoutDupPromo = baseCategories.filter(cat => cat.id !== 'promo-combos')
+          const finalCategories = [...withoutDupPromo, promoCategory]
           setCategories(finalCategories);
           // Fallback para itens do armazenamento local quando o banco estiver vazio
           const finalMenuItems = (mappedMenuItems && mappedMenuItems.length > 0) ? mappedMenuItems : menuItemsLS;
@@ -306,14 +413,37 @@ export default function CaixaPage() {
     }
   }, [categories, selectedCategory, autoSelectCategory])
 
+  useEffect(() => {
+    if (!selectedKitchenId) return
+    const allowed = categoryIdsByKitchen[selectedKitchenId] || []
+    if (!allowed.length) return
+    const active = categories.filter(cat => (cat.active ?? true)).sort((a,b)=>a.order-b.order)
+    const firstAllowed = active.find(cat => allowed.includes(String(cat.id)))
+    if (firstAllowed && selectedCategory && !allowed.includes(String(selectedCategory))) {
+      setSelectedCategory(firstAllowed.id)
+    }
+  }, [selectedKitchenId, categoryIdsByKitchen, categories, selectedCategory])
+
   // Efeito para monitorar pedidos prontos e disparar notificação
   useEffect(() => {
     const previousOrders = previousOrdersRef.current;
-    
+    const alerted = readyAlertedRef.current
+
     orders.forEach(currentOrder => {
-      const previousOrder = previousOrders.find(o => o.id === currentOrder.id);
-      
-      if (currentOrder.status === 'READY' && previousOrder?.status !== 'READY') {
+      if (currentOrder.status !== 'READY') return
+
+      const currentId = String(currentOrder.id)
+      const previousOrder = previousOrders.find(o => String(o.id) === currentId);
+
+      const currentReadyAtMs = currentOrder.readyAt ? new Date(currentOrder.readyAt).getTime() : null
+      const previousReadyAtMs = previousOrder?.readyAt ? new Date(previousOrder.readyAt).getTime() : null
+      const readyKey = `${currentId}:${currentReadyAtMs ?? 'no-readyAt'}`
+
+      const becameReady = previousOrder?.status !== 'READY'
+      const changedReadyAt = currentReadyAtMs != null && currentReadyAtMs !== previousReadyAtMs
+
+      if ((becameReady || changedReadyAt) && !alerted.has(readyKey)) {
+        alerted.add(readyKey)
         showReadyAlert(`Pedido #${currentOrder.pin} (Senha: ${currentOrder.password}) está PRONTO para retirada!`);
       }
     });
@@ -424,31 +554,234 @@ export default function CaixaPage() {
     let mounted = true;
     const syncStatuses = async () => {
       try {
-        const [tkQueued, tkPrep, tkReady, tkDone] = await Promise.all([
-          kdsService.listTicketsByStatus('queued'),
-          kdsService.listTicketsByStatus('prep'),
-          kdsService.listTicketsByStatus('ready'),
-          kdsService.listTicketsByStatus('done'),
-        ]);
-        const mapIds = (arr: any[]) => (Array.isArray(arr) ? arr : []).map((t:any)=> String(t.order_id ?? t.orderId ?? t.id));
-        const queuedIds = mapIds(tkQueued)
-        const prepIds = mapIds(tkPrep)
-        const readyIds = mapIds(tkReady)
-        const doneIds = mapIds(tkDone)
+        const rows = await kdsService.listTicketStatusRows()
+        const queuedIds = new Set<string>()
+        const prepIds = new Set<string>()
+        const readyIds = new Set<string>()
+        const doneIds = new Set<string>()
+        for (const r of (Array.isArray(rows) ? rows : []) as any[]) {
+          const oid = String(r?.orderId ?? '')
+          const st = String(r?.status ?? '')
+          if (!oid) continue
+          if (st === 'queued') queuedIds.add(oid)
+          if (st === 'prep') prepIds.add(oid)
+          if (st === 'ready') readyIds.add(oid)
+          if (st === 'done') doneIds.add(oid)
+        }
         if (!mounted) return;
         setOrders(prev => prev.map(o => {
           const oid = String(o.id)
-          if (doneIds.includes(oid)) return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date() }
-          if (readyIds.includes(oid)) return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
-          if (prepIds.includes(oid)) return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date() }
-          if (queuedIds.includes(oid)) return { ...o, status: 'NEW', updatedAt: undefined, readyAt: undefined }
+          if (doneIds.has(oid)) return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date() }
+          if (readyIds.has(oid)) return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
+          if (prepIds.has(oid)) return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date() }
+          if (queuedIds.has(oid)) return o.status === 'NEW' ? o : o
           return o
         }))
       } catch {}
     };
     syncStatuses();
-    const timer = setInterval(syncStatuses, 2000);
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') syncStatuses()
+    }, 15000);
     return () => { mounted = false; clearInterval(timer); };
+  }, [setOrders])
+
+  // Pull periódico de pedidos do SQLite para refletir mudanças entre janelas
+  useEffect(() => {
+    let mounted = true;
+    const pullOrders = async () => {
+      try {
+        const detailed = await ordersService.listOrdersDetailed(200);
+        if (!mounted) return;
+        setOrders(prev => {
+          const map: Record<string, Order> = {};
+          for (const o of prev) map[String(o.id)] = o;
+          for (const d of (detailed || [])) {
+            const r: any = d.order;
+            const id = String(r.id);
+            const existing = map[id];
+            const times = (d as any).phaseTimes || {}
+            const rawLower = String(r.status || '').toLowerCase()
+            const rawUpper = String(r.status || '').toUpperCase()
+            const statusCandidate: Order['status'] = (() => {
+              if (rawLower === 'cancelled' || rawUpper === 'CANCELLED') return 'CANCELLED'
+              if (r.closed_at || r.completed_at || rawLower === 'closed' || rawUpper === 'DELIVERED') return 'DELIVERED'
+              if (times.deliveredAt) return 'DELIVERED'
+              if (times.readyAt) return 'READY'
+              if (times.preparingStart) return 'PREPARING'
+              if (rawUpper === 'READY') return 'READY'
+              if (rawUpper === 'PREPARING') return 'PREPARING'
+              if (rawLower === 'open' || rawUpper === 'NEW') return existing?.status || 'NEW'
+              return existing?.status || 'NEW'
+            })()
+
+            const statusRank: Record<string, number> = { NEW: 0, PREPARING: 1, READY: 2, DELIVERED: 3, CANCELLED: 3 }
+            const currentStatus = existing?.status ? String(existing.status).toUpperCase() : undefined
+            const nextRank = statusRank[String(statusCandidate).toUpperCase()] ?? 0
+            const curRank = statusRank[currentStatus || 'NEW'] ?? 0
+            const status: Order['status'] = (nextRank < curRank ? (existing?.status || statusCandidate) : (nextRank > curRank ? statusCandidate : (existing?.status || statusCandidate))) as any
+            const parsedSessionId = r.operational_session_id ? String(r.operational_session_id) : undefined;
+            const unitStates = (d as any).unitStates || {}
+            const items = (d.items || []).map((it: any) => {
+              const qty = Number(it.qty ?? it.quantity ?? 1)
+              const itemId = String(it.id)
+              const units = Array.from({ length: Math.max(1, qty) }, (_, idx) => {
+                const unitId = `${itemId}-${idx+1}`
+                const u = unitStates[`${itemId}:${unitId}`] || {}
+                return {
+                  unitId,
+                  unitStatus: u.unitStatus ?? 'PENDING',
+                  operatorName: u.operatorName ?? undefined,
+                  completedObservations: Array.isArray(u.completedObservations) ? u.completedObservations : [],
+                  completedAt: u.completedAt ?? undefined,
+                  deliveredAt: u.deliveredAt ?? undefined,
+                }
+              })
+              return {
+                id: itemId,
+                menuItem: {
+                  id: String(it.product_id ?? it.productId ?? String(it.id)),
+                  name: String(it.product_name ?? 'Item'),
+                  price: Math.max(0, Number(it.unit_price_cents ?? it.unitPriceCents ?? 0) / 100),
+                  sla: 0,
+                  categoryId: String(it.category_id ?? ''),
+                  observations: [],
+                  active: true,
+                } as any,
+                quantity: qty,
+                unitPrice: Math.max(0, Number(it.unit_price_cents ?? it.unitPriceCents ?? 0) / 100),
+                productionUnits: units,
+              }
+            }) as any;
+            const payments = d.payments || [];
+            const paid = (payments || []).reduce((s: number, p: any) => s + Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100), 0);
+            const breakdown = (payments || []).length > 1 ? Object.fromEntries((payments || []).map((p: any) => [String(p.method).toUpperCase(), Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100)])) : undefined;
+            const method = (payments || []).length > 1 ? 'MÚLTIPLO' : ((payments || [])[0]?.method ? String((payments || [])[0].method).toUpperCase() : '');
+            map[id] = {
+              id,
+              pin: (d.details?.pin || existing?.pin || id),
+              password: (d.details?.password || existing?.password || ''),
+              items,
+              total: paid > 0 ? paid : Math.max(0, Number(r.total_cents ?? 0) / 100),
+              paymentMethod: breakdown ? 'MÚLTIPLO' : (method || 'Não informado'),
+              paymentBreakdown: breakdown,
+              status,
+              createdAt: (r.opened_at || r.created_at) ? new Date(r.opened_at || r.created_at) : (existing?.createdAt || new Date()),
+                updatedAt: times.preparingStart ? new Date(times.preparingStart) : (r.updated_at ? new Date(r.updated_at) : (existing?.updatedAt ?? new Date())),
+                readyAt: times.readyAt ? new Date(times.readyAt) : existing?.readyAt,
+                deliveredAt: (r.closed_at || r.completed_at) ? new Date(r.closed_at || r.completed_at) : (times.deliveredAt ? new Date(times.deliveredAt) : existing?.deliveredAt),
+              slaMinutes: existing?.slaMinutes ?? 0,
+              createdBy: existing?.createdBy ?? '',
+              operationalSessionId: existing?.operationalSessionId ?? parsedSessionId,
+            } as any;
+          }
+          return Object.values(map);
+        });
+      } catch {}
+    };
+    pullOrders();
+    const timer = setInterval(pullOrders, 3000);
+    return () => { mounted = false; clearInterval(timer); };
+  }, [setOrders])
+
+  // Listener para mudanças no banco de dados em tempo real (sincronização entre janelas)
+  useEffect(() => {
+    const api = (window as any)?.api
+    if (!api?.db?.onChange) return
+
+    const unsubscribe = api.db.onChange((event: any) => {
+      if (!event || !event.table) return
+      
+      const { table, operation } = event
+      
+      // Tabelas que afetam os pedidos
+      const relevantTables = ['orders', 'order_items', 'payments', 'kds_phase_times', 'kds_tickets', 'orders_details', 'kds_unit_states']
+      if (!relevantTables.includes(table)) return
+
+      // Recarregar pedidos quando houver mudanças relevantes
+      if (operation === 'insert' || operation === 'update' || operation === 'delete') {
+        // Pequeno delay para garantir que a transação foi commitada
+        setTimeout(async () => {
+          try {
+            const detailed = await ordersService.listOrdersDetailed(200)
+            setOrders(prev => {
+              const byId: Record<string, Order> = {}
+              for (const o of prev) byId[String(o.id)] = o
+
+              const out: Order[] = []
+              for (const d of detailed) {
+                const r = d.order as any
+                const id = String(r.id)
+                const existing = byId[id]
+
+                const items = d.items || []
+                const payments = d.payments || []
+                const pinVal = d.details?.pin
+                const passVal = d.details?.password
+                const phaseTimes = d.phaseTimes || {}
+                const paid = (payments || []).reduce((s: number, p: any) => s + Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100), 0)
+                const breakdown = (payments || []).length > 1 ? Object.fromEntries((payments || []).map((p: any) => [String(p.method).toUpperCase(), Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100)])) : undefined
+                const method = (payments || []).length > 1 ? 'MÚLTIPLO' : ((payments || [])[0]?.method ? String((payments || [])[0].method).toUpperCase() : '')
+
+                const status: Order['status'] = (() => {
+                  const rawLower = String(r.status || '').toLowerCase()
+                  const rawUpper = String(r.status || '').toUpperCase()
+                  if (rawLower === 'cancelled' || rawUpper === 'CANCELLED') return 'CANCELLED'
+                  if (r.closed_at || r.completed_at || rawLower === 'closed' || rawUpper === 'DELIVERED') return 'DELIVERED'
+                  if (phaseTimes?.deliveredAt) return 'DELIVERED'
+                  if (phaseTimes?.readyAt) return 'READY'
+                  if (phaseTimes?.preparingStart) return 'PREPARING'
+                  if (rawUpper === 'READY') return 'READY'
+                  if (rawUpper === 'PREPARING') return 'PREPARING'
+                  if (rawLower === 'open' || rawUpper === 'NEW') return existing?.status || 'NEW'
+                  return existing?.status || 'NEW'
+                })()
+
+                const ord: Order = {
+                  id,
+                  pin: pinVal || existing?.pin || '',
+                  password: passVal || existing?.password || '',
+                  items: (items || []).map((it: any) => ({
+                    id: String(it.id),
+                    quantity: Number(it.qty ?? 1),
+                    menuItem: {
+                      id: String(it.product_id ?? ''),
+                      name: String(it.product_name ?? 'Item'),
+                      price: Math.max(0, Number(it.unit_price_cents ?? 0) / 100),
+                      unitDeliveryCount: 1,
+                      categoryId: String(it.category_id ?? ''),
+                    },
+                    productionUnits: existing?.items?.find(x => String(x.id) === String(it.id))?.productionUnits || [],
+                    skipKitchen: false,
+                  })),
+                  total: Math.max(0, Number(r.total_cents ?? 0) / 100),
+                  customerWhatsApp: existing?.customerWhatsApp,
+                  paymentMethod: method,
+                  status,
+                  createdAt: r.opened_at ? new Date(r.opened_at) : (existing?.createdAt || new Date()),
+                  readyAt: phaseTimes?.readyAt ? new Date(phaseTimes.readyAt) : existing?.readyAt,
+                  deliveredAt: phaseTimes?.deliveredAt ? new Date(phaseTimes.deliveredAt) : (r.closed_at ? new Date(r.closed_at) : existing?.deliveredAt),
+                  slaMinutes: existing?.slaMinutes ?? 30,
+                  createdBy: existing?.createdBy ?? 'Sistema',
+                  amountPaid: paid > 0 ? paid : existing?.amountPaid,
+                  changeAmount: existing?.changeAmount,
+                  updatedAt: phaseTimes?.preparingStart ? new Date(phaseTimes.preparingStart) : (r.updated_at ? new Date(r.updated_at) : existing?.updatedAt),
+                  operationalSessionId: r.operational_session_id ? String(r.operational_session_id) : existing?.operationalSessionId,
+                } as any
+                out.push(ord)
+              }
+              return out
+            })
+          } catch (err) {
+            console.warn('Erro ao recarregar pedidos após mudança no banco:', err)
+          }
+        }, 100)
+      }
+    })
+
+    return () => {
+      if (unsubscribe) unsubscribe()
+    }
   }, [setOrders])
 
   useEffect(() => {
@@ -460,150 +793,176 @@ export default function CaixaPage() {
       return `http://${host}:4000`
     })()
     const secret = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || undefined
+    let cleanupSupabase: (() => void) | null = null
+    let ws: WebSocket | null = null
+    let reconnectTimer: any = null
+
     ;(async () => {
       try {
         const dp = await getDeviceProfile()
         const unitId = dp?.unitId || 'default'
         const deviceId = dp?.deviceId || crypto.randomUUID()
-        const wsUrl = hubUrl.replace(/^http/, 'ws') + `/realtime?token=${encodeURIComponent(secret || '')}`
-        const ws = new WebSocket(wsUrl)
-        ws.addEventListener('open', () => {
-          ws.send(JSON.stringify({ unit_id: unitId, device_id: deviceId }))
-        })
-        ws.addEventListener('message', (ev) => {
-          if (!mounted) return
-          let events: any[] = []
-          try { const msg = JSON.parse(String((ev as MessageEvent).data)); if (msg?.type==='events') events = msg.events || [] } catch {}
-          const tickets = events.filter((e:any)=> String(e.table)==='kdsTickets' && (e.row || e.rows))
-          if (tickets.length){
-            const mapToOrderStatus = (s:string)=> s==='ready'?'READY': s==='prep'?'PREPARING': s==='done'?'DELIVERED': 'NEW'
-            const byIdStatus: Record<string,string> = {}
-            for (const e of tickets){
-              const r = e.row || {}
-              const id = String(r.order_id ?? r.orderId ?? r.id)
-              const st = mapToOrderStatus(String(r.status ?? e.status ?? 'queued'))
-              byIdStatus[id] = st
-            }
-            setOrders(prev => prev.map(o => {
-              const oid = String(o.id)
-              const st = byIdStatus[oid]
-              if (!st) return o
-              if (st==='DELIVERED') return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date() }
-              if (st==='READY') return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
-              if (st==='PREPARING') return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date() }
-              if (st==='NEW') return { ...o, status: 'NEW', updatedAt: undefined, readyAt: undefined }
-              return o
-            }))
-          }
-          const ordEvents = events.filter((e:any)=> String(e.table)==='orders' && (e.row || e.rows))
-          if (ordEvents.length){
-            const incoming: Record<string, any> = {}
-            for (const e of ordEvents){
-              const r = e.row || {}
-              const id = String(r.id ?? '')
-              if (!id) continue
-              incoming[id] = r
-            }
-            setOrders(prev => {
-              const map: Record<string, Order> = {}
-              for (const o of prev) map[String(o.id)] = o
-              for (const [id, r] of Object.entries(incoming)){
-                const existing = map[id]
-                if (existing){
-                  map[id] = {
-                    ...existing,
-                    ...r,
-                    createdAt: r.createdAt ? new Date(r.createdAt) : existing.createdAt,
-                    updatedAt: r.updatedAt ? new Date(r.updatedAt) : (existing.updatedAt ?? new Date()),
-                    readyAt: r.readyAt ? new Date(r.readyAt) : existing.readyAt,
-                    deliveredAt: r.deliveredAt ? new Date(r.deliveredAt) : existing.deliveredAt,
-                  } as any
-                } else {
-                  map[id] = {
-                    ...(r as any),
-                    createdAt: r.createdAt ? new Date(r.createdAt) : new Date(),
-                    updatedAt: r.updatedAt ? new Date(r.updatedAt) : new Date(),
-                    readyAt: r.readyAt ? new Date(r.readyAt) : undefined,
-                    deliveredAt: r.deliveredAt ? new Date(r.deliveredAt) : undefined,
-                  }
-                }
+
+        try {
+          const { supabase } = await import('../../utils/supabase')
+          if (supabase && mounted) {
+            const loadStatuses = async () => {
+              const rows = await kdsService.listTicketStatusRows()
+              const queuedIds = new Set<string>()
+              const prepIds = new Set<string>()
+              const readyIds = new Set<string>()
+              const doneIds = new Set<string>()
+              for (const r of (Array.isArray(rows) ? rows : []) as any[]) {
+                const oid = String(r?.orderId ?? '')
+                const st = String(r?.status ?? '')
+                if (!oid) continue
+                if (st === 'queued') queuedIds.add(oid)
+                if (st === 'prep') prepIds.add(oid)
+                if (st === 'ready') readyIds.add(oid)
+                if (st === 'done') doneIds.add(oid)
               }
-              return Object.values(map)
-            })
-          }
-        })
-        ws.addEventListener('close', () => {
-          setTimeout(() => {
-            if (!mounted) return
-            const ws2 = new WebSocket(wsUrl)
-            ws2.addEventListener('open', () => { ws2.send(JSON.stringify({ unit_id: unitId, device_id: deviceId })) })
-        ws2.addEventListener('message', (ev) => {
               if (!mounted) return
-              let events: any[] = []
-              try { const msg = JSON.parse(String((ev as MessageEvent).data)); if (msg?.type==='events') events = msg.events || [] } catch {}
-              const tickets = events.filter((e:any)=> String(e.table)==='kdsTickets' && (e.row || e.rows))
-              if (tickets.length){
-                const mapToOrderStatus = (s:string)=> s==='ready'?'READY': s==='prep'?'PREPARING': s==='done'?'DELIVERED': 'NEW'
-                const byIdStatus: Record<string,string> = {}
-                for (const e of tickets){
-                  const r = e.row || {}
-                  const id = String(r.order_id ?? r.orderId ?? r.id)
-                  const st = mapToOrderStatus(String(r.status ?? e.status ?? 'queued'))
-                  byIdStatus[id] = st
-                }
-                setOrders(prev => prev.map(o => {
-                  const oid = String(o.id)
-                  const st = byIdStatus[oid]
-                  if (!st) return o
-                  if (st==='DELIVERED') return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date() }
-                  if (st==='READY') return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
-                  if (st==='PREPARING') return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date() }
-                  if (st==='NEW') return { ...o, status: 'NEW', updatedAt: undefined, readyAt: undefined }
-                  return o
-                }))
+              setOrders(prev => prev.map(o => {
+                const oid = String(o.id)
+                if (doneIds.has(oid)) return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date() }
+                if (readyIds.has(oid)) return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
+                if (prepIds.has(oid)) return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date() }
+                if (queuedIds.has(oid)) return o.status === 'NEW' ? o : o
+                return o
+              }))
+            }
+
+            await loadStatuses()
+
+            let debounceTimer: any = null
+            const scheduleReload = async () => {
+              if (debounceTimer) clearTimeout(debounceTimer)
+              debounceTimer = setTimeout(async () => {
+                try { await loadStatuses() } catch {}
+                debounceTimer = null
+              }, 50)
+            }
+
+            const ch = supabase
+              .channel('pdv_kds_status_changes')
+              .on('postgres_changes', { event: '*', schema: 'public', table: 'kds_tickets' }, scheduleReload)
+              .on('postgres_changes', { event: '*', schema: 'public', table: 'kds_phase_times' }, scheduleReload)
+              .subscribe()
+
+            cleanupSupabase = () => {
+              if (debounceTimer) clearTimeout(debounceTimer)
+              try { ch.unsubscribe() } catch { }
+            }
+          }
+        } catch {}
+
+        if (!secret) return
+
+        const wsUrl = hubUrl.replace(/^http/, 'ws') + `/realtime?token=${encodeURIComponent(secret)}`
+        let attempt = 0
+        const connect = () => {
+          if (!mounted) return
+          attempt++
+          try { ws?.close() } catch {}
+          ws = new WebSocket(wsUrl)
+          ws.addEventListener('open', () => {
+            ws?.send(JSON.stringify({ unit_id: unitId, device_id: deviceId }))
+          })
+          ws.addEventListener('message', (ev) => {
+            if (!mounted) return
+            let events: any[] = []
+            try { const msg = JSON.parse(String((ev as MessageEvent).data)); if (msg?.type === 'events') events = msg.events || [] } catch {}
+            try { (async () => { await kdsService.applyHubEvents(events) })() } catch {}
+            const tickets = events.filter((e: any) => String(e.table) === 'kdsTickets' && (e.row || e.rows))
+            if (tickets.length) {
+              const mapToOrderStatus = (s: string) => {
+                const low = String(s || '').toLowerCase()
+                if (low === 'done' || low === 'delivered') return 'DELIVERED'
+                if (low === 'ready') return 'READY'
+                if (low === 'prep' || low === 'preparing') return 'PREPARING'
+                return 'NEW'
               }
-              const ordEvents = events.filter((e:any)=> String(e.table)==='orders' && (e.row || e.rows))
-              if (ordEvents.length){
-                const incoming: Record<string, any> = {}
-                for (const e of ordEvents){
-                  const r = e.row || {}
-                  const id = String(r.id ?? '')
-                  if (!id) continue
-                  incoming[id] = r
-                }
-                setOrders(prev => {
-                  const map: Record<string, Order> = {}
-                  for (const o of prev) map[String(o.id)] = o
-                  for (const [id, r] of Object.entries(incoming)){
-                    const existing = map[id]
-                    if (existing){
-                      map[id] = {
-                        ...existing,
-                        ...r,
-                        createdAt: r.createdAt ? new Date(r.createdAt) : existing.createdAt,
-                        updatedAt: r.updatedAt ? new Date(r.updatedAt) : (existing.updatedAt ?? new Date()),
-                        readyAt: r.readyAt ? new Date(r.readyAt) : existing.readyAt,
-                        deliveredAt: r.deliveredAt ? new Date(r.deliveredAt) : existing.deliveredAt,
-                      } as any
-                    } else {
-                      map[id] = {
-                        ...(r as any),
-                        createdAt: r.createdAt ? new Date(r.createdAt) : new Date(),
-                        updatedAt: r.updatedAt ? new Date(r.updatedAt) : new Date(),
-                        readyAt: r.readyAt ? new Date(r.readyAt) : undefined,
-                        deliveredAt: r.deliveredAt ? new Date(r.deliveredAt) : undefined,
-                      }
+              const byIdStatus: Record<string, string> = {}
+              for (const e of tickets) {
+                const r = e.row || {}
+                const oid = r.order_id ?? r.orderId ?? null
+                if (!oid) continue
+                const id = String(oid)
+                const st = mapToOrderStatus(String(r.status ?? e.status ?? 'queued'))
+                byIdStatus[id] = st
+              }
+              setOrders(prev => prev.map(o => {
+                const oid = String(o.id)
+                const st = byIdStatus[oid]
+                if (!st) return o
+                if (st === 'DELIVERED') return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date() }
+                if (st === 'READY') return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
+                if (st === 'PREPARING') return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date() }
+                if (st === 'NEW') return o.status === 'NEW' ? o : o
+                return o
+              }))
+            }
+            const ordEvents = events.filter((e: any) => String(e.table) === 'orders' && (e.row || e.rows))
+            if (ordEvents.length) {
+              const incoming: Record<string, any> = {}
+              for (const e of ordEvents) {
+                const r = e.row || {}
+                const id = String(r.id ?? '')
+                if (!id) continue
+                incoming[id] = r
+              }
+              setOrders(prev => {
+                const statusRank: Record<string, number> = { NEW: 0, PREPARING: 1, READY: 2, DELIVERED: 3, CANCELLED: 3 }
+                const map: Record<string, Order> = {}
+                for (const o of prev) map[String(o.id)] = o
+                for (const [id, r] of Object.entries(incoming)) {
+                  const existing = map[id]
+                  if (existing) {
+                    const incomingStatus = (r as any).status ? String((r as any).status).toUpperCase() : undefined
+                    const currentStatus = String(existing.status || 'NEW').toUpperCase()
+                    const keepStatus = incomingStatus && (statusRank[incomingStatus] ?? 0) < (statusRank[currentStatus] ?? 0)
+                    map[id] = {
+                      ...existing,
+                      ...r,
+                      status: keepStatus ? existing.status : ((r as any).status ?? existing.status),
+                      createdAt: r.createdAt ? new Date(r.createdAt) : existing.createdAt,
+                      updatedAt: r.updatedAt ? new Date(r.updatedAt) : (existing.updatedAt ?? new Date()),
+                      readyAt: r.readyAt ? new Date(r.readyAt) : existing.readyAt,
+                      deliveredAt: r.deliveredAt ? new Date(r.deliveredAt) : existing.deliveredAt,
+                    } as any
+                  } else {
+                    map[id] = {
+                      ...(r as any),
+                      createdAt: r.createdAt ? new Date(r.createdAt) : new Date(),
+                      updatedAt: r.updatedAt ? new Date(r.updatedAt) : new Date(),
+                      readyAt: r.readyAt ? new Date(r.readyAt) : undefined,
+                      deliveredAt: r.deliveredAt ? new Date(r.deliveredAt) : undefined,
                     }
                   }
-                  return Object.values(map)
-                })
-              }
-            })
-          }, 1000)
-        })
+                }
+                return Object.values(map)
+              })
+            }
+          })
+          const scheduleReconnect = () => {
+            if (!mounted) return
+            const delay = Math.min(30000, 1000 * Math.pow(2, Math.min(5, attempt)))
+            clearTimeout(reconnectTimer)
+            reconnectTimer = setTimeout(() => connect(), delay)
+          }
+          ws.addEventListener('error', () => { scheduleReconnect() })
+          ws.addEventListener('close', () => { scheduleReconnect() })
+        }
+        connect()
       } catch {}
     })()
-    return () => { mounted = false }
+
+    return () => {
+      mounted = false
+      clearTimeout(reconnectTimer)
+      try { ws?.close() } catch {}
+      try { cleanupSupabase?.() } catch {}
+    }
   }, [setOrders])
 
   
@@ -685,8 +1044,14 @@ export default function CaixaPage() {
   // --- Funções de Manipulação do Carrinho ---
 
   const handleAddToCart = (item: MenuItem, observations?: string, discountPercentage: number = 0) => {
+    if (!isOperationalSessionOpen) {
+      displayAlert('Sessão Necessária', 'É necessário iniciar uma sessão operacional para registrar vendas.', 'info');
+      return;
+    }
+
     if (!isCashOpen) {
       displayAlert('Caixa Fechado', 'É necessário abrir o caixa para registrar vendas.', 'info');
+      setShowCashOpening(true);
       return;
     }
 
@@ -1176,6 +1541,15 @@ export default function CaixaPage() {
 
           {/* Lado Direito: Ações e Navegação */}
           <div className="flex items-center space-x-3">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setShowStationModal(true)}
+              className="hidden md:flex"
+            >
+              <i className="ri-computer-line mr-2"></i>
+              {currentStationId ? (stations.find(s => s.id === currentStationId)?.name || 'Caixa') : 'Selecionar Caixa'}
+            </Button>
             <OperationModeBadge />
             {/* Botões movidos para a esquerda; mantém aqui ações gerais */}
             {/* Removido: Iniciar Sessão agora fica ao lado do status à esquerda */}
@@ -1220,6 +1594,49 @@ export default function CaixaPage() {
                 Pedidos
               </Button>
             </div>
+
+            {activeTab === 'orders' && (
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => {
+                  setConfirmationData({
+                    title: 'Limpar pedidos',
+                    message: 'Isso apaga todos os pedidos e tempos deste dispositivo. Esta ação não pode ser desfeita.',
+                    variant: 'danger',
+                    confirmText: 'Apagar tudo',
+                    onConfirm: () => {
+                      ;(async () => {
+                        try {
+                          await ordersService.clearLocalOrders()
+                          setOrders([])
+                          showSuccess('Pedidos limpos com sucesso.')
+                        } catch {
+                          showError('Falha ao limpar pedidos.')
+                        } finally {
+                          setConfirmationData(null)
+                        }
+                      })()
+                    },
+                  })
+                }}
+                className="!rounded-md"
+              >
+                <i className="ri-delete-bin-6-line mr-2"></i>
+                Limpar pedidos
+              </Button>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => { navigate('/caixa/configuracoes') }}
+              title="Configurações do PDV"
+            >
+              <i className="ri-settings-3-line mr-2"></i>
+              Configurações
+            </Button>
           </div>
         </div>
       </div>
@@ -1236,6 +1653,10 @@ export default function CaixaPage() {
                 selectedCategory={selectedCategory}
                 onSelectCategory={(id) => { setAutoSelectCategory(true); setSelectedCategory(id); }}
                 onReorderCategory={handleReorderCategory}
+                kitchens={kitchens}
+                selectedKitchenId={selectedKitchenId}
+                onKitchenChange={setSelectedKitchenId}
+                categoryIdsByKitchen={categoryIdsByKitchen}
               />
             </div>
 
@@ -1304,7 +1725,7 @@ export default function CaixaPage() {
         {activeTab === 'orders' && (
           <div className="flex-1 overflow-y-auto">
             <OrderListTab
-              orders={sessionOrders}
+              orders={orders}
               onMarkAsDelivered={handleMarkAsDelivered}
             />
           </div>
@@ -1456,6 +1877,23 @@ export default function CaixaPage() {
                   }));
                   ;(async () => {
                     try {
+                      const orderId = checklistOrder.id;
+                      for (const it of checklistOrder.items || []) {
+                        const totalUnits = Math.max(1, (it.quantity || 1) * Math.max(1, it.menuItem?.unitDeliveryCount || 1));
+                        const prevTimesRaw = Array.isArray((it as any).directDeliveredUnitTimes) ? (it as any).directDeliveredUnitTimes : [];
+                        const now = new Date();
+                        for (let i = 0; i < totalUnits; i++) {
+                          const key = `${it.id}-${i}`;
+                          const isChecked = !!checklistUnitChecks[key];
+                          const deliveredAt = isChecked ? (prevTimesRaw[i] ? new Date(prevTimesRaw[i]).toISOString() : now.toISOString()) : undefined;
+                          const unitId = `${it.id}-${i+1}`;
+                          await kdsService.setUnitDelivered(orderId, it.id, unitId, deliveredAt as any);
+                        }
+                      }
+                    } catch {}
+                  })()
+                  ;(async () => {
+                    try {
                       const envUrl = (import.meta as any)?.env?.VITE_LAN_HUB_URL
                       const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost'
                       const hubUrl = (envUrl || `http://${host}:4000`).replace(/\/$/, '')
@@ -1517,6 +1955,15 @@ export default function CaixaPage() {
                           await fetch(hubUrl + '/push', { method: 'POST', headers, body: JSON.stringify({ events }) })
                         } catch {}
                       })()
+                      ;(async () => {
+                        try {
+                          await ordersService.closeOrder(String(checklistOrder.id) as any)
+                        } catch {}
+                        try {
+                          const tId = (checklistOrder as any)?.ticketId || checklistOrder.id
+                          await kdsService.setTicketStatus(String(tId), 'done')
+                        } catch {}
+                      })()
                       showSuccess(`Pedido #${checklistOrder.pin} marcado como entregue.`);
                     } else {
                       showInfo('Entrega parcial registrada. Conclua as unidades restantes depois.');
@@ -1540,6 +1987,15 @@ export default function CaixaPage() {
                           const row = { ...checklistOrder, status: 'DELIVERED', deliveredAt: now }
                           const events = [{ table: 'orders', row, unit_id: unitId }]
                           await fetch(hubUrl + '/push', { method: 'POST', headers, body: JSON.stringify({ events }) })
+                        } catch {}
+                      })()
+                      ;(async () => {
+                        try {
+                          await ordersService.closeOrder(String(checklistOrder.id) as any)
+                        } catch {}
+                        try {
+                          const tId = (checklistOrder as any)?.ticketId || checklistOrder.id
+                          await kdsService.setTicketStatus(String(tId), 'done')
                         } catch {}
                       })()
                       showSuccess(`Pedido #${checklistOrder.pin} marcado como entregue.`);
@@ -1756,6 +2212,42 @@ export default function CaixaPage() {
           confirmText={confirmationData.confirmText}
         />
       )}
+      {/* Modal de Seleção de Estação */}
+      <Modal
+        isOpen={showStationModal}
+        onClose={() => setShowStationModal(false)}
+        title="Selecionar Caixa / Estação"
+      >
+        <div className="space-y-4">
+          <p className="text-gray-600">Selecione qual caixa este dispositivo está operando:</p>
+          <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto">
+            {stations.map(s => (
+              <button
+                key={s.id}
+                onClick={() => {
+                  setCurrentStationId(s.id);
+                  setShowStationModal(false);
+                  window.location.reload();
+                }}
+                className={`p-3 rounded-lg border text-left flex justify-between items-center ${currentStationId === s.id ? 'bg-amber-50 border-amber-500 text-amber-900' : 'bg-white border-gray-200 hover:bg-gray-50'}`}
+              >
+                <span className="font-medium">{s.name}</span>
+                {currentStationId === s.id && <i className="ri-check-line text-amber-600"></i>}
+              </button>
+            ))}
+            {stations.length === 0 && (
+              <div className="text-center p-4 bg-gray-50 rounded-lg">
+                <p className="text-gray-500 text-sm">Nenhuma estação cadastrada.</p>
+                <p className="text-xs text-gray-400 mt-1">Cadastre 'stations' no banco de dados.</p>
+              </div>
+            )}
+          </div>
+          <div className="flex justify-end mt-4">
+            <Button variant="secondary" onClick={() => setShowStationModal(false)}>Cancelar</Button>
+          </div>
+        </div>
+      </Modal>
+
     </div>
   );
 }

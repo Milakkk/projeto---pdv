@@ -64,6 +64,12 @@ const statusInfo = {
   CANCELLED: { text: 'Cancelado', color: 'bg-red-100 text-red-800', bgColor: 'bg-red-50' },
 } as const;
 
+const formatOrderPin = (pin: string) => {
+  const raw = String(pin ?? '').trim()
+  if (!raw) return '#-'
+  return `#${raw.replace(/^#+/, '')}`
+}
+
 function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAssignOperator, onAssignOperatorToAll, onDisplayAlert, onUpdateItemStatus, onCancelOrder }: OrderRowProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -193,29 +199,9 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
     const nextStatus = getNextStatus(order.status);
     if (!nextStatus) return;
 
-    // Validação de atribuição de operador para NEW -> PREPARING
+    // Validação de atribuição de operador para NEW -> PREPARING (RELAXADA: Apenas alerta se não houver operadores)
     if (order.status === 'NEW' && nextStatus === 'PREPARING') {
-      if (operators.length === 0) {
-        onDisplayAlert(
-          'Ação Necessária', 
-          'Não há operadores cadastrados. Adicione um operador para iniciar o preparo.', 
-          'info'
-        );
-        return;
-      }
-      
-      // Verifica se TODAS as unidades têm um operador
-      const allAssigned = kitchenItems.every(item => 
-        (item.productionUnits || []).every(unit => !!unit.operatorName)
-      );
-      if (!allAssigned) {
-        onDisplayAlert(
-          'Ação Necessária', 
-          'É necessário atribuir um operador a todas as unidades antes de iniciar o preparo.', 
-          'info'
-        );
-        return;
-      }
+      console.log('Iniciando preparo (sem validação estrita de operadores)');
     }
     
     // Validação para PREPARING -> READY
@@ -363,7 +349,7 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
       <div className={`p-4 ${bgColor} grid grid-cols-1 lg:grid-cols-12 gap-4 items-start border-b border-gray-200 cursor-pointer`} onClick={() => setIsExpanded(prev => !prev)}>
         {/* Coluna Pedido */}
         <div className="lg:col-span-2 min-w-0">
-          <div className="text-xs font-medium text-gray-600">#{order.pin}</div>
+          <div className="text-xs font-medium text-gray-600">{formatOrderPin(order.pin)}</div>
           <div className="bg-blue-500 text-white text-lg font-bold px-3 py-1 rounded-lg inline-block mt-1 whitespace-nowrap">
             {order.password}
           </div>
@@ -474,7 +460,7 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
               onClick={handleAction} 
               className="w-full lg:w-auto whitespace-nowrap"
               variant={getActionVariant(order.status)}
-              disabled={(order.status === 'NEW' && (operators.length === 0 || !allUnitsAssignedStatus)) || (order.status === 'PREPARING' && !allUnitsReadyStatus)}
+              disabled={(order.status === 'PREPARING' && !allUnitsReadyStatus)}
             >
               {getStatusAction(order.status)}
             </Button>
@@ -751,7 +737,7 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
                     className="flex-1 min-w-[45%]"
                     size="sm"
                     variant={getActionVariant(order.status)}
-                    disabled={(order.status === 'NEW' && (operators.length === 0 || !allUnitsAssignedStatus)) || (order.status === 'PREPARING' && !isOrderReadyForNextStepStatus)} 
+                    disabled={(order.status === 'PREPARING' && !isOrderReadyForNextStepStatus)} 
                   >
                     {nextStatusAction}
                   </Button>
@@ -791,7 +777,7 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
       >
         <div className="space-y-4">
           <p className="text-sm text-gray-600">
-            Tem certeza que deseja cancelar o pedido #{order.pin}?
+            Tem certeza que deseja cancelar o pedido {formatOrderPin(order.pin)}?
           </p>
           
           <Input

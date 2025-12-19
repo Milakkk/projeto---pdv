@@ -4,6 +4,9 @@ import killPort from 'kill-port'
 import { spawn } from 'node:child_process'
 import path from 'node:path'
 
+// Por padrão sempre abrir 2 janelas (both), a menos que especificado diferente
+// SEMPRE abrir 2 janelas por padrão (both)
+// A menos que seja explicitamente especificado 'pdv' ou 'kds' para abrir apenas uma
 const TARGET = (process.argv[2] || 'both').toLowerCase()
 const PREFERRED = 3003
 
@@ -28,26 +31,35 @@ async function main() {
   const viteBin = path.join(binDir, isWin ? 'vite.cmd' : 'vite')
   const electronBin = path.join(binDir, isWin ? 'electron.cmd' : 'electron')
 
-  const vite = spawn(viteBin, ['--port', String(port), '--strictPort'], {
-    stdio: 'inherit',
-    cwd: process.cwd(),
-    env: { ...process.env },
-    shell: true,
-  })
+  const viteArgs = ['--port', String(port), '--strictPort']
+  const vite = spawn(
+    isWin ? 'cmd.exe' : viteBin,
+    isWin ? ['/c', viteBin, ...viteArgs] : viteArgs,
+    {
+      stdio: 'inherit',
+      cwd: process.cwd(),
+      env: { ...process.env },
+    }
+  )
 
   // wait for dev server
   const devUrl = `http://localhost:${port}`
   console.log('[dev-start] Waiting for:', devUrl)
   await waitOn({ resources: [devUrl], timeout: 30000, log: true })
 
-  const electronEnv = { ...process.env, VITE_DEV_SERVER_PORT: String(port), ELECTRON_WINDOW: TARGET, NODE_ENV: 'development' }
-  console.log(`[dev-start] Launching Electron -> window=${TARGET}, VITE_DEV_SERVER_PORT=${port}`)
-  const electron = spawn(electronBin, ['./electron/main.js'], {
-    stdio: 'inherit',
-    cwd: process.cwd(),
-    env: electronEnv,
-    shell: true,
-  })
+  // SEMPRE usar 'both' para abrir 2 janelas por padrão
+  const windowTarget = 'both'
+  const electronEnv = { ...process.env, VITE_DEV_SERVER_PORT: String(port), ELECTRON_WINDOW: windowTarget, NODE_ENV: 'development' }
+  console.log(`[dev-start] Launching Electron -> window=${windowTarget} (always 2 windows), VITE_DEV_SERVER_PORT=${port}`)
+  const electron = spawn(
+    isWin ? 'cmd.exe' : electronBin,
+    isWin ? ['/c', electronBin, './electron/main.js'] : ['./electron/main.js'],
+    {
+      stdio: 'inherit',
+      cwd: process.cwd(),
+      env: electronEnv,
+    }
+  )
 
   const closeAll = () => {
     console.log('[dev-start] Shutting down...')

@@ -191,29 +191,10 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
     const nextStatus = getNextStatus(order.status);
     if (!nextStatus) return;
 
-    // Validação de atribuição de operador para NEW -> PREPARING
+    // Validação de atribuição de operador para NEW -> PREPARING (RELAXADA: Apenas alerta se não houver operadores)
     if (order.status === 'NEW' && nextStatus === 'PREPARING') {
-      if (operators.length === 0) {
-        onDisplayAlert(
-          'Ação Necessária', 
-          'Não há operadores cadastrados. Adicione um operador para iniciar o preparo.', 
-          'info'
-        );
-        return;
-      }
-      
-      // Verifica se TODAS as unidades têm um operador
-      const allAssigned = order.items.every(item => 
-        (item.productionUnits || []).every(unit => !!unit.operatorName)
-      );
-      if (!allAssigned) {
-        onDisplayAlert(
-          'Ação Necessária', 
-          'É necessário atribuir um operador a todas as unidades antes de iniciar o preparo.', 
-          'info'
-        );
-        return;
-      }
+      // Removida a obrigatoriedade de atribuição prévia de operadores.
+      // O sistema agora permite iniciar o preparo e atribuir operadores depois.
     }
     
     // Validação para PREPARING -> READY
@@ -298,8 +279,8 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
   const handleAssignOperatorUnified = (e: React.MouseEvent, itemId: string, unitId: string, operatorName: string) => {
     e.stopPropagation(); // MANTIDO AQUI PARA BLOQUEAR O TOGGLE DA LINHA
     
-    // Bloquear mudança de operador se o status for diferente de NEW
-    if (order.status !== 'NEW') return;
+    // Bloquear mudança de operador se o status for diferente de NEW ou PREPARING
+    if (order.status !== 'NEW' && order.status !== 'PREPARING') return;
     onAssignOperator(order.id, itemId, unitId, operatorName);
   };
 
@@ -341,8 +322,8 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
   const showUnitReadyButton = order.status === 'PREPARING';
   const isPreparingStatus = order.status === 'PREPARING';
   
-  // Atribuição de operador só é permitida em NEW
-  const isOperatorAssignmentDisabled = order.status !== 'NEW'; 
+  // Atribuição de operador é permitida em NEW e PREPARING
+  const isOperatorAssignmentDisabled = order.status !== 'NEW' && order.status !== 'PREPARING'; 
   
   const isChecklistDisabled = !isPreparingStatus;
   
@@ -472,7 +453,7 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
               onClick={handleAction} 
               className="w-full lg:w-auto whitespace-nowrap"
               variant={getActionVariant(order.status)}
-              disabled={(order.status === 'NEW' && (operators.length === 0 || !allUnitsAssignedStatus)) || (order.status === 'PREPARING' && !allUnitsReadyStatus)}
+              disabled={(order.status === 'PREPARING' && !allUnitsReadyStatus)}
             >
               {getStatusAction(order.status)}
             </Button>
@@ -749,7 +730,7 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
                     className="flex-1 min-w-[45%]"
                     size="sm"
                     variant={getActionVariant(order.status)}
-                    disabled={(order.status === 'NEW' && (operators.length === 0 || !allUnitsAssignedStatus)) || (order.status === 'PREPARING' && !isOrderReadyForNextStepStatus)} 
+                    disabled={(order.status === 'PREPARING' && !isOrderReadyForNextStepStatus)} 
                   >
                     {nextStatusAction}
                   </Button>

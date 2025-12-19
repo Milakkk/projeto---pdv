@@ -41,6 +41,40 @@ const createLocalEndOfDay = (dateString: string) => {
   return new Date(year, month - 1, day, 23, 59, 59, 999);
 };
 
+const inferSlaMinutesFromCategory = (categoryId: string) => {
+  const cat = String(categoryId || '')
+  const fast = new Set(['cat_extras', 'cat_bebidas', 'cat_drinks', 'cat_chopes', 'cat_drinks_na', 'cat_drinks_a', 'cat_chope'])
+  if (fast.has(cat)) return 3
+  const low = cat.toLowerCase()
+  if (low.includes('bebida') || low.includes('drink') || low.includes('chope') || low.includes('extra')) return 3
+  return 8
+}
+
+const getSlaByProductIdFromLocalStorage = (): Record<string, number> => {
+  try {
+    const raw = localStorage.getItem('menuItems')
+    const arr = raw ? JSON.parse(raw) : []
+    if (!Array.isArray(arr)) return {}
+    const out: Record<string, number> = {}
+    for (const it of arr) {
+      const id = it?.id ? String(it.id) : ''
+      if (!id) continue
+      const sla = Number(it?.sla)
+      if (Number.isFinite(sla) && sla > 0) out[id] = sla
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+const resolveSlaForItem = (params: { productId?: any; categoryId?: any; slaByProductId?: Record<string, number> }) => {
+  const pid = params.productId ? String(params.productId) : ''
+  const fromLs = pid && params.slaByProductId ? params.slaByProductId[pid] : undefined
+  if (typeof fromLs === 'number' && Number.isFinite(fromLs) && fromLs > 0) return fromLs
+  return inferSlaMinutesFromCategory(params.categoryId ? String(params.categoryId) : '')
+}
+
 // Função para calcular o tempo de entrega e status
 const calculateDeliveryMetrics = (order: Order) => {
   const createdAt = new Date(order.createdAt).getTime();
@@ -49,15 +83,18 @@ const calculateDeliveryMetrics = (order: Order) => {
 
   // 1. Tempo Final (Entrega ou Cancelamento)
   let finalTime = now;
-  if (isFinalStatus && order.updatedAt) {
-    finalTime = new Date(order.updatedAt).getTime();
+  if (order.status === 'DELIVERED') {
+    finalTime = new Date(order.deliveredAt || order.updatedAt || order.createdAt).getTime();
+  } else if (order.status === 'CANCELLED') {
+    finalTime = new Date(order.updatedAt || order.createdAt).getTime();
   }
 
   // 2. Tempo de Início do Preparo (Fim da fase NEW)
   // Se o pedido está em status final, usamos o updatedAt fixo. Caso contrário, usamos o updatedAt se existir, ou createdAt.
-  const preparingStartTime = (isFinalStatus && order.updatedAt) || order.status !== 'NEW'
-    ? new Date(order.updatedAt || order.createdAt).getTime() 
-    : createdAt;
+  const preparingStartTime = (() => {
+    if (order.status === 'NEW') return createdAt
+    return new Date(order.updatedAt || order.createdAt).getTime()
+  })();
 
   // 3. Tempo Final de Produção (Fim da fase PREPARING / Início da fase READY)
   let productionEndTime: number;
@@ -67,7 +104,6 @@ const calculateDeliveryMetrics = (order: Order) => {
   } else if (order.status === 'READY' && order.updatedAt) {
       productionEndTime = new Date(order.updatedAt).getTime();
   } else if (isFinalStatus) {
-      // Se está em status final (DELIVERED/CANCELLED) sem readyAt, usamos o tempo de início do preparo
       productionEndTime = preparingStartTime;
   } else {
       // Se está NEW ou PREPARING, o fim da produção é o tempo atual (para cálculo em tempo real)
@@ -167,11 +203,17 @@ export default function RelatoriosPage() {
   const [itemsFilter, setItemsFilter] = useState(''); // Filtro da tabela de Itens vendidos
   const [itemsSortBy, setItemsSortBy] = useState<'name' | 'category' | 'quantity' | 'revenue'>('quantity');
   const [itemsSortDir, setItemsSortDir] = useState<'asc' | 'desc'>('desc');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let stopped = false;
+    const timeout = setTimeout(() => {
+      if (!stopped) setLoading(false);
+    }, 10000); // Timeout de segurança de 10s
+
     (async () => {
       try {
+        const slaByProductId = getSlaByProductIdFromLocalStorage()
         const cats = await productsService.listCategories();
         const prods = await productsService.listProducts();
         const categoriesOut: Category[] = (cats || []).map((c: any) => ({
@@ -185,7 +227,7 @@ export default function RelatoriosPage() {
           id: String(p.id),
           name: String(p.name || ''),
           price: Math.max(0, Number(p.priceCents ?? 0) / 100),
-          sla: 0,
+          sla: resolveSlaForItem({ productId: p.id, categoryId: p.categoryId, slaByProductId }),
           categoryId: p.categoryId ? String(p.categoryId) : '',
           observations: [],
           active: Boolean(p.isActive ?? true),
@@ -196,25 +238,24 @@ export default function RelatoriosPage() {
           if (categoriesOut.length) setCategories(categoriesOut);
           if (menuItemsOut.length) setMenuItems(menuItemsOut);
         }
-        const rows = await ordersService.listOrders();
+        const detailed = await ordersService.listOrdersDetailed();
         const out: Order[] = [];
-        for (const r of (rows || [])) {
-          let items: any[] = [];
-          let payments: any[] = [];
-          try {
-            const det = await ordersService.getOrderById(String(r.id));
-            items = det?.items || [];
-            payments = det?.payments || [];
-          } catch {}
+        for (const d of detailed) {
+          const r = d.order as any;
+          const items = d.items || [];
+          const payments = d.payments || [];
+          const pinVal = d.details?.pin;
+          const passVal = d.details?.password;
           const orderItems = (items || []).map((it: any) => {
             const pid = it.product_id ?? it.productId;
             const mi = pid ? productMap[String(pid)] : undefined;
+            const categoryId = String(it.category_id ?? mi?.categoryId ?? '')
             const menuItem: MenuItem = mi || {
               id: String(pid || String(it.id)),
-              name: mi?.name || 'Item',
+              name: String(it.product_name ?? mi?.name ?? 'Item'),
               price: Math.max(0, Number(it.unit_price_cents ?? it.unitPriceCents ?? 0) / 100),
-              sla: 0,
-              categoryId: mi?.categoryId || '',
+              sla: resolveSlaForItem({ productId: pid, categoryId, slaByProductId }),
+              categoryId,
               observations: [],
               active: true,
             };
@@ -229,54 +270,130 @@ export default function RelatoriosPage() {
           const paid = (payments || []).reduce((s: number, p: any) => s + Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100), 0);
           const breakdown = (payments || []).length > 1 ? Object.fromEntries((payments || []).map((p: any) => [String(p.method).toUpperCase(), Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100)])) : undefined;
           const method = (payments || []).length > 1 ? 'MÚLTIPLO' : ((payments || [])[0]?.method ? String((payments || [])[0].method).toUpperCase() : '');
+          const phaseTimes = (d as any).phaseTimes || {}
+          const createdAtRaw = phaseTimes.newStart ?? r.opened_at ?? r.openedAt ?? r.created_at ?? r.createdAt
+          const preparingStartRaw = phaseTimes.preparingStart ?? r.updated_at ?? r.updatedAt
+          const readyAtRaw = phaseTimes.readyAt ?? r.ready_at ?? r.readyAt
+          const deliveredAtRaw = phaseTimes.deliveredAt ?? r.closed_at ?? r.closedAt ?? r.completed_at ?? r.completedAt
+          const rawLower = String(r.status || '').toLowerCase()
+          const rawUpper = String(r.status || '').toUpperCase()
+          const status: Order['status'] = (() => {
+            if (rawLower === 'cancelled' || rawUpper === 'CANCELLED') return 'CANCELLED'
+            if (deliveredAtRaw || rawLower === 'closed' || rawUpper === 'DELIVERED') return 'DELIVERED'
+            if (readyAtRaw) return 'READY'
+            if (preparingStartRaw) return 'PREPARING'
+            if (rawLower === 'open' || rawUpper === 'NEW') return 'NEW'
+            return 'NEW'
+          })()
+          const slaMinutes = (orderItems || []).reduce((sum: number, it: any) => sum + (Number(it?.menuItem?.sla ?? 0) * Math.max(1, Number(it?.quantity ?? 1))), 0)
           const ord: Order = {
             id: String(r.id),
-            pin: String(r.id),
-            password: '',
+            pin: pinVal || String(r.id),
+            password: passVal || '',
             items: orderItems,
             total: paid > 0 ? paid : Math.max(0, Number(r.total_cents ?? 0) / 100),
             paymentMethod: breakdown ? 'MÚLTIPLO' : (method || 'Não informado'),
             paymentBreakdown: breakdown,
-            status:
-              r.closed_at
-                ? 'DELIVERED'
-                : String(r.status).toLowerCase() === 'closed' || String(r.status).toUpperCase() === 'DELIVERED'
-                ? 'DELIVERED'
-                : String(r.status).toLowerCase() === 'cancelled' || String(r.status).toUpperCase() === 'CANCELLED'
-                ? 'CANCELLED'
-                : 'NEW',
-            createdAt: r.opened_at ? new Date(r.opened_at) : new Date(),
-            updatedAt: r.updated_at ? new Date(r.updated_at) : undefined,
-            readyAt: r.ready_at ? new Date(r.ready_at) : undefined,
-            deliveredAt: r.closed_at ? new Date(r.closed_at) : undefined,
-            slaMinutes: 0,
+            status,
+            createdAt: createdAtRaw ? new Date(createdAtRaw) : new Date(),
+            updatedAt: preparingStartRaw ? new Date(preparingStartRaw) : (r.updated_at ? new Date(r.updated_at) : undefined),
+            readyAt: readyAtRaw ? new Date(readyAtRaw) : undefined,
+            deliveredAt: deliveredAtRaw ? new Date(deliveredAtRaw) : undefined,
+            slaMinutes,
             createdBy: '',
           } as any;
           out.push(ord);
         }
         if (!stopped) setOrders(out);
-      } catch {}
+      } catch (e) {
+        console.error('Erro ao carregar relatórios:', e);
+      } finally {
+        if (!stopped) setLoading(false);
+        clearTimeout(timeout);
+      }
     })();
-    return () => { stopped = true };
+    return () => { stopped = true; clearTimeout(timeout); };
   }, []);
 
-  if (!isAuthenticated) {
-    return (
-      <div className="fixed inset-0 flex items-center justify-center bg-black/40">
-        <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
-          <div className="mb-4">
-            <h3 className="text-lg font-medium text-gray-900">Acesso aos Relatórios</h3>
-            <p className="text-xs text-gray-500">Digite a senha para acessar</p>
-          </div>
-          <div className="space-y-3">
-            <Input value={authPass} onChange={e=>setAuthPass((e.target as HTMLInputElement).value)} onKeyDown={e=>{ if ((e as any).key === 'Enter') tryAuth() }} placeholder="Senha" type="password" />
-            {authError ? <div className="text-red-600 text-sm">{authError}</div> : null}
-            <Button onClick={tryAuth}>Entrar</Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // Atualização periódica dos pedidos via SQLite para refletir mudanças entre janelas
+  useEffect(() => {
+    let mounted = true;
+    const refresh = async () => {
+      try {
+        const detailed = await ordersService.listOrdersDetailed();
+        if (!mounted) return;
+        const slaByProductId = getSlaByProductIdFromLocalStorage()
+        const out: Order[] = [];
+        for (const d of detailed) {
+          const r = d.order as any;
+          const items = d.items || [];
+          const payments = d.payments || [];
+          const pinVal = d.details?.pin;
+          const passVal = d.details?.password;
+          const phaseTimes = (d as any).phaseTimes || {}
+          const createdAtRaw = phaseTimes.newStart ?? r.opened_at ?? r.openedAt ?? r.created_at ?? r.createdAt
+          const preparingStartRaw = phaseTimes.preparingStart ?? r.updated_at ?? r.updatedAt
+          const readyAtRaw = phaseTimes.readyAt ?? r.ready_at ?? r.readyAt
+          const deliveredAtRaw = phaseTimes.deliveredAt ?? r.closed_at ?? r.closedAt ?? r.completed_at ?? r.completedAt
+          const rawLower = String(r.status || '').toLowerCase()
+          const rawUpper = String(r.status || '').toUpperCase()
+          const paid = (payments || []).reduce((s: number, p: any) => s + Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100), 0);
+          const breakdown = (payments || []).length > 1 ? Object.fromEntries((payments || []).map((p: any) => [String(p.method).toUpperCase(), Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100)])) : undefined;
+          const method = (payments || []).length > 1 ? 'MÚLTIPLO' : ((payments || [])[0]?.method ? String((payments || [])[0].method).toUpperCase() : '');
+          const orderItems = (items || []).map((it: any) => {
+            const pid = it.product_id ?? it.productId
+            const categoryId = String(it.category_id ?? '')
+            const sla = resolveSlaForItem({ productId: pid, categoryId, slaByProductId })
+            return {
+              id: String(it.id),
+              menuItem: {
+                id: String(pid ?? String(it.id)),
+                name: String(it.product_name ?? 'Item'),
+                price: Math.max(0, Number(it.unit_price_cents ?? it.unitPriceCents ?? 0) / 100),
+                sla,
+                categoryId,
+                observations: [],
+                active: true,
+              } as any,
+              quantity: Number(it.qty ?? it.quantity ?? 1),
+              unitPrice: Math.max(0, Number(it.unit_price_cents ?? it.unitPriceCents ?? 0) / 100),
+              productionUnits: [],
+            }
+          }) as any
+          const status: Order['status'] = (() => {
+            if (rawLower === 'cancelled' || rawUpper === 'CANCELLED') return 'CANCELLED'
+            if (deliveredAtRaw || rawLower === 'closed' || rawUpper === 'DELIVERED') return 'DELIVERED'
+            if (readyAtRaw) return 'READY'
+            if (preparingStartRaw) return 'PREPARING'
+            if (rawLower === 'open' || rawUpper === 'NEW') return 'NEW'
+            return 'NEW'
+          })()
+          const slaMinutes = (orderItems || []).reduce((sum: number, it: any) => sum + (Number(it?.menuItem?.sla ?? 0) * Math.max(1, Number(it?.quantity ?? 1))), 0)
+          const ord: Order = {
+            id: String(r.id),
+            pin: pinVal || String(r.id),
+            password: passVal || '',
+            items: orderItems,
+            total: paid > 0 ? paid : Math.max(0, Number(r.total_cents ?? 0) / 100),
+            paymentMethod: breakdown ? 'MÚLTIPLO' : (method || 'Não informado'),
+            paymentBreakdown: breakdown,
+            status,
+            createdAt: createdAtRaw ? new Date(createdAtRaw) : new Date(),
+            updatedAt: preparingStartRaw ? new Date(preparingStartRaw) : (r.updated_at ? new Date(r.updated_at) : undefined),
+            readyAt: readyAtRaw ? new Date(readyAtRaw) : undefined,
+            deliveredAt: deliveredAtRaw ? new Date(deliveredAtRaw) : undefined,
+            slaMinutes,
+            createdBy: '',
+          } as any;
+          out.push(ord);
+        }
+        setOrders(out);
+      } catch {}
+    };
+    refresh();
+    const timer = setInterval(refresh, 5000);
+    return () => { mounted = false; clearInterval(timer); };
+  }, []);
 
   // Mapeamento de itens para facilitar a busca por categoria
   const itemMap = useMemo(() => {
@@ -719,6 +836,24 @@ export default function RelatoriosPage() {
     { id: 'performance', name: 'Performance', icon: 'ri-speed-up-line' }
   ];
 
+  if (!isAuthenticated) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center bg-black/40">
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+          <div className="mb-4">
+            <h3 className="text-lg font-medium text-gray-900">Acesso aos Relatórios</h3>
+            <p className="text-xs text-gray-500">Digite a senha para acessar</p>
+          </div>
+          <div className="space-y-3">
+            <Input value={authPass} onChange={e=>setAuthPass((e.target as HTMLInputElement).value)} onKeyDown={e=>{ if ((e as any).key === 'Enter') tryAuth() }} placeholder="Senha" type="password" />
+            {authError ? <div className="text-red-600 text-sm">{authError}</div> : null}
+            <Button onClick={tryAuth}>Entrar</Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full flex-1 min-h-0 bg-gray-50">
       
@@ -784,8 +919,17 @@ export default function RelatoriosPage() {
 
       {/* CONTEÚDO ROLÁVEL */}
       <div className="flex-1 min-h-0 overflow-y-auto p-6">
-        {activeTab === 'sales' && (
-          <div className="space-y-6">
+        {loading ? (
+          <div className="flex items-center justify-center h-full">
+            <div className="flex flex-col items-center">
+              <i className="ri-loader-4-line text-4xl text-amber-500 animate-spin mb-4"></i>
+              <p className="text-gray-500">Carregando dados...</p>
+            </div>
+          </div>
+        ) : (
+          <>
+            {activeTab === 'sales' && (
+              <div className="space-y-6">
             {/* Cards de métricas */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               <div className="bg-white rounded-lg p-6 shadow-sm border border-gray-200">
@@ -1244,6 +1388,8 @@ export default function RelatoriosPage() {
             {/* Removido ItemPreparationMetrics */}
           </div>
         )}
+        </>
+      )}
       </div>
     </div>
   );

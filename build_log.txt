@@ -1,0 +1,161 @@
+﻿
+> desktop@0.0.0 build C:\00.PROJETOS\SISTEMA - PDV\apps\desktop
+> cross-env NODE_ENV=production vite build
+
+[36mvite v7.1.11 [32mbuilding for production...[36m[39m
+transforming...
+[32mÔ£ô[39m 2717 modules transformed.
+node.exe : [33msrc/offline
+/db/client.ts (9:22): Use 
+of eval in 
+"src/offline/db/client.ts" 
+is strongly discouraged as 
+it poses security risks 
+and may cause issues with 
+minification.[39m
+No C:\Users\felip\AppData\R
+oaming\npm\pnpm.ps1:24 
+caractere:5
++     & "node$exe"  "$based
+ir/node_modules/pnpm/bin/pn
+pm.cjs" $args
++     ~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~
+    + CategoryInfo         
+     : NotSpecified: ([3  
+  3msrc/offlin...ificati   
+ on.[39m:String) [], R    
+emoteException
+    + FullyQualifiedErrorI 
+   d : NativeCommandError
+ 
+[33msrc/offline/db/client.
+ts (10:25): Use of eval in 
+"src/offline/db/client.ts" 
+is strongly discouraged as 
+it poses security risks 
+and may cause issues with 
+minification.[39m
+rendering chunks...
+[33m[plugin 
+vite:reporter] 
+(!) C:/00.PROJETOS/SISTEMA 
+- PDV/apps/desktop/src/util
+s/supabase.ts is 
+dynamically imported by 
+C:/00.PROJETOS/SISTEMA - PD
+V/apps/desktop/src/offline/
+services/kdsService.ts, 
+C:/00.PROJETOS/SISTEMA - PD
+V/apps/desktop/src/offline/
+services/kdsService.ts, 
+C:/00.PROJETOS/SISTEMA - PD
+V/apps/desktop/src/offline/
+services/productsService.ts
+, C:/00.PROJETOS/SISTEMA - 
+PDV/apps/desktop/src/offlin
+e/services/productsService.
+ts, C:/00.PROJETOS/SISTEMA 
+- PDV/apps/desktop/src/offl
+ine/services/productsServic
+e.ts, 
+C:/00.PROJETOS/SISTEMA - PD
+V/apps/desktop/src/pages/ca
+ixa/components/Cart.tsx, 
+C:/00.PROJETOS/SISTEMA - PD
+V/apps/desktop/src/pages/ca
+ixa/components/Cart.tsx, 
+C:/00.PROJETOS/SISTEMA - PD
+V/apps/desktop/src/pages/ca
+ixa/page.tsx, 
+C:/00.PROJETOS/SISTEMA - PD
+V/apps/desktop/src/pages/ca
+ixa/page.tsx, 
+C:/00.PROJETOS/SISTEMA - PD
+V/apps/desktop/src/pages/co
+nfiguracoes/page.tsx, 
+C:/00.PROJETOS/SISTEMA - PD
+V/apps/desktop/src/pages/co
+nfiguracoes/page.tsx, 
+C:/00.PROJETOS/SISTEMA - PD
+V/apps/desktop/src/pages/co
+nfiguracoes/page.tsx, 
+C:/00.PROJETOS/SISTEMA - PD
+V/apps/desktop/src/pages/co
+nfiguracoes/page.tsx, 
+C:/00.PROJETOS/SISTEMA - PD
+V/apps/desktop/src/pages/co
+nfiguracoes/page.tsx, 
+C:/00.PROJETOS/SISTEMA - PD
+V/apps/desktop/src/pages/co
+nfiguracoes/page.tsx, 
+C:/00.PROJETOS/SISTEMA - PD
+V/apps/desktop/src/pages/co
+nfiguracoes/page.tsx, 
+C:/00.PROJETOS/SISTEMA - PD
+V/apps/desktop/src/pages/co
+nfiguracoes/page.tsx, 
+C:/00.PROJETOS/SISTEMA - PD
+V/apps/desktop/src/pages/co
+nfiguracoes/page.tsx, 
+C:/00.PROJETOS/SISTEMA - PD
+V/apps/desktop/src/pages/co
+zinha/components/KitchenSel
+ectModal.tsx, 
+C:/00.PROJETOS/SISTEMA - PD
+V/apps/desktop/src/pages/co
+zinha/page.tsx but also 
+statically imported by 
+C:/00.PROJETOS/SISTEMA - PD
+V/apps/desktop/src/offline/
+services/cashService.ts, 
+C:/00.PROJETOS/SISTEMA - PD
+V/apps/desktop/src/offline/
+services/kdsService.ts, 
+C:/00.PROJETOS/SISTEMA - PD
+V/apps/desktop/src/offline/
+services/ordersService.ts, 
+C:/00.PROJETOS/SISTEMA - PD
+V/apps/desktop/src/offline/
+services/stationsService.ts
+, C:/00.PROJETOS/SISTEMA - 
+PDV/apps/desktop/src/pages/
+master/components/KitchensM
+anager.tsx, 
+C:/00.PROJETOS/SISTEMA - PD
+V/apps/desktop/src/utils/te
+stSupabase.ts, dynamic 
+import will not move 
+module into another chunk.
+[39m
+computing gzip size...
+[2mout/[22m[32mindex.html                                       [39m[1m[2m    0.67 kB[22m[1m[22m[2m Ôöé gzip:   0.39 kB[22m
+[2mout/[22m[32massets/remixicon-BDfE_iBv.woff2                  [39m[1m[2m  182.29 kB[22m[1m[22m
+[2mout/[22m[32massets/remixicon-B6RyWYTT.woff                   [39m[1m[2m  250.59 kB[22m[1m[22m
+[2mout/[22m[32massets/remixicon-B1j7v5Pq.ttf                    [39m[1m[2m  592.25 kB[22m[1m[22m
+[2mout/[22m[32massets/remixicon-D5XJLTJH.eot                    [39m[1m[2m  592.42 kB[22m[1m[22m
+[2mout/[22m[32massets/remixicon-DS68KM4N.svg                    [39m[1m[2m2,892.52 kB[22m[1m[22m[2m Ôöé gzip: 614.89 kB[22m
+[2mout/[22m[32massets/material-symbols-sharp-DfT2InUA.woff2     [39m[1m[2m3,379.15 kB[22m[1m[22m
+[2mout/[22m[32massets/material-symbols-outlined-D5wXZi6V.woff2  [39m[1m[2m3,819.95 kB[22m[1m[22m
+[2mout/[22m[32massets/material-symbols-rounded-kOYkDlpA.woff2   [39m[1m[2m5,177.39 kB[22m[1m[22m
+[2mout/[22m[35massets/index-BaRSTO89.css                        [39m[1m[2m  189.54 kB[22m[1m[22m[2m Ôöé gzip:  29.97 kB[22m
+[2mout/[22m[36massets/react-vendor-B9CYYsIr.js                  [39m[1m[2m   45.44 kB[22m[1m[22m[2m Ôöé gzip:  16.19 kB[22m
+[2mout/[22m[36massets/supabase-vendor-DQwqY6dM.js               [39m[1m[2m  124.53 kB[22m[1m[22m[2m Ôöé gzip:  34.39 kB[22m
+[2mout/[22m[36massets/index-BiCkueuO.js                         [39m[1m[33m1,637.92 kB[39m[22m[2m Ôöé gzip: 417.72 kB[22m
+[33m
+(!) Some chunks are larger 
+than 1000 kB after 
+minification. Consider:
+- Using dynamic import() 
+to code-split the 
+application
+- Use build.rollupOptions.o
+utput.manualChunks to 
+improve chunking: https://r
+ollupjs.org/configuration-o
+ptions/#output-manualchunks
+- Adjust chunk size limit 
+for this warning via build.
+chunkSizeWarningLimit.[39m
+[32mÔ£ô built in 9.44s[39m

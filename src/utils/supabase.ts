@@ -8,3 +8,12 @@ const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
 export const supabase = url && anonKey
   ? createClient(url, anonKey, { auth: { persistSession: false } })
   : null as any
+
+// Log para debug (apenas em desenvolvimento)
+if (import.meta.env.DEV) {
+  if (supabase) {
+    console.log('[Supabase] Cliente inicializado com sucesso:', url)
+  } else {
+    console.warn('[Supabase] Cliente NÃO inicializado. URL:', url, 'Key:', anonKey ? 'presente' : 'ausente')
+  }
+}

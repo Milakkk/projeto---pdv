@@ -24,24 +24,32 @@ export type DeviceProfile = {
 }
 
 export async function getDeviceProfile(): Promise<DeviceProfile | null> {
-  const res = await query('SELECT * FROM device_profile LIMIT 1', [])
-  const row = (res?.rows ?? [])[0]
-  return row ? mapRow(row) : null
+  try {
+    const res = await query('SELECT * FROM device_profile LIMIT 1', [])
+    const row = (res?.rows ?? [])[0]
+    return row ? mapRow(row) : readDeviceProfileLS()
+  } catch {
+    return readDeviceProfileLS()
+  }
 }
 
 export async function saveDeviceProfile(payload: DeviceProfile): Promise<void> {
   const now = new Date().toISOString()
-  const current = await getDeviceProfile()
-  if (!current) {
-    await query(
-      'INSERT INTO device_profile (unit_id, device_id, role, station, updated_at) VALUES (?, ?, ?, ?, ?)',
-      [payload.unitId, payload.deviceId, payload.role, payload.station ?? null, now],
-    )
-  } else {
-    await query(
-      'UPDATE device_profile SET unit_id = ?, device_id = ?, role = ?, station = ?, updated_at = ? WHERE id = ?',
-      [payload.unitId, payload.deviceId, payload.role, payload.station ?? null, now, current.id],
-    )
+  try {
+    const current = await getDeviceProfile()
+    if (!current) {
+      await query(
+        'INSERT INTO device_profile (unit_id, device_id, role, station, updated_at) VALUES (?, ?, ?, ?, ?)',
+        [payload.unitId, payload.deviceId, payload.role, payload.station ?? null, now],
+      )
+    } else {
+      await query(
+        'UPDATE device_profile SET unit_id = ?, device_id = ?, role = ?, station = ?, updated_at = ? WHERE id = ?',
+        [payload.unitId, payload.deviceId, payload.role, payload.station ?? null, now, current.id],
+      )
+    }
+  } catch {
+    writeDeviceProfileLS({ ...payload, updatedAt: now })
   }
 }
 
@@ -79,5 +87,42 @@ export async function ensureDeviceProfile(opts: { role: 'pos' | 'kds' | 'admin' 
 
 export async function getCurrentUnitId(): Promise<string | null> {
   const dp = await getDeviceProfile()
-  return dp?.unitId ?? null
+  const uid = dp?.unitId ?? null
+  if (uid && uid !== 'default' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uid)) {
+    return uid
+  }
+  return null
+}
+
+function readDeviceProfileLS(): DeviceProfile | null {
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('deviceProfile') : null
+    if (raw) {
+      const obj = JSON.parse(raw)
+      const unitIdRaw = typeof obj.unitId === 'string' ? obj.unitId : ''
+      const unitId = (unitIdRaw && unitIdRaw !== 'default') ? unitIdRaw : ''
+      const deviceId = typeof obj.deviceId === 'string' ? obj.deviceId : crypto.randomUUID()
+      const role = (obj.role || 'pos') as any
+      const station = obj.station ? String(obj.station) : null
+      const updatedAt = obj.updatedAt ? String(obj.updatedAt) : new Date().toISOString()
+      return { unitId, deviceId, role, station, updatedAt }
+    }
+    const unitIdLS = typeof localStorage !== 'undefined' ? localStorage.getItem('unitId') : null
+    const deviceIdLS = typeof localStorage !== 'undefined' ? localStorage.getItem('deviceId') : null
+    if (unitIdLS || deviceIdLS) {
+      const finalUnitId = (unitIdLS && unitIdLS !== 'default') ? unitIdLS : ''
+      return { unitId: finalUnitId, deviceId: deviceIdLS || crypto.randomUUID(), role: 'pos', station: null, updatedAt: new Date().toISOString() }
+    }
+  } catch {}
+  return null
+}
+
+function writeDeviceProfileLS(payload: DeviceProfile): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('deviceProfile', JSON.stringify(payload))
+      if (payload.unitId) localStorage.setItem('unitId', String(payload.unitId))
+      if (payload.deviceId) localStorage.setItem('deviceId', String(payload.deviceId))
+    }
+  } catch {}
 }

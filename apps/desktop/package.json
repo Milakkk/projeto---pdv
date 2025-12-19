@@ -49,7 +49,7 @@
   "private": true,
   "main": "electron/main.js",
   "scripts": {
-    "build": "vite build",
+    "build": "cross-env NODE_ENV=production vite build",
     "dev:renderer": "vite --port 3010 --strictPort",
     "dev:main": "cross-env VITE_DEV_SERVER_PORT=3010 NODE_ENV=development electron ./electron/main.js",
     "dev:main:pdv": "cross-env VITE_DEV_SERVER_PORT=3010 ELECTRON_WINDOW=pdv NODE_ENV=development electron ./electron/main.js",
@@ -62,6 +62,7 @@
     "dev:desktop:pdv": "node scripts/dev-start.js pdv",
     "dev:desktop:kds": "node scripts/dev-start.js kds",
     "dev:desktop:both": "node scripts/dev-start.js both",
+    "dev:browser": "cross-env IS_PREVIEW=true BASE_PATH=/ vite --port 3001 --host 0.0.0.0",
     "preview": "vite preview",
     "db:generate": "drizzle-kit generate:sqlite",
     "db:migrate": "drizzle-kit up",
@@ -69,7 +70,8 @@
     "electron:start": "electron ./electron/main.js",
     "electron:build": "pnpm build && node scripts/package.js",
     "native:rebuild": "electron-rebuild -f -w better-sqlite3",
-    "rebuild:sqlite": "electron-rebuild -f -w better-sqlite3"
+    "rebuild:sqlite": "electron-rebuild -f -w better-sqlite3",
+    "clear:orders": "node scripts/clear-orders.js"
   },
   "type": "module",
   "build": {

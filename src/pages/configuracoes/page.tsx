@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { useKitchens } from '../../hooks/useDatabase';
 import { MenuItem, Category, RequiredModifierGroup } from '../../types';
 import Button from '../../components/base/Button';
 import Modal from '../../components/base/Modal';
@@ -8,6 +9,7 @@ import ConfirmationModal from '../../components/base/ConfirmationModal';
 import { mockCategories, mockMenuItems, mockPaymentMethods } from '../../mocks/data';
 import { DEFAULT_PAYMENT_SHORTCUTS } from '../../utils/constants';
 import { listCategories as dbListCategories, listProducts as dbListProducts, upsertCategory, deleteCategory as dbDeleteCategory, upsertProduct, deleteProduct as dbDeleteProduct } from '../../offline/services/productsService';
+import { setCategoryKitchens } from '../../offline/services/kitchenService';
 
 type ConfigTab = 'categories' | 'items' | 'payments' | 'general' | 'shortcuts';
 type PasswordFormat = 'numeric' | 'alphabetic' | 'alphanumeric';
@@ -35,6 +37,9 @@ export default function ConfiguracoesPage() {
     passwordFormat: 'numeric' as PasswordFormat // Novo campo
   });
   const [paymentShortcuts, setPaymentShortcuts] = useLocalStorage<Record<string, string>>('paymentShortcuts', DEFAULT_PAYMENT_SHORTCUTS);
+
+  // Hook de cozinhas para associação categoria-cozinha
+  const { kitchens } = useKitchens();
 
   // NOVOS ESTADOS PARA IMAGEM
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -195,7 +200,7 @@ export default function ConfiguracoesPage() {
   const [editingPayment, setEditingPayment] = useState<string>('');
 
   // Estados para formulários
-  const [categoryForm, setCategoryForm] = useState({ name: '', icon: 'ri-restaurant-line', integrationCode: '' });
+  const [categoryForm, setCategoryForm] = useState({ name: '', icon: 'ri-restaurant-line', integrationCode: '', kitchenIds: [] as string[] });
   const [iconSearchTerm, setIconSearchTerm] = useState('');
   const [itemForm, setItemForm] = useState({
     name: '',
@@ -223,7 +228,7 @@ export default function ConfiguracoesPage() {
 
 
   const resetForms = () => {
-    setCategoryForm({ name: '', icon: 'ri-restaurant-line', integrationCode: '' });
+    setCategoryForm({ name: '', icon: 'ri-restaurant-line', integrationCode: '', kitchenIds: [] });
     setItemForm({ name: '', price: '', sla: '', categoryId: '', observations: [], requiredModifierGroups: [], image: '', code: '', integrationCode: '', skipKitchen: false, allowPartialDelivery: true, unitDeliveryCount: '' });
     setPaymentForm('');
     setNewObservation('');
@@ -491,11 +496,21 @@ export default function ConfiguracoesPage() {
     if (editingCategory) {
       const updated = categories.map(cat => 
         cat.id === editingCategory.id 
-          ? { ...cat, name: categoryForm.name, icon: categoryForm.icon, integrationCode: categoryForm.integrationCode }
+          ? { 
+              ...cat, 
+              name: categoryForm.name, 
+              icon: categoryForm.icon, 
+              integrationCode: categoryForm.integrationCode,
+              kitchenIds: categoryForm.kitchenIds
+            }
           : cat
       );
       setCategories(updated);
       await upsertCategory({ id: editingCategory.id, name: categoryForm.name });
+      // Salva associações categoria-cozinha
+      if (categoryForm.kitchenIds) {
+        await setCategoryKitchens(editingCategory.id, categoryForm.kitchenIds);
+      }
     } else {
       const id = await upsertCategory({ name: categoryForm.name });
       const newCategory: Category = {
@@ -504,9 +519,14 @@ export default function ConfiguracoesPage() {
         icon: categoryForm.icon,
         order: categories.length + 1,
         active: true,
-        integrationCode: categoryForm.integrationCode
+        integrationCode: categoryForm.integrationCode,
+        kitchenIds: categoryForm.kitchenIds
       };
       setCategories([...categories, newCategory]);
+      // Salva associações categoria-cozinha
+      if (categoryForm.kitchenIds) {
+        await setCategoryKitchens(id, categoryForm.kitchenIds);
+      }
     }
 
     setShowCategoryModal(false);
@@ -656,7 +676,12 @@ export default function ConfiguracoesPage() {
 
   const openEditCategory = (category: Category) => {
     setEditingCategory(category);
-    setCategoryForm({ name: category.name, icon: category.icon, integrationCode: category.integrationCode || '' });
+    setCategoryForm({ 
+      name: category.name, 
+      icon: category.icon, 
+      integrationCode: category.integrationCode || '',
+      kitchenIds: category.kitchenIds || []
+    });
     setShowCategoryModal(true);
   };
 
@@ -1678,6 +1703,55 @@ export default function ConfiguracoesPage() {
                     </div>
                   </div>
                 </div>
+
+                {/* Limpeza de Pedidos */}
+                <div className="pt-4 border-t border-red-200">
+                  <h3 className="font-medium text-red-900 mb-2">Limpeza de Dados</h3>
+                  <p className="text-sm text-gray-500 mb-4">
+                    Remove todos os pedidos do sistema, mantendo apenas dados de configuração (categorias, produtos, cozinhas, etc.)
+                  </p>
+                  <Button
+                    variant="danger"
+                    onClick={() => {
+                      if (confirm('⚠️ ATENÇÃO: Esta ação irá remover TODOS os pedidos do sistema!\n\nIsso inclui:\n- Pedidos\n- Itens de pedidos\n- Pagamentos\n- Sessões de caixa\n- Movimentos de caixa\n- Carrinhos salvos\n\nDados de configuração (categorias, produtos, cozinhas) serão mantidos.\n\nDeseja continuar?')) {
+                        // Limpar pedidos do localStorage
+                        const keysToRemove = [
+                          'orders',
+                          'savedCarts',
+                          'cashSessions',
+                          'cashMovements',
+                          'currentCashSession',
+                          'operationalSessionsHistory',
+                          'currentOperationalSession',
+                          'orderCounter',
+                          'sessionCounter',
+                          'caixa_pendingCart',
+                        ];
+                        
+                        keysToRemove.forEach(key => {
+                          localStorage.removeItem(key);
+                        });
+
+                        // Limpar também do IndexedDB se existir
+                        if ('indexedDB' in window) {
+                          indexedDB.databases().then(databases => {
+                            databases.forEach(db => {
+                              if (db.name?.includes('orders') || db.name?.includes('cash')) {
+                                indexedDB.deleteDatabase(db.name);
+                              }
+                            });
+                          });
+                        }
+
+                        alert('✅ Pedidos removidos com sucesso!\n\nO sistema foi limpo. Recarregue a página para ver as mudanças.');
+                        window.location.reload();
+                      }
+                    }}
+                  >
+                    <i className="ri-delete-bin-line mr-2"></i>
+                    Limpar Todos os Pedidos
+                  </Button>
+                </div>
               </div>
             </div>
           </div>
@@ -1724,6 +1798,51 @@ export default function ConfiguracoesPage() {
             onChange={(e) => setCategoryForm({ ...categoryForm, integrationCode: e.target.value })}
             placeholder="Somente números"
           />
+
+          {/* Seleção de Cozinhas */}
+          {kitchens.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Cozinhas Associadas
+              </label>
+              <p className="text-xs text-gray-500 mb-2">
+                Selecione as cozinhas que preparam itens desta categoria. Deixe vazio para todas.
+              </p>
+              <div className="flex flex-wrap gap-2 p-3 border border-gray-200 rounded-lg bg-gray-50 max-h-32 overflow-y-auto">
+                {kitchens.filter(k => k.isActive).map(kitchen => {
+                  const isSelected = categoryForm.kitchenIds.includes(kitchen.id);
+                  return (
+                    <button
+                      key={kitchen.id}
+                      type="button"
+                      onClick={() => {
+                        setCategoryForm(prev => ({
+                          ...prev,
+                          kitchenIds: isSelected
+                            ? prev.kitchenIds.filter(id => id !== kitchen.id)
+                            : [...prev.kitchenIds, kitchen.id]
+                        }));
+                      }}
+                      className={`px-3 py-1.5 rounded-full text-sm font-medium transition-all ${
+                        isSelected
+                          ? 'bg-orange-500 text-white'
+                          : 'bg-white text-gray-700 border border-gray-300 hover:border-orange-400'
+                      }`}
+                    >
+                      <i className={`ri-restaurant-2-line mr-1.5 ${isSelected ? 'text-white' : 'text-orange-500'}`}></i>
+                      {kitchen.name}
+                    </button>
+                  );
+                })}
+              </div>
+              {categoryForm.kitchenIds.length === 0 && (
+                <p className="text-xs text-amber-600 mt-1">
+                  <i className="ri-information-line mr-1"></i>
+                  Nenhuma cozinha selecionada = Itens aparecerão em todas as cozinhas
+                </p>
+              )}
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -1878,9 +1997,23 @@ export default function ConfiguracoesPage() {
             <p className="text-xs text-gray-500 mt-1">Quando ativo, o item não gera unidades de produção nem aparece na Cozinha.</p>
           </div>
 
-          {/* Campo de unidades removido da edição de item conforme solicitado */}
-
-          
+          {/* Campo de Quantidade (para combos) */}
+          <div className="pt-4 border-t border-gray-200">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Quantidade Padrão (para combos)
+            </label>
+            <Input
+              type="number"
+              min="1"
+              value={itemForm.unitDeliveryCount || '1'}
+              onChange={(e) => setItemForm({ ...itemForm, unitDeliveryCount: e.target.value || '1' })}
+              placeholder="1"
+              className="w-full"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Quantidade padrão ao adicionar este item ao carrinho (útil para combos)
+            </p>
+          </div>
           
           {/* NOVO: Grupos de Modificadores Obrigatórios */}
           <div className="pt-4 border-t border-gray-200">

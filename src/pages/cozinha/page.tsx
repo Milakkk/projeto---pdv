@@ -3,14 +3,17 @@ import OrderBoard from './components/OrderBoard';
 import OrderList from './components/OrderList';
 import OperatorManagementModal from './components/OperatorManagementModal';
 import ItemsInProductionModal from './components/ItemsInProductionModal';
+import KitchenSelectModal from './components/KitchenSelectModal';
 import AlertModal from '../../components/base/AlertModal';
 import ConfirmationModal from '../../components/base/ConfirmationModal';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { useKitchens, Kitchen, useKitchenSessions } from '../../hooks/useDatabase';
 import { Order, KitchenOperator, Category, ProductionUnit, OperationalSession } from '../../types';
 import { useOffline } from '../../hooks/useOffline';
 import Button from '../../components/base/Button';
 import { mockCategories } from '../../mocks/data';
-import { showSuccess } from '../../utils/toast';
+import { showSuccess, showError, showInfo } from '../../utils/toast';
+import { supabase } from '../../utils/supabase';
 import ReadyOrderTable from './components/ReadyOrderTable';
 import { useAuth } from '../../context/AuthContext';
 import Modal from '../../components/base/Modal';
@@ -31,13 +34,35 @@ const createProductionUnits = (quantity: number): ProductionUnit[] => {
 
 export default function CozinhaPage() {
   const { user, store } = useAuth();
+  const { kitchens } = useKitchens();
+  const { openKitchenSession, closeKitchenSession, isKitchenOnline, getKitchenSession } = useKitchenSessions();
   
+  const { isOnline } = useOffline();
   const [orders, setOrders] = useLocalStorage<Order[]>('orders', []);
   const [operators, setOperators] = useLocalStorage<KitchenOperator[]>('kitchenOperators', []);
   const [categories] = useLocalStorage<Category[]>('categories', mockCategories);
   
   const [operationalSession] = useLocalStorage<OperationalSession | null>('currentOperationalSession', null);
   const [cashSession] = useLocalStorage<any>('currentCashSession', null);
+  
+  // Estados de seleção de cozinha e operador
+  const [selectedKitchen, setSelectedKitchen] = useLocalStorage<Kitchen | null>('kds_selected_kitchen', null);
+  const [selectedOperator, setSelectedOperator] = useLocalStorage<KitchenOperator | null>('kds_selected_operator', null);
+  const [showKitchenSelectModal, setShowKitchenSelectModal] = useState(false);
+  
+  // Mostra o modal de seleção se não houver seleção ao montar
+  useEffect(() => {
+    // Aguarda um pouco para garantir que os dados foram carregados
+    const timer = setTimeout(() => {
+      const hasKitchens = kitchens.filter(k => k.isActive).length > 0;
+      // Sempre mostra o modal se não houver seleção (mesmo sem cozinhas, para selecionar operador)
+      if (!selectedKitchen && !selectedOperator) {
+        setShowKitchenSelectModal(true);
+      }
+    }, 500);
+    
+    return () => clearTimeout(timer);
+  }, [kitchens, selectedKitchen, selectedOperator]);
   
   const [showOperatorModal, setShowOperatorModal] = useState(false);
   const [showItemsInProductionModal, setShowItemsInProductionModal] = useState(false);
@@ -60,12 +85,32 @@ export default function CozinhaPage() {
 
   const isOperationalSessionOpen = useMemo(() => !!operationalSession && operationalSession.status === 'OPEN', [operationalSession]);
 
-  const activeProductionOrders = useMemo(() => {
-    return orders.filter(order => ['NEW', 'PREPARING', 'READY'].includes(order.status));
-  }, [orders]);
+  // Função para verificar se um pedido pertence à cozinha selecionada
+  const orderBelongsToKitchen = (order: Order) => {
+    // Se não há cozinha selecionada, mostra todos os pedidos
+    if (!selectedKitchen) return true;
+    
+    // Verifica se algum item do pedido pertence a uma categoria da cozinha selecionada
+    return (order.items || []).some(item => {
+      const category = categories.find(c => c.id === item.menuItem?.categoryId);
+      if (!category) return true; // Item sem categoria aparece em todas as cozinhas
+      
+      // Se a categoria não tem cozinhas específicas, aparece em todas
+      if (!category.kitchenIds || category.kitchenIds.length === 0) return true;
+      
+      // Verifica se a cozinha selecionada está nas cozinhas da categoria
+      return category.kitchenIds.includes(selectedKitchen.id);
+    });
+  };
 
-  const readyOrdersList = useMemo(() => orders.filter(order => order.status === 'READY'), [orders]);
-  const deliveredOrdersList = useMemo(() => orders.filter(o => o.status === 'DELIVERED'), [orders]);
+  const activeProductionOrders = useMemo(() => {
+    return orders
+      .filter(order => ['NEW', 'PREPARING', 'READY'].includes(order.status))
+      .filter(orderBelongsToKitchen);
+  }, [orders, selectedKitchen, categories]);
+
+  const readyOrdersList = useMemo(() => orders.filter(order => order.status === 'READY').filter(orderBelongsToKitchen), [orders, selectedKitchen, categories]);
+  const deliveredOrdersList = useMemo(() => orders.filter(o => o.status === 'DELIVERED').filter(orderBelongsToKitchen), [orders, selectedKitchen, categories]);
   const canceledOrdersList = useMemo(() => orders.filter(o => o.status === 'CANCELLED'), [orders]);
 
   // NOVO useEffect para a lógica de migração, executado apenas uma vez na montagem
@@ -199,6 +244,21 @@ export default function CozinhaPage() {
       return;
     }
     
+    // Validação de transição de status
+    const order = orders.find(o => o.id === orderId);
+    if (order) {
+      // Bloquear retorno de READY para NEW
+      if (order.status === 'READY' && status === 'NEW') {
+        displayAlert('Ação Bloqueada', 'Não é possível voltar de PRONTO para NOVO diretamente. Mude para PREPARANDO primeiro.', 'info');
+        return;
+      }
+      // Bloquear retorno de DELIVERED (embora a UI geralmente não mostre delivered na lista ativa)
+      if (order.status === 'DELIVERED') {
+        displayAlert('Ação Bloqueada', 'Pedido já entregue.', 'error');
+        return;
+      }
+    }
+
     startTransition(() => {
       setOrders(prevOrders => prevOrders.map(order => {
         if (order.id === orderId) {
@@ -206,46 +266,72 @@ export default function CozinhaPage() {
           let readyAt = order.readyAt;
           let updatedAt = order.updatedAt;
           
+          // Lógica de atualização local (Optimistic UI)
+          let nextOrder = { ...order, status, updatedAt: now };
+
           if (status === 'PREPARING' && order.status === 'NEW') {
-            const updatedItems = order.items.map(item => ({
+            const updatedItems = (order.items || []).map(item => ({
               ...item,
-              productionUnits: item.productionUnits.map(unit => ({
+              productionUnits: (item.productionUnits || []).map(unit => ({
                 ...unit,
                 unitStatus: unit.unitStatus || 'PENDING',
                 completedAt: undefined, 
               }))
             }));
             updatedAt = now; 
-            return { ...order, status, items: updatedItems, updatedAt, readyAt: undefined }; 
+            showSuccess(`Pedido #${order.pin} em PREPARO.`);
+            nextOrder = { ...order, status, items: updatedItems, updatedAt, readyAt: undefined }; 
           }
           
-          if (status === 'READY' && order.status === 'PREPARING') {
+          else if (status === 'READY' && order.status === 'PREPARING') {
               readyAt = now;
-              const updatedItems = order.items.map(item => ({
+              const updatedItems = (order.items || []).map(item => ({
                   ...item,
-                  productionUnits: item.productionUnits.map(unit => ({
+                  productionUnits: (item.productionUnits || []).map(unit => ({
                       ...unit,
                       unitStatus: 'READY' as ProductionUnit['unitStatus'],
                       completedAt: unit.unitStatus === 'READY' ? unit.completedAt : now, 
                   }))
               }));
-              return { ...order, status, items: updatedItems, updatedAt: order.updatedAt, readyAt }; 
+              showSuccess(`Pedido #${order.pin} está PRONTO.`);
+              nextOrder = { ...order, status, items: updatedItems, updatedAt: order.updatedAt, readyAt }; 
           }
           
-          if (status === 'DELIVERED' && order.status === 'READY') {
-              // Não sobrescreva updatedAt (início do preparo); registre o tempo de entrega em deliveredAt
-              return { ...order, status, deliveredAt: now, updatedAt: order.updatedAt, readyAt }; 
+          else if (status === 'DELIVERED' && order.status === 'READY') {
+              nextOrder = { ...order, status, deliveredAt: now, updatedAt: order.updatedAt, readyAt }; 
           }
           
-          if (status === 'PREPARING' && order.status === 'READY') {
+          else if (status === 'PREPARING' && order.status === 'READY') {
               readyAt = undefined;
-              return { ...order, status, updatedAt: order.updatedAt, readyAt: undefined }; 
+              showInfo(`Pedido #${order.pin} voltou para PREPARO.`);
+              nextOrder = { ...order, status, updatedAt: order.updatedAt, readyAt: undefined }; 
           }
-          if (status === 'NEW' && order.status === 'PREPARING') {
-              return { ...order, status, updatedAt: undefined, readyAt: undefined };
+          else if (status === 'NEW' && order.status === 'PREPARING') {
+              showInfo(`Pedido #${order.pin} voltou para NOVO.`);
+              nextOrder = { ...order, status, updatedAt: undefined, readyAt: undefined };
           }
           
-          return { ...order, status, updatedAt: now, readyAt };
+          // PERSISTÊNCIA NO SUPABASE (WEB)
+          if (isOnline && supabase) {
+            supabase
+              .from('orders')
+              .update({ 
+                status: nextOrder.status, 
+                updated_at: nextOrder.updatedAt ? nextOrder.updatedAt.toISOString() : new Date().toISOString()
+              })
+              .eq('id', orderId)
+              .then(({ error }) => {
+                if (error) {
+                  console.error('Erro ao atualizar status no Supabase:', error);
+                  showError('Falha ao sincronizar status com o servidor.');
+                  // Opcional: Reverter estado local se falhar?
+                } else {
+                  console.log('Status atualizado no Supabase:', status);
+                }
+              });
+          }
+
+          return nextOrder;
         }
         return order;
       }));
@@ -430,119 +516,136 @@ export default function CozinhaPage() {
     });
   };
 
-  const { isOnline } = useOffline();
-  
   const productionOrders = useMemo(() => {
     return orders.filter(order => ['NEW', 'PREPARING'].includes(order.status));
   }, [orders]);
   
+  // Estilos CSS rígidos para layout one-page
+  const pageStyle: React.CSSProperties = {
+    display: 'flex',
+    flexDirection: 'column',
+    height: '100%',
+    width: '100%',
+    maxWidth: '100vw',
+    overflow: 'hidden',
+    boxSizing: 'border-box',
+    backgroundColor: '#f9fafb',
+  };
+
+  const headerStyle: React.CSSProperties = {
+    flexShrink: 0,
+    padding: '4px 8px',
+    overflow: 'hidden',
+    maxWidth: '100%',
+    boxSizing: 'border-box',
+  };
+
+  const contentStyle: React.CSSProperties = {
+    flex: 1,
+    minHeight: 0,
+    overflow: 'hidden',
+    padding: '0 4px 4px 4px',
+    maxWidth: '100%',
+    boxSizing: 'border-box',
+  };
+
   return (
     <>
-      <div className="flex flex-col h-full bg-gray-50 overflow-x-hidden">
-        {!isOnline && (
-          <div className="bg-yellow-500 text-white text-center py-2 text-sm font-medium flex-shrink-0">
-            <i className="ri-wifi-off-line mr-2"></i>
-            Modo Offline - Algumas funcionalidades podem estar limitadas
-          </div>
-        )}
-        
-        <div className="px-4 lg:px-6 py-4 flex-shrink-0">
-          <div className="flex items-center justify-between mb-4">
-            <h1 className="text-2xl font-bold text-gray-900">Cozinha - KDS</h1>
-            <p className="text-gray-600 hidden sm:block">Sistema de Display da Cozinha</p>
-          </div>
-          
-          <div className="flex flex-wrap items-center justify-start gap-3">
-            <div className="flex items-center space-x-2 bg-gray-100 p-1 rounded-lg flex-shrink-0">
-              <Button
-                size="sm"
-                variant={viewMode === 'kanban' ? 'primary' : 'secondary'}
-                onClick={() => setViewMode('kanban')}
-                className="!rounded-md"
+      <div style={pageStyle}>
+        {/* Header compacto */}
+        <div style={headerStyle}>
+          {/* Linha 1: Título + Cozinha + Botões */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
+            <span style={{ fontWeight: 'bold', fontSize: '14px', color: '#111827', flexShrink: 0 }}>Cozinha - KDS</span>
+            
+            <button
+              onClick={() => setShowKitchenSelectModal(true)}
+              style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '4px', 
+                padding: '2px 6px', 
+                backgroundColor: '#fff7ed', 
+                border: '1px solid #fed7aa', 
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '11px',
+                flexShrink: 0,
+              }}
+            >
+              <i className="ri-restaurant-2-line" style={{ color: '#ea580c' }}></i>
+              <span style={{ fontWeight: 500, color: '#9a3412' }}>{selectedKitchen?.name || 'Todas'}</span>
+              {selectedOperator && (
+                <>
+                  <span style={{ color: '#d1d5db' }}>|</span>
+                  <i className="ri-user-line" style={{ color: '#2563eb' }}></i>
+                  <span style={{ fontWeight: 500, color: '#1e40af' }}>{selectedOperator.name}</span>
+                </>
+              )}
+              <i className="ri-settings-3-line" style={{ color: '#9ca3af' }}></i>
+            </button>
+
+            {/* Botões de ação compactos */}
+            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginLeft: 'auto' }}>
+              <button
+                onClick={() => setViewMode(viewMode === 'kanban' ? 'list' : 'kanban')}
+                style={{ padding: '2px 6px', fontSize: '10px', borderRadius: '4px', border: 'none', cursor: 'pointer', backgroundColor: '#e5e7eb', color: '#374151' }}
               >
-                <i className="ri-layout-grid-line mr-2"></i>
-                Kanban
-              </Button>
-              <Button
-                size="sm"
-                variant={viewMode === 'list' ? 'primary' : 'secondary'}
-                onClick={() => setViewMode('list')}
-                className="!rounded-md"
+                {viewMode === 'kanban' ? '📋 Lista' : '📊 Kanban'}
+              </button>
+              <button
+                onClick={() => setShowReadyModal(true)}
+                style={{ padding: '2px 6px', fontSize: '10px', borderRadius: '4px', border: 'none', cursor: 'pointer', backgroundColor: '#dcfce7', color: '#166534' }}
               >
-                <i className="ri-list-check-2-line mr-2"></i>
-                Lista
-              </Button>
+                ✓ Prontos ({readyOrdersList.length})
+              </button>
+              <button
+                onClick={() => setShowDeliveredModal(true)}
+                style={{ padding: '2px 6px', fontSize: '10px', borderRadius: '4px', border: 'none', cursor: 'pointer', backgroundColor: '#d1fae5', color: '#065f46' }}
+              >
+                ✓✓ Entregues ({deliveredOrdersList.length})
+              </button>
+              <button
+                onClick={() => setShowCanceledModal(true)}
+                style={{ padding: '2px 6px', fontSize: '10px', borderRadius: '4px', border: 'none', cursor: 'pointer', backgroundColor: '#fee2e2', color: '#991b1b' }}
+              >
+                ✕ Cancelados ({canceledOrdersList.length})
+              </button>
+              <button
+                onClick={() => setShowOperatorModal(true)}
+                style={{ padding: '2px 6px', fontSize: '10px', borderRadius: '4px', border: 'none', cursor: 'pointer', backgroundColor: '#3b82f6', color: 'white' }}
+              >
+                + Operador
+              </button>
             </div>
-            
-            <Button 
-              variant="secondary" 
-              onClick={() => setShowItemsInProductionModal(true)}
-              className="bg-blue-50 text-blue-600 hover:bg-blue-100 flex-shrink-0"
-              size="sm"
-            >
-              <i className="ri-list-check-2-line mr-2"></i>
-              Itens em Preparo
-            </Button>
-            
-            <Button
-              variant="secondary"
-              onClick={() => setShowReadyModal(true)}
-              className="bg-green-50 text-green-600 hover:bg-green-100 flex-shrink-0"
-              size="sm"
-            >
-              <i className="ri-check-line mr-2"></i>
-              Prontos ({readyOrdersList.length})
-            </Button>
-            
-            <Button
-              variant="secondary"
-              onClick={() => setShowDeliveredModal(true)}
-              className="bg-green-50 text-green-600 hover:bg-green-100 flex-shrink-0"
-              size="sm"
-            >
-              <i className="ri-check-double-line mr-2"></i>
-              Entregues ({deliveredOrdersList.length})
-            </Button>
-            
-            <Button
-              variant="secondary"
-              onClick={() => setShowCanceledModal(true)}
-              className="bg-red-50 text-red-600 hover:bg-red-100 flex-shrink-0"
-              size="sm"
-            >
-              <i className="ri-close-circle-line mr-2"></i>
-              Cancelados ({canceledOrdersList.length})
-            </Button>
-            
-            <Button onClick={() => setShowOperatorModal(true)} size="sm" className="flex-shrink-0">
-              <i className="ri-user-add-line mr-2"></i>
-              + Operador
-            </Button>
           </div>
+
+          {/* Offline warning */}
+          {!isOnline && (
+            <div style={{ backgroundColor: '#eab308', color: 'white', textAlign: 'center', padding: '2px', fontSize: '10px', fontWeight: 500, borderRadius: '4px' }}>
+              <i className="ri-wifi-off-line" style={{ marginRight: '4px' }}></i>
+              Modo Offline
+            </div>
+          )}
         </div>
 
-        <div className="pb-6 flex-1 overflow-y-auto min-h-0"> 
+        {/* Conteúdo principal - OrderBoard ocupa todo o espaço restante */}
+        <div style={contentStyle}> 
           {viewMode === 'kanban' ? (
-            <div className="px-4 lg:px-6 h-full">
-              <div className="flex flex-col h-full">
-                <div className="flex-1 flex flex-col min-h-0">
-                  <OrderBoard 
-                    orders={orders}
-                    operators={operators}
-                    categories={categories}
-                    onUpdateStatus={updateOrderStatus}
-                    onCancelOrder={cancelOrder}
-                    onAssignOperator={assignOperatorToUnit}
-                    onAssignOperatorToAll={handleAssignOperatorToAll}
-                  onUpdateItemStatus={updateProductionUnitStatus}
-                  onUpdateDirectDelivery={updateDirectDelivery}
-                  onConfirmDelivery={confirmDeliveryImmediate}
-                />
-                </div>
-              </div>
-            </div>
+            <OrderBoard 
+              orders={orders}
+              operators={operators}
+              categories={categories}
+              onUpdateStatus={updateOrderStatus}
+              onCancelOrder={cancelOrder}
+              onAssignOperator={assignOperatorToUnit}
+              onAssignOperatorToAll={handleAssignOperatorToAll}
+              onUpdateItemStatus={updateProductionUnitStatus}
+              onUpdateDirectDelivery={updateDirectDelivery}
+              onConfirmDelivery={confirmDeliveryImmediate}
+            />
           ) : (
-            <div className="px-4 lg:px-6 h-full">
+            <div style={{ height: '100%', overflowY: 'auto', overflowX: 'hidden' }}>
               <OrderList
                 orders={productionOrders}
                 operators={operators}
@@ -556,7 +659,7 @@ export default function CozinhaPage() {
                 onUpdateDirectDelivery={updateDirectDelivery}
                 onConfirmDelivery={confirmDeliveryImmediate}
               />
-              <div className="mt-6 h-full">
+              <div style={{ marginTop: '8px' }}>
                 <ReadyOrderTable
                   readyOrders={readyOrdersList}
                   onUpdateStatus={updateOrderStatus}
@@ -573,6 +676,17 @@ export default function CozinhaPage() {
           onClose={() => setShowOperatorModal(false)}
           operators={operators}
           setOperators={setOperators}
+        />
+        
+        <KitchenSelectModal
+          isOpen={showKitchenSelectModal}
+          onClose={() => setShowKitchenSelectModal(false)}
+          onSelect={(kitchen, operator) => {
+            setSelectedKitchen(kitchen);
+            setSelectedOperator(operator);
+          }}
+          currentKitchen={selectedKitchen}
+          currentOperator={selectedOperator}
         />
         
         <ItemsInProductionModal

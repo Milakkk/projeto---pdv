@@ -9,7 +9,8 @@ import ConfirmationModal from '../../components/base/ConfirmationModal';
 import { mockCategories, mockMenuItems, mockPaymentMethods } from '../../mocks/data';
 import { DEFAULT_PAYMENT_SHORTCUTS, DEFAULT_GLOBAL_OBSERVATIONS } from '../../utils/constants';
 import { showSuccess } from '../../utils/toast'
-import { getDeviceProfile } from '@/offline/services/deviceProfileService'
+import { getDeviceProfile, getCurrentUnitId } from '@/offline/services/deviceProfileService'
+import * as stationsService from '@/offline/services/stationsService'
 import { getOperationInfo, getAppVersions, getDbVersion, getDataPath } from '@/offline/services/syncInfoService'
 import * as inventory from '@/offline/services/inventoryService'
 import * as productsService from '@/offline/services/productsService'
@@ -29,7 +30,7 @@ export default function ConfiguracoesPage() {
   const [menuItems, setMenuItems] = useLocalStorage<MenuItem[]>('menuItems', mockMenuItems);
   const [paymentMethods, setPaymentMethods] = useLocalStorage<string[]>('paymentMethods', mockPaymentMethods);
   const [globalObservations, setGlobalObservations] = useLocalStorage<string[]>('globalObservations', DEFAULT_GLOBAL_OBSERVATIONS);
-  const [appConfig, setAppConfig] = useLocalStorage<any>('appConfig', { 
+  const [appConfig, setAppConfig] = useLocalStorage<any>('appConfig', {
     checkoutShortcut: 'F', // Atalho padrão
     soundAlert: true,
     darkMode: false,
@@ -38,19 +39,298 @@ export default function ConfiguracoesPage() {
     passwordFormat: 'numeric' as PasswordFormat // Novo campo
   });
   const [paymentShortcuts, setPaymentShortcuts] = useLocalStorage<Record<string, string>>('paymentShortcuts', DEFAULT_PAYMENT_SHORTCUTS);
+
+  // Estações
+  const [stations, setStations] = useState<stationsService.Station[]>([]);
+  const [currentStationId, setCurrentStationId] = useLocalStorage<string>('currentStationId', '');
+
+  // Estado para cozinhas (para atribuir categorias a cozinhas) - deve vir antes dos useEffects que usam defaultKitchenId
+  const [kitchens, setKitchens] = useState<{ id: string; name: string }[]>([]);
+  const [defaultKitchenId, setDefaultKitchenId] = useState<string | null>(null);
+
+  // Carregar estações
   useEffect(() => {
     (async () => {
       try {
-        const headers: Record<string,string> = { 'Content-Type': 'application/json' }
+        const unitId = await getCurrentUnitId();
+        if (unitId) {
+          const list = await stationsService.listStations(unitId);
+          setStations(list || []);
+        }
+      } catch { }
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' }
         if (hubSecret) headers['Authorization'] = `Bearer ${hubSecret}`
         await fetch(hubUrl.replace(/\/$/, '') + '/push', {
           method: 'POST',
           headers,
           body: JSON.stringify({ events: [{ table: 'global_observations', unit_id: unitDefault, row: { observations: globalObservations, updated_at: new Date().toISOString() } }] }),
         })
-      } catch {}
+      } catch { }
     })()
   }, [globalObservations])
+
+  // Carregar associações categoria-cozinha do Supabase
+  useEffect(() => {
+    const isElectron = typeof (window as any)?.api?.db?.query === 'function';
+
+    if (isElectron) {
+      // Modo Electron - já carrega do banco local
+      return;
+    }
+
+    // Modo Navegador - carrega do Supabase
+    (async () => {
+      try {
+        const { supabase } = await import('../../utils/supabase');
+        if (!supabase) {
+          console.warn('[Configurações] Supabase não disponível para carregar associações categoria-cozinha');
+          return;
+        }
+
+        console.log('[Configurações] Carregando associações categoria-cozinha do Supabase...');
+
+        const { data: associations, error } = await supabase
+          .from('category_kitchens')
+          .select('category_id, kitchen_id');
+
+        if (error) {
+          console.error('[Configurações] Erro ao carregar associações:', error);
+          return;
+        }
+
+        if (associations && associations.length > 0) {
+          // Agrupa por category_id
+          const kitchenIdsByCategory = associations.reduce((acc, assoc) => {
+            if (!acc[assoc.category_id]) {
+              acc[assoc.category_id] = [];
+            }
+            acc[assoc.category_id].push(assoc.kitchen_id);
+            return acc;
+          }, {} as Record<string, string[]>);
+
+          // Atualiza as categorias com os kitchenIds
+          setCategories(prevCategories =>
+            prevCategories.map(cat => ({
+              ...cat,
+              kitchenIds: kitchenIdsByCategory[cat.id] || undefined
+            }))
+          );
+
+          console.log('[Configurações] Associações categoria-cozinha carregadas:', Object.keys(kitchenIdsByCategory).length, 'categorias');
+        } else {
+          console.log('[Configurações] Nenhuma associação categoria-cozinha encontrada');
+        }
+      } catch (err) {
+        console.error('[Configurações] Erro ao carregar associações categoria-cozinha:', err);
+      }
+    })();
+  }, []); // Removida dependência setCategories para evitar loop infinito
+
+  // Corrigir produtos sem categoria - reatribuir baseado no nome da categoria
+  useEffect(() => {
+    const isElectron = typeof (window as any)?.api?.db?.query === 'function';
+
+    if (isElectron) {
+      // Modo Electron - já carrega do banco local
+      return;
+    }
+
+    // Modo Navegador - corrige produtos sem categoria
+    (async () => {
+      try {
+        const { supabase } = await import('../../utils/supabase');
+        if (!supabase) {
+          return;
+        }
+
+        console.log('[Configurações] 🔍 Verificando produtos sem categoria...');
+
+        // Carrega produtos e categorias do Supabase
+        const [productsResult, categoriesResult] = await Promise.all([
+          supabase.from('products').select('id, name, category_id').eq('is_active', true),
+          supabase.from('categories').select('id, name')
+        ]);
+
+        if (productsResult.error || categoriesResult.error) {
+          console.error('[Configurações] Erro ao carregar produtos/categorias:', productsResult.error || categoriesResult.error);
+          return;
+        }
+
+        const products = productsResult.data || [];
+        const dbCategories = categoriesResult.data || [];
+
+        console.log('[Configurações] Produtos carregados:', products.length);
+        console.log('[Configurações] Categorias carregadas:', dbCategories.length);
+
+        // Cria mapa de categorias por nome (normalizado)
+        const normalizeName = (name: string) => name.toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        const categoryMapByName = new Map<string, string>();
+        dbCategories.forEach(cat => {
+          const normalized = normalizeName(cat.name);
+          if (!categoryMapByName.has(normalized)) {
+            categoryMapByName.set(normalized, cat.id);
+          }
+        });
+
+        // Carrega produtos do localStorage para pegar a categoria original pelo nome
+        const lsMenuItems = JSON.parse(localStorage.getItem('menuItems') || '[]');
+        const lsCategories = JSON.parse(localStorage.getItem('categories') || '[]');
+
+        console.log('[Configurações] Produtos no localStorage:', lsMenuItems.length);
+        console.log('[Configurações] Categorias no localStorage:', lsCategories.length);
+
+        // Encontra produtos sem categoria ou com categoria inválida
+        const productsToFix: Array<{ productId: string; productName: string; newCategoryId: string | null; categoryName: string }> = [];
+
+        for (const product of products) {
+          const currentCategoryId = product.category_id;
+
+          // Se não tem categoria ou a categoria não existe no Supabase
+          if (!currentCategoryId) {
+            // Tenta encontrar a categoria pelo nome do produto no localStorage
+            const lsProduct = lsMenuItems.find((p: any) => p.id === product.id || p.name === product.name);
+            if (lsProduct && lsProduct.categoryId) {
+              const oldCategory = lsCategories.find((c: any) => c.id === lsProduct.categoryId);
+              if (oldCategory && oldCategory.name) {
+                const normalized = normalizeName(oldCategory.name);
+                const newCategoryId = categoryMapByName.get(normalized);
+                if (newCategoryId) {
+                  productsToFix.push({
+                    productId: product.id,
+                    productName: product.name,
+                    newCategoryId,
+                    categoryName: oldCategory.name
+                  });
+                  console.log(`[Configurações] 📝 Produto "${product.name}" será associado à categoria "${oldCategory.name}" (${newCategoryId})`);
+                }
+              }
+            }
+          } else {
+            // Verifica se a categoria existe
+            const categoryExists = dbCategories.some(c => c.id === currentCategoryId);
+            if (!categoryExists) {
+              console.log(`[Configurações] ⚠️ Produto "${product.name}" tem categoria inválida: ${currentCategoryId}`);
+              // Categoria não existe, tenta encontrar pelo nome
+              const lsProduct = lsMenuItems.find((p: any) => p.id === product.id || p.name === product.name);
+              if (lsProduct && lsProduct.categoryId) {
+                const oldCategory = lsCategories.find((c: any) => c.id === lsProduct.categoryId);
+                if (oldCategory && oldCategory.name) {
+                  const normalized = normalizeName(oldCategory.name);
+                  const newCategoryId = categoryMapByName.get(normalized);
+                  if (newCategoryId) {
+                    productsToFix.push({
+                      productId: product.id,
+                      productName: product.name,
+                      newCategoryId,
+                      categoryName: oldCategory.name
+                    });
+                    console.log(`[Configurações] 📝 Produto "${product.name}" será reatribuído à categoria "${oldCategory.name}" (${newCategoryId})`);
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // Atualiza produtos no Supabase
+        if (productsToFix.length > 0) {
+          console.log(`[Configurações] 🔧 Corrigindo ${productsToFix.length} produtos sem categoria...`);
+
+          for (const fix of productsToFix) {
+            const { error } = await supabase
+              .from('products')
+              .update({ category_id: fix.newCategoryId })
+              .eq('id', fix.productId);
+
+            if (error) {
+              console.error(`[Configurações] ❌ Erro ao corrigir produto "${fix.productName}":`, error);
+            } else {
+              console.log(`[Configurações] ✅ Produto "${fix.productName}" corrigido → categoria "${fix.categoryName}"`);
+            }
+          }
+
+          // Recarrega produtos e categorias
+          console.log('[Configurações] 🔄 Recarregando produtos e categorias...');
+          const [newProductsResult, newCategoriesResult] = await Promise.all([
+            productsService.listProducts(),
+            productsService.listCategories()
+          ]);
+
+          const mappedCategories: Category[] = (newCategoriesResult || []).map((c: any, idx: number) => ({
+            id: c.id,
+            name: c.name,
+            icon: '',
+            order: idx,
+            active: true,
+          }));
+
+          const mappedMenuItems: MenuItem[] = (newProductsResult || []).map((p: any) => {
+            const fromLs = lsMenuItems.find((mi: any) => mi.id === p.id || (mi.code && mi.code === p.sku));
+            return {
+              id: p.id,
+              name: p.name,
+              price: ((p.priceCents ?? p.price_cents ?? 0) as number) / 100,
+              sla: typeof fromLs?.sla === 'number' ? fromLs.sla : 15,
+              categoryId: (p.categoryId ?? p.category_id) as string,
+              observations: Array.isArray(fromLs?.observations) ? fromLs.observations : [],
+              requiredModifierGroups: Array.isArray(fromLs?.requiredModifierGroups) ? fromLs.requiredModifierGroups : [],
+              image: fromLs?.image,
+              active: Boolean(p.isActive ?? p.is_active ?? true),
+              code: p.sku ?? undefined,
+              skipKitchen: Boolean((fromLs as any)?.skipKitchen ?? false),
+              unitDeliveryCount: Math.max(1, Number((fromLs as any)?.unitDeliveryCount ?? 1)),
+              isPromo: Boolean((fromLs as any)?.isPromo ?? false),
+              comboItemIds: Array.isArray((fromLs as any)?.comboItemIds) ? (fromLs as any).comboItemIds : [],
+            };
+          });
+
+          setCategories(mappedCategories);
+          setMenuItems(mappedMenuItems);
+
+          console.log(`[Configurações] ✅ ${productsToFix.length} produtos corrigidos e dados recarregados`);
+          console.log('[Configurações] Categorias atualizadas:', mappedCategories.length);
+          console.log('[Configurações] Produtos atualizados:', mappedMenuItems.length);
+        } else {
+          console.log('[Configurações] ✅ Nenhum produto precisa de correção');
+        }
+      } catch (err) {
+        console.error('[Configurações] ❌ Erro ao corrigir produtos:', err);
+      }
+    })();
+  }, []) // Removidas dependências setCategories/setMenuItems para evitar loop infinito
+
+  // Inicializar: se não houver associações categoria→cozinha, mapear todas categorias para a cozinha 'Mexicano' (ou a primeira)
+  useEffect(() => {
+    (async () => {
+      const isElectron = typeof (window as any)?.api?.db?.query === 'function';
+      if (isElectron) return;
+      try {
+        const { supabase } = await import('../../utils/supabase');
+        if (!supabase) return;
+        const { data: anyAssoc } = await supabase
+          .from('category_kitchens')
+          .select('id')
+          .limit(1);
+        if ((anyAssoc || []).length > 0) return;
+        const { data: cats } = await supabase
+          .from('categories')
+          .select('id');
+        const kid = defaultKitchenId;
+        if (!kid || !Array.isArray(cats) || cats.length === 0) return;
+        const rows = cats.map(c => ({ category_id: c.id, kitchen_id: kid, updated_at: new Date().toISOString() }));
+        await supabase.from('category_kitchens').insert(rows);
+        console.log('[Configurações] Associações iniciais aplicadas para cozinha padrão');
+      } catch (err) {
+        console.warn('[Configurações] Falha ao aplicar associações iniciais:', err);
+      }
+    })();
+  }, [defaultKitchenId]);
 
   // NOVOS ESTADOS PARA IMAGEM
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -88,11 +368,11 @@ export default function ConfiguracoesPage() {
       if (y == null) return;
       const threshold = 80; // px
       const speed = 28; // px por tick
-      
+
       // Primeiro tenta rolar o contêiner da aba ativa
       const container = activeTab === 'items' ? itemsContainerRef.current
-                        : activeTab === 'categories' ? categoriesContainerRef.current
-                        : null;
+        : activeTab === 'categories' ? categoriesContainerRef.current
+          : null;
       if (container && container.scrollHeight > container.clientHeight) {
         const rect = container.getBoundingClientRect();
         if (y < rect.top + threshold) {
@@ -174,8 +454,56 @@ export default function ConfiguracoesPage() {
   const [editingPayment, setEditingPayment] = useState<string>('');
   const [comboForm, setComboForm] = useState({ name: '', price: '', includedItemIds: [] as string[] });
 
+  // Carregar cozinhas do banco de dados
+  useEffect(() => {
+    (async () => {
+      const isElectron = typeof (window as any)?.api?.db?.query === 'function';
+
+      try {
+        if (isElectron) {
+          // Modo Electron - usa API local
+          const api = (window as any)?.api;
+          if (!api?.db?.query) return;
+          const result = await api.db.query('SELECT * FROM kitchens WHERE is_active = 1 ORDER BY display_order, name');
+          if (result?.rows) {
+            setKitchens(result.rows.map((k: any) => ({ id: k.id, name: k.name })));
+          }
+        } else {
+          // Modo Navegador - usa Supabase
+          const { supabase } = await import('../../utils/supabase');
+          if (!supabase) {
+            console.warn('[Configurações] Supabase não disponível para carregar cozinhas');
+            return;
+          }
+
+          const { data, error } = await supabase
+            .from('kitchens')
+            .select('id, name')
+            .eq('is_active', true)
+            .order('display_order', { ascending: true })
+            .order('name', { ascending: true });
+
+          if (error) {
+            console.error('[Configurações] Erro ao carregar cozinhas:', error);
+            return;
+          }
+
+          if (data) {
+            const list = data.map(k => ({ id: k.id, name: k.name }));
+            setKitchens(list);
+            const mexican = list.find(k => k.name.toLowerCase() === 'mexicano') || list[0] || null;
+            setDefaultKitchenId(mexican ? mexican.id : null);
+            console.log('[Configurações] Cozinhas carregadas:', data.length);
+          }
+        }
+      } catch (err) {
+        console.error('[Configurações] Erro ao carregar cozinhas:', err);
+      }
+    })();
+  }, []);
+
   // Estados para formulários
-  const [categoryForm, setCategoryForm] = useState({ name: '', icon: 'ri-restaurant-line', integrationCode: '' });
+  const [categoryForm, setCategoryForm] = useState({ name: '', icon: 'ri-restaurant-line', integrationCode: '', kitchenIds: [] as string[] });
   const [iconSearchTerm, setIconSearchTerm] = useState('');
   const [itemForm, setItemForm] = useState({
     name: '',
@@ -193,7 +521,7 @@ export default function ConfiguracoesPage() {
   });
   const [paymentForm, setPaymentForm] = useState('');
   const [newObservation, setNewObservation] = useState('');
-  
+
   // Estados para Modificadores Obrigatórios
   const [newModifierGroupName, setNewModifierGroupName] = useState('');
   const [newModifierOption, setNewModifierOption] = useState('');
@@ -203,18 +531,18 @@ export default function ConfiguracoesPage() {
 
 
   const resetForms = () => {
-    setCategoryForm({ name: '', icon: 'ri-restaurant-line', integrationCode: '' });
+    setCategoryForm({ name: '', icon: 'ri-restaurant-line', integrationCode: '', kitchenIds: defaultKitchenId ? [defaultKitchenId] : [] });
     setItemForm({ name: '', price: '', sla: '', categoryId: '', observations: [], requiredModifierGroups: [], image: '', code: '', integrationCode: '', skipKitchen: false, allowPartialDelivery: true, unitDeliveryCount: '' });
     setPaymentForm('');
     setNewObservation('');
-    
+
     // Resetar estados de modificadores
     setNewModifierGroupName('');
     setNewModifierOption('');
     setCurrentModifierOptions([]);
     setNewModifierGroupActive(true); // Resetar para ativo
     setEditingModifierGroupId(null); // Resetar ID de edição
-    
+
     setImageFile(null);
     setImagePreview('');
   };
@@ -229,7 +557,7 @@ export default function ConfiguracoesPage() {
   const [recipeForItem, setRecipeForItem] = useState<any[]>([])
   const [ingredients, setIngredients] = useState<any[]>([])
   const [recipeItemName, setRecipeItemName] = useState<string>('')
-  useEffect(() => { (async () => { try { const ing = await inventory.listIngredients(); setIngredients(Array.isArray(ing) ? ing : []) } catch {} })() }, [])
+  useEffect(() => { (async () => { try { const ing = await inventory.listIngredients(); setIngredients(Array.isArray(ing) ? ing : []) } catch { } })() }, [])
   const openRecipeModal = async (item: MenuItem) => {
     try {
       const lines = await inventory.listRecipeByProduct(String(item.id))
@@ -243,26 +571,26 @@ export default function ConfiguracoesPage() {
 
   // Funções de ativação/desativação
   const toggleCategoryActive = (id: string) => {
-    setCategories(categories.map(cat => 
+    setCategories(categories.map(cat =>
       cat.id === id ? { ...cat, active: !cat.active } : cat
     ));
   };
 
   const toggleItemActive = (id: string) => {
-    const next = menuItems.map(item => 
+    const next = menuItems.map(item =>
       item.id === id ? { ...item, active: !item.active } : item
     )
     setMenuItems(next)
     const changed = next.find(i => i.id === id)
     if (changed) {
-      productsService.setProductActive(String(id), Boolean(changed.active)).catch(() => {})
+      productsService.setProductActive(String(id), Boolean(changed.active)).catch(() => { })
     }
   };
-  
+
   const toggleModifierGroupActive = (groupId: string) => {
     setItemForm(prev => ({
       ...prev,
-      requiredModifierGroups: prev.requiredModifierGroups.map(group => 
+      requiredModifierGroups: prev.requiredModifierGroups.map(group =>
         group.id === groupId ? { ...group, active: !group.active } : group
       )
     }));
@@ -270,24 +598,24 @@ export default function ConfiguracoesPage() {
 
   // Funções de seleção múltipla
   const toggleCategorySelection = (id: string) => {
-    setSelectedCategories(prev => 
-      prev.includes(id) 
+    setSelectedCategories(prev =>
+      prev.includes(id)
         ? prev.filter(catId => catId !== id)
         : [...prev, id]
     );
   };
 
   const toggleItemSelection = (id: string) => {
-    setSelectedItems(prev => 
-      prev.includes(id) 
+    setSelectedItems(prev =>
+      prev.includes(id)
         ? prev.filter(itemId => itemId !== id)
         : [...prev, id]
     );
   };
 
   const togglePaymentSelection = (method: string) => {
-    setSelectedPayments(prev => 
-      prev.includes(method) 
+    setSelectedPayments(prev =>
+      prev.includes(method)
         ? prev.filter(payment => payment !== method)
         : [...prev, method]
     );
@@ -352,13 +680,13 @@ export default function ConfiguracoesPage() {
   // Funções de exclusão múltipla
   const deleteSelectedCategories = () => {
     if (selectedCategories.length === 0) return;
-    
+
     setConfirmationData({
       title: `Excluir ${selectedCategories.length} Categoria(s)`,
       message: `Tem certeza que deseja excluir ${selectedCategories.length} categoria(s) selecionada(s)? Esta ação é irreversível.`,
       onConfirm: () => {
         setCategories(categories.filter(cat => !selectedCategories.includes(cat.id)));
-        productsService.deleteCategories(selectedCategories.map(String)).catch(() => {})
+        productsService.deleteCategories(selectedCategories.map(String)).catch(() => { })
         setSelectedCategories([]);
         setShowConfirmation(false);
       },
@@ -370,13 +698,13 @@ export default function ConfiguracoesPage() {
 
   const deleteSelectedItems = () => {
     if (selectedItems.length === 0) return;
-    
+
     setConfirmationData({
       title: `Excluir ${selectedItems.length} Item(s) do Cardápio`,
       message: `Tem certeza que deseja excluir ${selectedItems.length} item(s) selecionado(s) do cardápio? Esta ação é irreversível.`,
       onConfirm: () => {
         setMenuItems(menuItems.filter(item => !selectedItems.includes(item.id)));
-        productsService.deleteProducts(selectedItems.map(String)).catch(() => {})
+        productsService.deleteProducts(selectedItems.map(String)).catch(() => { })
         setSelectedItems([]);
         setShowConfirmation(false);
       },
@@ -388,7 +716,7 @@ export default function ConfiguracoesPage() {
 
   const deleteSelectedPayments = () => {
     if (selectedPayments.length === 0) return;
-    
+
     setConfirmationData({
       title: `Excluir ${selectedPayments.length} Forma(s) de Pagamento`,
       message: `Tem certeza que deseja excluir ${selectedPayments.length} forma(s) de pagamento selecionada(s)?`,
@@ -396,12 +724,12 @@ export default function ConfiguracoesPage() {
         const methodsToDelete = selectedPayments;
         setPaymentMethods(paymentMethods.filter(method => !methodsToDelete.includes(method)));
         setSelectedPayments([]);
-        
+
         // Remover atalhos associados
         const newShortcuts = { ...paymentShortcuts };
         methodsToDelete.forEach(method => delete newShortcuts[method]);
         setPaymentShortcuts(newShortcuts);
-        
+
         setShowConfirmation(false);
       },
       variant: 'danger',
@@ -420,7 +748,7 @@ export default function ConfiguracoesPage() {
   const removeGlobalObservation = (obs: string) => {
     setGlobalObservations(globalObservations.filter(o => o !== obs));
   };
-  
+
   // NOVO: Funções para Modificadores Obrigatórios
   const handleAddModifierOption = () => {
     if (newModifierOption.trim()) {
@@ -428,11 +756,11 @@ export default function ConfiguracoesPage() {
       setNewModifierOption('');
     }
   };
-  
+
   const handleRemoveModifierOption = (option: string) => {
     setCurrentModifierOptions(prev => prev.filter(opt => opt !== option));
   };
-  
+
   const handleAddModifierGroup = () => {
     if (!newModifierGroupName.trim() || currentModifierOptions.length === 0) {
       alert('O nome do grupo e pelo menos uma opção são obrigatórios.');
@@ -445,12 +773,12 @@ export default function ConfiguracoesPage() {
       options: currentModifierOptions,
       active: newModifierGroupActive,
     };
-    
+
     if (editingModifierGroupId) {
       // Update existing group
       setItemForm(prev => ({
         ...prev,
-        requiredModifierGroups: prev.requiredModifierGroups.map(group => 
+        requiredModifierGroups: prev.requiredModifierGroups.map(group =>
           group.id === editingModifierGroupId ? newGroup : group
         )
       }));
@@ -461,13 +789,13 @@ export default function ConfiguracoesPage() {
         requiredModifierGroups: [...prev.requiredModifierGroups, newGroup]
       }));
     }
-    
+
     setNewModifierGroupName('');
     setCurrentModifierOptions([]);
     setNewModifierGroupActive(true);
     setEditingModifierGroupId(null); // Clear editing state
   };
-  
+
   const handleRemoveModifierGroup = (groupId: string) => {
     setItemForm(prev => ({
       ...prev,
@@ -476,23 +804,381 @@ export default function ConfiguracoesPage() {
   };
 
 
-  const handleSaveCategory = () => {
+  const handleSaveCategory = async () => {
     if (!categoryForm.name.trim()) {
       alert('Nome da categoria é obrigatório');
       return;
     }
 
-    if (editingCategory) {
-      setCategories(categories.map(cat => 
-        cat.id === editingCategory.id 
-          ? { ...cat, name: categoryForm.name, icon: categoryForm.icon, integrationCode: categoryForm.integrationCode }
-          : cat
-      ));
-      productsService.upsertCategory({ id: String(editingCategory.id), name: categoryForm.name }).catch(() => {})
-    } else {
-      productsService
-        .upsertCategory({ name: categoryForm.name })
-        .then((newId) => {
+    const api = (window as any)?.api;
+    const isElectron = typeof api?.db?.query === 'function';
+
+    try {
+      if (editingCategory) {
+        // Primeiro, salva a categoria no Supabase para garantir que tem UUID válido
+        let validCategoryId = editingCategory.id;
+
+        try {
+          // Salva/atualiza a categoria e obtém o ID válido
+          console.log('[Configurações] Salvando categoria...', {
+            idAntigo: editingCategory.id,
+            nome: categoryForm.name
+          });
+
+          const savedId = await productsService.upsertCategory({
+            id: String(editingCategory.id),
+            name: categoryForm.name
+          });
+
+          validCategoryId = savedId;
+          console.log('[Configurações] ✅ Categoria salva com ID válido:', validCategoryId);
+          console.log('[Configurações] ID antigo era:', editingCategory.id);
+          console.log('[Configurações] ID novo é:', validCategoryId);
+
+          // Aguarda um pouco para garantir que a transação foi commitada no Supabase
+          if (!isElectron) {
+            console.log('[Configurações] Aguardando 1s para garantir commit no Supabase...');
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            // Verifica novamente se a categoria existe após o commit
+            const { supabase } = await import('../../utils/supabase');
+            if (supabase) {
+              const { data: verifyCategory, error: verifyError } = await supabase
+                .from('categories')
+                .select('id, name')
+                .eq('id', validCategoryId)
+                .maybeSingle();
+
+              if (verifyError && verifyError.code !== 'PGRST116') {
+                console.error('[Configurações] ❌ Erro ao verificar categoria após commit:', verifyError);
+              } else if (!verifyCategory) {
+                console.error('[Configurações] ❌ Categoria ainda não encontrada após commit!');
+                // Tenta buscar pelo nome como fallback
+                const { data: categoryByName } = await supabase
+                  .from('categories')
+                  .select('id, name')
+                  .eq('name', categoryForm.name)
+                  .maybeSingle();
+
+                if (categoryByName) {
+                  console.log('[Configurações] ✅ Categoria encontrada pelo nome após commit:', categoryByName);
+                  validCategoryId = categoryByName.id;
+                }
+              } else {
+                console.log('[Configurações] ✅ Categoria confirmada após commit:', verifyCategory);
+              }
+            }
+          }
+        } catch (err: any) {
+          console.error('[Configurações] Erro ao salvar categoria:', err);
+          const errorMsg = err?.message || String(err);
+          alert(`Erro ao salvar categoria:\n\n${errorMsg}\n\nVerifique o console (F12) para mais detalhes.`);
+          return;
+        }
+
+        // Atualiza a categoria na lista com o ID válido
+        const updatedCategories = categories.map(cat =>
+          cat.id === editingCategory.id
+            ? { ...cat, id: validCategoryId, name: categoryForm.name, icon: categoryForm.icon, integrationCode: categoryForm.integrationCode, kitchenIds: categoryForm.kitchenIds.length > 0 ? categoryForm.kitchenIds : undefined }
+            : cat
+        );
+        setCategories(updatedCategories);
+
+        // Atualiza também o editingCategory para usar o ID válido
+        setEditingCategory({ ...editingCategory, id: validCategoryId });
+
+        // Atualizar category_kitchens no banco (múltiplas cozinhas)
+        try {
+          if (isElectron && api?.db?.query) {
+            // Modo Electron - usa API local
+            // Remove associações antigas
+            await api.db.query('DELETE FROM category_kitchens WHERE category_id = ?', [validCategoryId]);
+            // Insere novas associações
+            for (const kitchenId of categoryForm.kitchenIds) {
+              await api.db.query(
+                'INSERT INTO category_kitchens (category_id, kitchen_id, updated_at) VALUES (?, ?, ?)',
+                [validCategoryId, kitchenId, new Date().toISOString()]
+              );
+            }
+          } else {
+            // Modo Navegador - usa Supabase
+            const { supabase } = await import('../../utils/supabase');
+            if (!supabase) {
+              console.warn('[Configurações] Supabase não disponível para salvar associações categoria-cozinha');
+              return;
+            }
+
+            console.log('[Configurações] Atualizando associações categoria-cozinha no Supabase...');
+            console.log('[Configurações] Usando ID válido da categoria:', validCategoryId);
+
+            // Remove associações antigas (tanto do ID antigo quanto do novo, se diferentes)
+            if (editingCategory.id !== validCategoryId) {
+              console.log('[Configurações] Removendo associações do ID antigo:', editingCategory.id);
+              await supabase
+                .from('category_kitchens')
+                .delete()
+                .eq('category_id', editingCategory.id);
+            }
+
+            console.log('[Configurações] Deletando associações antigas para categoria:', validCategoryId);
+            const { error: deleteError, data: deleteData } = await supabase
+              .from('category_kitchens')
+              .delete()
+              .eq('category_id', validCategoryId)
+              .select();
+
+            if (deleteError) {
+              console.error('[Configurações] Erro ao deletar associações antigas:', deleteError);
+              console.error('[Configurações] Detalhes do erro:', {
+                code: deleteError.code,
+                message: deleteError.message,
+                details: deleteError.details,
+                hint: deleteError.hint
+              });
+              throw deleteError;
+            }
+            console.log('[Configurações] Associações antigas deletadas:', deleteData);
+
+            // Insere novas associações
+            if (categoryForm.kitchenIds.length > 0) {
+              // PRIMEIRO: Aguarda um pouco e verifica se a categoria realmente existe no Supabase
+              console.log('[Configurações] 🔍 Verificando se categoria existe no Supabase antes de criar associações...');
+              console.log('[Configurações] ID da categoria a verificar:', validCategoryId);
+              console.log('[Configurações] Nome da categoria:', categoryForm.name);
+
+              // Aguarda um pouco para garantir que a categoria foi commitada
+              await new Promise(resolve => setTimeout(resolve, 500));
+
+              // Tenta encontrar pelo ID primeiro (com retry)
+              let categoryCheck = null;
+              let finalCategoryId = validCategoryId;
+              let attempts = 0;
+              const maxAttempts = 3;
+
+              while (attempts < maxAttempts && !categoryCheck) {
+                const { data: categoryById, error: checkErrorById } = await supabase
+                  .from('categories')
+                  .select('id, name')
+                  .eq('id', validCategoryId)
+                  .maybeSingle();
+
+                if (checkErrorById && checkErrorById.code !== 'PGRST116') {
+                  console.error('[Configurações] ❌ Erro ao verificar categoria pelo ID:', checkErrorById);
+                  throw new Error(`Erro ao verificar categoria: ${checkErrorById.message}`);
+                }
+
+                if (categoryById) {
+                  categoryCheck = categoryById;
+                  console.log(`[Configurações] ✅ Categoria encontrada pelo ID após ${attempts + 1} tentativa(s):`, categoryCheck);
+                  break;
+                }
+
+                attempts++;
+                if (attempts < maxAttempts) {
+                  console.log(`[Configurações] Categoria não encontrada, tentando novamente (${attempts + 1}/${maxAttempts})...`);
+                  await new Promise(resolve => setTimeout(resolve, 500));
+                }
+              }
+
+              // Se não encontrou pelo ID, tenta pelo nome
+              if (!categoryCheck) {
+                console.log('[Configurações] Categoria não encontrada pelo ID após múltiplas tentativas, buscando pelo nome...');
+                const { data: categoryByName, error: checkErrorByName } = await supabase
+                  .from('categories')
+                  .select('id, name')
+                  .eq('name', categoryForm.name)
+                  .maybeSingle();
+
+                if (checkErrorByName && checkErrorByName.code !== 'PGRST116') {
+                  console.error('[Configurações] ❌ Erro ao verificar categoria pelo nome:', checkErrorByName);
+                  throw new Error(`Erro ao verificar categoria pelo nome: ${checkErrorByName.message}`);
+                }
+
+                if (categoryByName) {
+                  categoryCheck = categoryByName;
+                  finalCategoryId = categoryByName.id;
+                  console.log('[Configurações] ✅ Categoria encontrada pelo nome:', categoryCheck);
+                  console.log(`[Configurações] Usando ID correto: ${finalCategoryId} (ao invés de ${validCategoryId})`);
+                } else {
+                  console.error('[Configurações] ❌ Categoria não encontrada no Supabase!', {
+                    idProcurado: validCategoryId,
+                    nomeCategoria: categoryForm.name
+                  });
+                  throw new Error(`A categoria "${categoryForm.name}" (ID: ${validCategoryId}) não foi encontrada no Supabase. Tente salvar a categoria novamente.`);
+                }
+              }
+
+              // Atualiza o validCategoryId para usar o ID correto
+              validCategoryId = finalCategoryId;
+              console.log('[Configurações] ✅ Categoria confirmada no Supabase:', categoryCheck);
+              console.log('[Configurações] ID final a ser usado:', validCategoryId);
+
+              const newAssociations = categoryForm.kitchenIds.map(kitchenId => ({
+                category_id: validCategoryId,
+                kitchen_id: kitchenId,
+                updated_at: new Date().toISOString(),
+              })).filter(assoc => {
+                // Valida que tanto category_id quanto kitchen_id são UUIDs válidos
+                const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+                return uuidRegex.test(assoc.category_id) && uuidRegex.test(assoc.kitchen_id);
+              });
+
+              console.log('[Configurações] 📝 Preparando para inserir associações:', {
+                quantidade: newAssociations.length,
+                associações: newAssociations
+              });
+
+              // Verifica se as cozinhas existem
+              for (const assoc of newAssociations) {
+                const { data: kitchenCheck, error: kitchenError } = await supabase
+                  .from('kitchens')
+                  .select('id, name')
+                  .eq('id', assoc.kitchen_id)
+                  .maybeSingle();
+
+                if (kitchenError && kitchenError.code !== 'PGRST116') {
+                  console.error(`[Configurações] ❌ Erro ao verificar cozinha ${assoc.kitchen_id}:`, kitchenError);
+                } else if (!kitchenCheck) {
+                  console.error(`[Configurações] ❌ Cozinha não encontrada: ${assoc.kitchen_id}`);
+                } else {
+                  console.log(`[Configurações] ✅ Cozinha confirmada: ${kitchenCheck.name} (${kitchenCheck.id})`);
+                }
+              }
+
+              const { error: insertError, data: insertData } = await supabase
+                .from('category_kitchens')
+                .insert(newAssociations)
+                .select();
+
+              if (insertError) {
+                console.error('[Configurações] ❌ Erro ao inserir associações:', insertError);
+                console.error('[Configurações] Detalhes completos do erro:', {
+                  code: insertError.code,
+                  message: insertError.message,
+                  details: insertError.details,
+                  hint: insertError.hint,
+                  categoryId: validCategoryId,
+                  kitchenIds: categoryForm.kitchenIds
+                });
+
+                // Se o erro for de foreign key, a categoria pode não existir ainda
+                if (insertError.code === '23503' || insertError.message?.includes('foreign key')) {
+                  console.error('[Configurações] ❌ Erro de foreign key detectado');
+                  console.log('[Configurações] ⏳ Aguardando 2s antes de retry...');
+                  await new Promise(resolve => setTimeout(resolve, 2000));
+
+                  // Verifica novamente se a categoria existe
+                  const { data: categoryCheck2, error: checkError2 } = await supabase
+                    .from('categories')
+                    .select('id, name')
+                    .eq('id', validCategoryId)
+                    .maybeSingle();
+
+                  if (!categoryCheck2) {
+                    throw new Error(`Categoria ainda não existe após retry. ID: ${validCategoryId}`);
+                  }
+
+                  console.log('[Configurações] ✅ Categoria confirmada novamente antes do retry:', categoryCheck2);
+
+                  // Tenta inserir novamente
+                  const { error: retryError, data: retryData } = await supabase
+                    .from('category_kitchens')
+                    .insert(newAssociations)
+                    .select();
+
+                  if (retryError) {
+                    console.error('[Configurações] ❌ Erro persistente após retry:', retryError);
+                    throw new Error(`Erro ao salvar associações após retry: ${retryError.message}`);
+                  }
+
+                  console.log('[Configurações] ✅ Associações inseridas com sucesso após retry!', retryData);
+                } else {
+                  throw insertError;
+                }
+              } else {
+                console.log('[Configurações] ✅ Associações categoria-cozinha criadas com sucesso!', insertData);
+              }
+            } else {
+              console.log('[Configurações] Nenhuma cozinha selecionada, apenas removendo associações antigas');
+            }
+          }
+        } catch (err: any) {
+          console.error('[Configurações] Erro ao atualizar cozinhas da categoria:', err);
+          let errorMessage = 'Erro desconhecido';
+
+          if (err?.message) {
+            errorMessage = err.message;
+          } else if (err?.error?.message) {
+            errorMessage = err.error.message;
+          } else if (err?.details) {
+            errorMessage = err.details;
+          } else if (typeof err === 'string') {
+            errorMessage = err;
+          } else {
+            try {
+              errorMessage = JSON.stringify(err, null, 2);
+            } catch {
+              errorMessage = String(err);
+            }
+          }
+
+          alert(`Erro ao salvar associações:\n\n${errorMessage}\n\nVerifique o console (F12) para mais detalhes.`);
+        }
+
+        // Fecha o modal apenas se tudo deu certo
+        setShowCategoryModal(false);
+        setEditingCategory(null);
+        resetForms();
+      } else {
+        // Criar nova categoria
+        try {
+          console.log('[Configurações] Criando nova categoria...', { nome: categoryForm.name });
+
+          const newId = await productsService.upsertCategory({ name: categoryForm.name });
+          console.log('[Configurações] ✅ Nova categoria criada com ID:', newId);
+
+          // Aguarda um pouco para garantir que a categoria foi commitada no Supabase
+          const isElectron = typeof (window as any)?.api?.db?.query === 'function';
+          if (!isElectron) {
+            console.log('[Configurações] Aguardando 1s para garantir commit da categoria no Supabase...');
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            // Verifica se a categoria existe antes de criar associações
+            const { supabase } = await import('../../utils/supabase');
+            if (supabase) {
+              let attempts = 0;
+              let categoryExists = false;
+              while (attempts < 3 && !categoryExists) {
+                const { data, error } = await supabase
+                  .from('categories')
+                  .select('id')
+                  .eq('id', newId)
+                  .maybeSingle();
+
+                if (error && error.code !== 'PGRST116') {
+                  console.error('[Configurações] Erro ao verificar categoria:', error);
+                  break;
+                }
+
+                if (data) {
+                  categoryExists = true;
+                  console.log('[Configurações] ✅ Categoria confirmada no Supabase após', attempts + 1, 'tentativa(s)');
+                  break;
+                }
+
+                attempts++;
+                if (attempts < 3) {
+                  console.log(`[Configurações] Categoria não encontrada, tentando novamente (${attempts + 1}/3)...`);
+                  await new Promise(resolve => setTimeout(resolve, 500));
+                }
+              }
+
+              if (!categoryExists) {
+                console.warn('[Configurações] ⚠️ Categoria não encontrada após 3 tentativas, mas continuando...');
+              }
+            }
+          }
+
           const newCategory: Category = {
             id: String(newId),
             name: categoryForm.name,
@@ -500,25 +1186,168 @@ export default function ConfiguracoesPage() {
             order: categories.length + 1,
             active: true,
             integrationCode: categoryForm.integrationCode,
+            kitchenIds: categoryForm.kitchenIds.length > 0 ? categoryForm.kitchenIds : undefined,
           }
           setCategories([...categories, newCategory])
-        })
-        .catch(() => {
-          const newCategory: Category = {
-            id: Date.now().toString(),
-            name: categoryForm.name,
-            icon: categoryForm.icon,
-            order: categories.length + 1,
-            active: true,
-            integrationCode: categoryForm.integrationCode,
-          }
-          setCategories([...categories, newCategory])
-        })
-    }
 
-    setShowCategoryModal(false);
-    setEditingCategory(null);
-    resetForms();
+          // Atualizar category_kitchens no banco
+          if (categoryForm.kitchenIds.length > 0) {
+            try {
+              if (isElectron && (window as any)?.api?.db?.query) {
+                // Modo Electron - usa API local
+                for (const kitchenId of categoryForm.kitchenIds) {
+                  await (window as any).api.db.query(
+                    'INSERT INTO category_kitchens (category_id, kitchen_id, updated_at) VALUES (?, ?, ?)',
+                    [newId, kitchenId, new Date().toISOString()]
+                  );
+                }
+              } else {
+                // Modo Navegador - usa Supabase
+                const { supabase } = await import('../../utils/supabase');
+                if (!supabase) {
+                  console.warn('[Configurações] Supabase não disponível para salvar associações categoria-cozinha');
+                  return;
+                }
+
+                console.log('[Configurações] Criando associações categoria-cozinha no Supabase...');
+                console.log('[Configurações] Nova categoria ID:', newId);
+                console.log('[Configurações] Kitchen IDs:', categoryForm.kitchenIds);
+
+                // Aguarda um pouco e verifica se a categoria existe antes de criar associações
+                await new Promise(resolve => setTimeout(resolve, 500));
+
+                let categoryExists = false;
+                let attempts = 0;
+                const maxAttempts = 3;
+
+                while (attempts < maxAttempts && !categoryExists) {
+                  const { data: categoryCheck, error: checkError } = await supabase
+                    .from('categories')
+                    .select('id')
+                    .eq('id', newId)
+                    .maybeSingle();
+
+                  if (checkError && checkError.code !== 'PGRST116') {
+                    console.error('[Configurações] Erro ao verificar categoria:', checkError);
+                    break;
+                  }
+
+                  if (categoryCheck) {
+                    categoryExists = true;
+                    console.log(`[Configurações] ✅ Categoria confirmada no Supabase após ${attempts + 1} tentativa(s)`);
+                    break;
+                  }
+
+                  attempts++;
+                  if (attempts < maxAttempts) {
+                    console.log(`[Configurações] Categoria não encontrada, tentando novamente (${attempts + 1}/${maxAttempts})...`);
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                  }
+                }
+
+                if (!categoryExists) {
+                  throw new Error(`A categoria não foi encontrada no Supabase após ${maxAttempts} tentativas. ID: ${newId}`);
+                }
+
+                const newAssociations = categoryForm.kitchenIds.map(kitchenId => ({
+                  category_id: newId,
+                  kitchen_id: kitchenId,
+                  updated_at: new Date().toISOString(),
+                })).filter(assoc => {
+                  // Valida que tanto category_id quanto kitchen_id são UUIDs válidos
+                  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+                  return uuidRegex.test(assoc.category_id) && uuidRegex.test(assoc.kitchen_id);
+                });
+
+                console.log('[Configurações] Dados a inserir:', newAssociations);
+                const { error: insertError, data: insertData } = await supabase
+                  .from('category_kitchens')
+                  .insert(newAssociations)
+                  .select();
+
+                if (insertError) {
+                  console.error('[Configurações] Erro ao inserir associações:', insertError);
+                  console.error('[Configurações] Detalhes do erro:', {
+                    code: insertError.code,
+                    message: insertError.message,
+                    details: insertError.details,
+                    hint: insertError.hint
+                  });
+
+                  // Se o erro for de foreign key, tenta novamente após aguardar mais
+                  if (insertError.code === '23503' || insertError.message?.includes('foreign key')) {
+                    console.error('[Configurações] ❌ Erro de foreign key - aguardando e tentando novamente...');
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+
+                    // Verifica novamente se a categoria existe
+                    const { data: categoryCheck2 } = await supabase
+                      .from('categories')
+                      .select('id')
+                      .eq('id', newId)
+                      .maybeSingle();
+
+                    if (!categoryCheck2) {
+                      throw new Error(`Categoria não encontrada após retry. ID: ${newId}`);
+                    }
+
+                    // Tenta inserir novamente
+                    const { error: retryError, data: retryData } = await supabase
+                      .from('category_kitchens')
+                      .insert(newAssociations)
+                      .select();
+
+                    if (retryError) {
+                      throw new Error(`Erro ao salvar associações após retry: ${retryError.message}`);
+                    }
+
+                    console.log('[Configurações] ✅ Associações inseridas com sucesso após retry!', retryData);
+                  } else {
+                    throw insertError;
+                  }
+                } else {
+                  console.log('[Configurações] ✅ Associações categoria-cozinha criadas com sucesso!', insertData);
+                }
+              }
+            } catch (err: any) {
+              console.error('[Configurações] Erro ao inserir cozinhas da categoria:', err);
+              let errorMessage = 'Erro desconhecido';
+
+              if (err?.message) {
+                errorMessage = err.message;
+              } else if (err?.error?.message) {
+                errorMessage = err.error.message;
+              } else if (err?.details) {
+                errorMessage = err.details;
+              } else if (typeof err === 'string') {
+                errorMessage = err;
+              } else {
+                try {
+                  errorMessage = JSON.stringify(err, null, 2);
+                } catch {
+                  errorMessage = String(err);
+                }
+              }
+
+              alert(`Erro ao salvar associações:\n\n${errorMessage}\n\nVerifique o console (F12) para mais detalhes.`);
+            }
+          }
+        } catch (err: any) {
+          console.error('[Configurações] Erro ao criar categoria:', err);
+          const errorMsg = err?.message || String(err);
+          alert(`Erro ao criar categoria:\n\n${errorMsg}\n\nVerifique o console (F12) para mais detalhes.`);
+          return;
+        }
+
+        // Fecha o modal apenas se tudo deu certo
+        setShowCategoryModal(false);
+        setEditingCategory(null);
+        resetForms();
+      }
+    } catch (err: any) {
+      console.error('[Configurações] Erro geral ao salvar categoria:', err);
+      const errorMsg = err?.message || String(err);
+      alert(`Erro ao salvar categoria:\n\n${errorMsg}\n\nVerifique o console (F12) para mais detalhes.`);
+    }
   };
 
   const handleSaveItem = () => {
@@ -553,7 +1382,7 @@ export default function ConfiguracoesPage() {
       const priceCents = Math.round((Number(itemData.price) || 0) * 100)
       productsService
         .upsertProduct({ id: String(editingItem.id), sku: itemData.code || null, name: itemData.name, categoryId: String(itemData.categoryId), priceCents, isActive: Boolean(editingItem.active) })
-        .catch(() => {})
+        .catch(() => { })
     } else {
       const priceCents = Math.round((Number(itemData.price) || 0) * 100)
       productsService
@@ -637,10 +1466,10 @@ export default function ConfiguracoesPage() {
     }
 
     if (editingPayment) {
-      setPaymentMethods(paymentMethods.map(method => 
+      setPaymentMethods(paymentMethods.map(method =>
         method === editingPayment ? paymentForm : method
       ));
-      
+
       // Atualizar atalho se o nome da forma de pagamento mudar
       if (editingPayment !== paymentForm) {
         const shortcut = paymentShortcuts[editingPayment];
@@ -666,14 +1495,14 @@ export default function ConfiguracoesPage() {
       title: 'Excluir Categoria',
       message: (
         <>
-          Tem certeza que deseja excluir a categoria: 
+          Tem certeza que deseja excluir a categoria:
           <span className="font-bold text-red-700 block mt-1">"{category.name}"</span>?
           Todos os itens associados a ela permanecerão no cardápio, mas sem categoria.
         </>
       ),
       onConfirm: () => {
         setCategories(categories.filter(cat => cat.id !== category.id));
-        productsService.deleteCategories([String(category.id)]).catch(() => {})
+        productsService.deleteCategories([String(category.id)]).catch(() => { })
         setShowConfirmation(false);
       },
       variant: 'danger',
@@ -687,7 +1516,7 @@ export default function ConfiguracoesPage() {
       title: 'Excluir Item do Cardápio',
       message: (
         <>
-          Tem certeza que deseja excluir o item: 
+          Tem certeza que deseja excluir o item:
           <span className="font-bold text-red-700 block mt-1">"{item.name}"</span>?
           Esta ação é irreversível.
         </>
@@ -707,19 +1536,19 @@ export default function ConfiguracoesPage() {
       title: 'Excluir Forma de Pagamento',
       message: (
         <>
-          Tem certeza que deseja excluir a forma de pagamento: 
+          Tem certeza que deseja excluir a forma de pagamento:
           <span className="font-bold text-red-700 block mt-1">"{method}"</span>?
           Isso pode afetar pedidos futuros.
         </>
       ),
       onConfirm: () => {
         setPaymentMethods(paymentMethods.filter(m => m !== method));
-        
+
         // Remover atalho associado
         const newShortcuts = { ...paymentShortcuts };
         delete newShortcuts[method];
         setPaymentShortcuts(newShortcuts);
-        
+
         setShowConfirmation(false);
       },
       variant: 'danger',
@@ -728,9 +1557,38 @@ export default function ConfiguracoesPage() {
     setShowConfirmation(true);
   };
 
-  const openEditCategory = (category: Category) => {
+  const openEditCategory = async (category: Category) => {
+    const isElectron = typeof (window as any)?.api?.db?.query === 'function';
+    let kitchenIds = (category as any).kitchenIds ||
+      ((category as any).kitchenId ? [(category as any).kitchenId] : []);
+
+    // Se estiver no navegador, carrega os kitchenIds do Supabase
+    if (!isElectron) {
+      try {
+        const { supabase } = await import('../../utils/supabase');
+        if (supabase) {
+          const { data: associations, error } = await supabase
+            .from('category_kitchens')
+            .select('kitchen_id')
+            .eq('category_id', category.id);
+
+          if (!error && associations) {
+            kitchenIds = associations.map(a => a.kitchen_id);
+            console.log('[Configurações] KitchenIds carregados do Supabase para categoria:', category.name, kitchenIds);
+          }
+        }
+      } catch (err) {
+        console.error('[Configurações] Erro ao carregar kitchenIds do Supabase:', err);
+      }
+    }
+
     setEditingCategory(category);
-    setCategoryForm({ name: category.name, icon: category.icon, integrationCode: category.integrationCode || '' });
+    setCategoryForm({
+      name: category.name,
+      icon: category.icon,
+      integrationCode: category.integrationCode || '',
+      kitchenIds: kitchenIds
+    });
     setShowCategoryModal(true);
   };
 
@@ -752,14 +1610,14 @@ export default function ConfiguracoesPage() {
     });
     setImagePreview(item.image || '');
     setImageFile(null);
-    
+
     // Resetar estados temporários de modificadores
     setNewModifierGroupName('');
     setNewModifierOption('');
     setCurrentModifierOptions([]);
     setNewModifierGroupActive(true);
     setEditingModifierGroupId(null); // Resetar ID de edição ao abrir para um novo item ou edição inicial
-    
+
     setShowItemModal(true);
   };
 
@@ -778,7 +1636,7 @@ export default function ConfiguracoesPage() {
       setNewObservation('');
     }
   };
-  
+
   const handleNewObservationKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -940,17 +1798,17 @@ export default function ConfiguracoesPage() {
   const tabs = useMemo(() => {
     return isKitchenConfig
       ? [
-          { id: 'device', name: 'Dispositivo', icon: 'ri-computer-line' },
-        ]
+        { id: 'device', name: 'Dispositivo', icon: 'ri-computer-line' },
+      ]
       : [
-          { id: 'categories', name: 'Categorias', icon: 'ri-folder-line' },
-          { id: 'items', name: 'Cardápio', icon: 'ri-restaurant-line' },
-          { id: 'promotions', name: 'Promoções e Combos', icon: 'ri-gift-line' },
-          { id: 'payments', name: 'Pagamentos', icon: 'ri-money-dollar-circle-line' },
-          { id: 'shortcuts', name: 'Atalhos', icon: 'ri-keyboard-line' },
-          { id: 'general', name: 'Geral', icon: 'ri-settings-line' },
-          { id: 'device', name: 'Dispositivo', icon: 'ri-computer-line' },
-        ]
+        { id: 'categories', name: 'Categorias', icon: 'ri-folder-line' },
+        { id: 'items', name: 'Cardápio', icon: 'ri-restaurant-line' },
+        { id: 'promotions', name: 'Promoções e Combos', icon: 'ri-gift-line' },
+        { id: 'payments', name: 'Pagamentos', icon: 'ri-money-dollar-circle-line' },
+        { id: 'shortcuts', name: 'Atalhos', icon: 'ri-keyboard-line' },
+        { id: 'general', name: 'Geral', icon: 'ri-settings-line' },
+        { id: 'device', name: 'Dispositivo', icon: 'ri-computer-line' },
+      ]
   }, [isKitchenConfig])
 
   // Lê o parâmetro de query ?tab=device para abrir diretamente a aba
@@ -966,7 +1824,7 @@ export default function ConfiguracoesPage() {
     const file = event.target.files?.[0];
     if (file) {
       setImageFile(file);
-      
+
       // Criar preview da imagem
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -991,7 +1849,7 @@ export default function ConfiguracoesPage() {
 
     const newCategories = [...categories];
     const currentCategory = newCategories[categoryIndex];
-    
+
     if (direction === 'up' && categoryIndex > 0) {
       const previousCategory = newCategories[categoryIndex - 1];
       // Trocar as ordens
@@ -1106,7 +1964,7 @@ export default function ConfiguracoesPage() {
 
   const handleShortcutChange = (method: string, shortcut: string) => {
     const upperShortcut = shortcut.toUpperCase().slice(0, 1);
-    
+
     // Verificar se o atalho já está em uso por outra forma de pagamento
     const existingMethod = Object.keys(paymentShortcuts).find(
       key => paymentShortcuts[key] === upperShortcut && key !== method
@@ -1145,13 +2003,13 @@ export default function ConfiguracoesPage() {
 
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
-      
+
       {/* Cabeçalho Fixo */}
       <div className="bg-white border-b border-gray-200 flex-shrink-0">
         <div className="px-6 py-4">
           <h1 className="text-2xl font-bold text-gray-900">Configurações</h1>
         </div>
-        
+
         <div className="px-6">
           <div className="flex space-x-8">
             {tabs.map((tab) => (
@@ -1161,11 +2019,10 @@ export default function ConfiguracoesPage() {
                   setActiveTab(tab.id as ConfigTab);
                   resetSelections();
                 }}
-                className={`py-4 px-2 border-b-2 font-medium text-sm transition-colors cursor-pointer whitespace-nowrap ${
-                  activeTab === tab.id
+                className={`py-4 px-2 border-b-2 font-medium text-sm transition-colors cursor-pointer whitespace-nowrap ${activeTab === tab.id
                     ? 'border-amber-500 text-amber-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700'
-                }`}
+                  }`}
               >
                 <i className={`${tab.icon} mr-2`}></i>
                 {tab.name}
@@ -1188,8 +2045,8 @@ export default function ConfiguracoesPage() {
               </div>
               <div className="flex space-x-3">
                 {selectedItems.length > 0 && (
-                  <Button 
-                    variant="secondary" 
+                  <Button
+                    variant="secondary"
                     onClick={deleteSelectedItems}
                     className="bg-red-50 text-red-600 hover:bg-red-100"
                   >
@@ -1206,15 +2063,14 @@ export default function ConfiguracoesPage() {
 
             <div className="bg-white rounded-lg shadow-sm border border-gray-200">
               <div className="divide-y divide-gray-200">
-                {menuItems.filter(i=>i.isPromo).length === 0 && (
+                {menuItems.filter(i => i.isPromo).length === 0 && (
                   <div className="p-4 text-sm text-gray-500 italic">Nenhuma promoção/combo cadastrado</div>
                 )}
-                {menuItems.filter(i=>i.isPromo).map((item) => (
+                {menuItems.filter(i => i.isPromo).map((item) => (
                   <div
                     key={item.id}
-                    className={`p-4 flex items-center justify-between transition-colors transition-all duration-200 ease-out ${
-                      selectedItems.includes(item.id) ? 'bg-amber-50' : ''
-                    }`}
+                    className={`p-4 flex items-center justify-between transition-colors transition-all duration-200 ease-out ${selectedItems.includes(item.id) ? 'bg-amber-50' : ''
+                      }`}
                   >
                     <div className="flex items-center space-x-3 flex-1">
                       <input
@@ -1235,9 +2091,9 @@ export default function ConfiguracoesPage() {
                     </div>
                     <div className="flex items-center space-x-4">
                       <label className="relative inline-flex items-center cursor-pointer">
-                        <input 
-                          type="checkbox" 
-                          className="sr-only peer" 
+                        <input
+                          type="checkbox"
+                          className="sr-only peer"
                           checked={item.active}
                           onChange={() => toggleItemActive(item.id)}
                         />
@@ -1280,8 +2136,8 @@ export default function ConfiguracoesPage() {
               </div>
               <div className="flex space-x-3">
                 {selectedCategories.length > 0 && (
-                  <Button 
-                    variant="secondary" 
+                  <Button
+                    variant="secondary"
                     onClick={deleteSelectedCategories}
                     className="bg-red-50 text-red-600 hover:bg-red-100"
                   >
@@ -1323,92 +2179,98 @@ export default function ConfiguracoesPage() {
                 {filteredCategories
                   .sort((a, b) => a.order - b.order)
                   .map((category, index) => (
-                  <div
-                    key={category.id}
-                    className={`p-4 flex items-center justify-between transition-colors transition-all duration-200 ease-out group ${
-                      selectedCategories.includes(category.id) ? 'bg-amber-50' : ''
-                    } ${dragOverCategoryId === category.id ? 'ring-2 ring-amber-400' : ''} ${draggedCategoryId === category.id ? 'opacity-80' : ''}`}
-                    onDragOver={(e) => handleCategoryDragOverWithAutoScroll(e, category.id)}
-                    onDrop={(e) => { e.preventDefault(); setDraggedCategoryId(null); setDragOverCategoryId(null); stopAutoScroll(); detachGlobalDragOver(); }}
-                  >
-                    <div className="flex items-center space-x-3">
-                      <input
-                        type="checkbox"
-                        checked={selectedCategories.includes(category.id)}
-                        onChange={() => toggleCategorySelection(category.id)}
-                        className="rounded border-gray-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
-                      />
-                      <span
-                        className="text-gray-400 cursor-grab"
-                        title="Arrastar para reordenar"
-                        draggable
-                        onDragStart={(e) => { setDraggedCategoryId(category.id); dragClientYRef.current = e.clientY; attachGlobalDragOver(); startAutoScroll(); }}
-                        onDragEnd={() => { setDraggedCategoryId(null); setDragOverCategoryId(null); stopAutoScroll(); detachGlobalDragOver(); }}
-                      >
-                        <i className="ri-drag-move-line"></i>
-                      </span>
-                      <i className={`${category.icon} text-xl ${category.active ? 'text-amber-500' : 'text-gray-400'}`}></i>
-                      <span className={`font-medium text-gray-900 ${!category.active ? 'line-through text-gray-500' : ''}`}>{category.name}</span>
-                      <span className="text-sm text-gray-500">#{category.order}</span>
-                    </div>
-                    <div className="flex items-center space-x-4">
-                      {/* Toggle de Ativação */}
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input 
-                          type="checkbox" 
-                          className="sr-only peer" 
-                          checked={category.active}
-                          onChange={() => toggleCategoryActive(category.id)}
+                    <div
+                      key={category.id}
+                      className={`p-4 flex items-center justify-between transition-colors transition-all duration-200 ease-out group ${selectedCategories.includes(category.id) ? 'bg-amber-50' : ''
+                        } ${dragOverCategoryId === category.id ? 'ring-2 ring-amber-400' : ''} ${draggedCategoryId === category.id ? 'opacity-80' : ''}`}
+                      onDragOver={(e) => handleCategoryDragOverWithAutoScroll(e, category.id)}
+                      onDrop={(e) => { e.preventDefault(); setDraggedCategoryId(null); setDragOverCategoryId(null); stopAutoScroll(); detachGlobalDragOver(); }}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedCategories.includes(category.id)}
+                          onChange={() => toggleCategorySelection(category.id)}
+                          className="rounded border-gray-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
                         />
-                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-amber-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
-                        <span className="ml-3 text-sm font-medium text-gray-900">
-                          {category.active ? 'Ativa' : 'Inativa'}
+                        <span
+                          className="text-gray-400 cursor-grab"
+                          title="Arrastar para reordenar"
+                          draggable
+                          onDragStart={(e) => { setDraggedCategoryId(category.id); dragClientYRef.current = e.clientY; attachGlobalDragOver(); startAutoScroll(); }}
+                          onDragEnd={() => { setDraggedCategoryId(null); setDragOverCategoryId(null); stopAutoScroll(); detachGlobalDragOver(); }}
+                        >
+                          <i className="ri-drag-move-line"></i>
                         </span>
-                      </label>
-                      
-                      <div className="flex space-x-2">
-                        <div className="flex flex-col space-y-1">
+                        <i className={`${category.icon} text-xl ${category.active ? 'text-amber-500' : 'text-gray-400'}`}></i>
+                        <span className={`font-medium text-gray-900 ${!category.active ? 'line-through text-gray-500' : ''}`}>{category.name}</span>
+                        <span className="text-sm text-gray-500">#{category.order}</span>
+                        {/* Mostrar cozinha(s) se atribuída(s) */}
+                        {((category as any).kitchenIds?.length > 0 || (category as any).kitchenId) && (
+                          <span className="text-xs text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <i className="ri-restaurant-line"></i>
+                            {(category as any).kitchenIds?.length > 0
+                              ? `${(category as any).kitchenIds.length} cozinha(s)`
+                              : kitchens.find(k => k.id === (category as any).kitchenId)?.name || 'Cozinha'}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center space-x-4">
+                        {/* Toggle de Ativação */}
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="sr-only peer"
+                            checked={category.active}
+                            onChange={() => toggleCategoryActive(category.id)}
+                          />
+                          <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-amber-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
+                          <span className="ml-3 text-sm font-medium text-gray-900">
+                            {category.active ? 'Ativa' : 'Inativa'}
+                          </span>
+                        </label>
+
+                        <div className="flex space-x-2">
+                          <div className="flex flex-col space-y-1">
+                            <button
+                              onClick={() => handleReorderCategory(category.id, 'up')}
+                              disabled={index === 0}
+                              className={`w-6 h-6 flex items-center justify-center rounded cursor-pointer transition-colors ${index === 0
+                                  ? 'text-gray-300 cursor-not-allowed'
+                                  : 'text-gray-600 hover:text-amber-600 hover:bg-amber-50'
+                                }`}
+                              title="Mover para cima"
+                            >
+                              <i className="ri-arrow-up-s-line text-sm"></i>
+                            </button>
+                            <button
+                              onClick={() => handleReorderCategory(category.id, 'down')}
+                              disabled={index === categories.length - 1}
+                              className={`w-6 h-6 flex items-center justify-center rounded cursor-pointer transition-colors ${index === categories.length - 1
+                                  ? 'text-gray-300 cursor-not-allowed'
+                                  : 'text-gray-600 hover:text-amber-600 hover:bg-amber-50'
+                                }`}
+                              title="Mover para baixo"
+                            >
+                              <i className="ri-arrow-down-s-line text-sm"></i>
+                            </button>
+                          </div>
                           <button
-                            onClick={() => handleReorderCategory(category.id, 'up')}
-                            disabled={index === 0}
-                            className={`w-6 h-6 flex items-center justify-center rounded cursor-pointer transition-colors ${
-                              index === 0
-                                ? 'text-gray-300 cursor-not-allowed'
-                                : 'text-gray-600 hover:text-amber-600 hover:bg-amber-50'
-                            }`}
-                            title="Mover para cima"
+                            onClick={() => openEditCategory(category)}
+                            className="text-blue-600 hover:text-blue-800 cursor-pointer"
                           >
-                            <i className="ri-arrow-up-s-line text-sm"></i>
+                            <i className="ri-edit-line"></i>
                           </button>
                           <button
-                            onClick={() => handleReorderCategory(category.id, 'down')}
-                            disabled={index === categories.length - 1}
-                            className={`w-6 h-6 flex items-center justify-center rounded cursor-pointer transition-colors ${
-                              index === categories.length - 1
-                                ? 'text-gray-300 cursor-not-allowed'
-                                : 'text-gray-600 hover:text-amber-600 hover:bg-amber-50'
-                            }`}
-                            title="Mover para baixo"
+                            onClick={() => handleDeleteCategory(category)}
+                            className="text-red-600 hover:text-red-800 cursor-pointer"
                           >
-                            <i className="ri-arrow-down-s-line text-sm"></i>
+                            <i className="ri-delete-bin-line"></i>
                           </button>
                         </div>
-                        <button
-                          onClick={() => openEditCategory(category)}
-                          className="text-blue-600 hover:text-blue-800 cursor-pointer"
-                        >
-                          <i className="ri-edit-line"></i>
-                        </button>
-                        <button
-                          onClick={() => handleDeleteCategory(category)}
-                          className="text-red-600 hover:text-red-800 cursor-pointer"
-                        >
-                          <i className="ri-delete-bin-line"></i>
-                        </button>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
               </div>
             </div>
           </div>
@@ -1429,8 +2291,8 @@ export default function ConfiguracoesPage() {
               </div>
               <div className="flex space-x-3">
                 {selectedItems.length > 0 && (
-                  <Button 
-                    variant="secondary" 
+                  <Button
+                    variant="secondary"
                     onClick={deleteSelectedItems}
                     className="bg-red-50 text-red-600 hover:bg-red-100"
                   >
@@ -1475,9 +2337,8 @@ export default function ConfiguracoesPage() {
                   return (
                     <div
                       key={item.id}
-                      className={`p-4 flex items-center justify-between transition-colors transition-all duration-200 ease-out ${
-                        selectedItems.includes(item.id) ? 'bg-amber-50' : ''
-                      } ${dragOverItemIndex === itemIndex ? 'ring-2 ring-amber-400' : ''} ${draggedItemIndex === itemIndex ? 'opacity-80' : ''}`}
+                      className={`p-4 flex items-center justify-between transition-colors transition-all duration-200 ease-out ${selectedItems.includes(item.id) ? 'bg-amber-50' : ''
+                        } ${dragOverItemIndex === itemIndex ? 'ring-2 ring-amber-400' : ''} ${draggedItemIndex === itemIndex ? 'opacity-80' : ''}`}
                       onDragOver={(e) => { handleDragOverWithAutoScroll(e, itemIndex); dragClientYRef.current = e.clientY; }}
                       onDrop={(e) => { e.preventDefault(); setDraggedItemIndex(null); setDragOverItemIndex(null); stopAutoScroll(); detachGlobalDragOver(); }}
                     >
@@ -1502,12 +2363,12 @@ export default function ConfiguracoesPage() {
                             <span className={`font-medium text-gray-900 ${!item.active ? 'line-through text-gray-500' : ''}`}>{item.name}</span>
                             <span className="text-sm text-gray-500">({category?.name || 'Sem Categoria'})</span>
                           </div>
-                        <div className="flex items-center space-x-4 text-sm text-gray-600">
-                          <span>R$ {item.price.toFixed(2)}</span>
-                          <span>{item.sla} min</span>
-                          {item.code && (
-                            <span className="text-blue-600">#{item.code}</span>
-                          )}
+                          <div className="flex items-center space-x-4 text-sm text-gray-600">
+                            <span>R$ {item.price.toFixed(2)}</span>
+                            <span>{item.sla} min</span>
+                            {item.code && (
+                              <span className="text-blue-600">#{item.code}</span>
+                            )}
                             {item.observations && item.observations.length > 0 && (
                               <span className="text-amber-600">
                                 {item.observations.length} observações
@@ -1527,11 +2388,10 @@ export default function ConfiguracoesPage() {
                           <button
                             onClick={() => handleReorderItem(item.id, 'up')}
                             disabled={itemIndex === 0}
-                            className={`w-6 h-6 flex items-center justify-center rounded cursor-pointer transition-colors ${
-                              itemIndex === 0
+                            className={`w-6 h-6 flex items-center justify-center rounded cursor-pointer transition-colors ${itemIndex === 0
                                 ? 'text-gray-300 cursor-not-allowed'
                                 : 'text-gray-600 hover:text-amber-600 hover:bg-amber-50'
-                            }`}
+                              }`}
                             title="Mover para cima"
                           >
                             <i className="ri-arrow-up-s-line text-sm"></i>
@@ -1539,11 +2399,10 @@ export default function ConfiguracoesPage() {
                           <button
                             onClick={() => handleReorderItem(item.id, 'down')}
                             disabled={itemIndex === menuItems.length - 1}
-                            className={`w-6 h-6 flex items-center justify-center rounded cursor-pointer transition-colors ${
-                              itemIndex === menuItems.length - 1
+                            className={`w-6 h-6 flex items-center justify-center rounded cursor-pointer transition-colors ${itemIndex === menuItems.length - 1
                                 ? 'text-gray-300 cursor-not-allowed'
                                 : 'text-gray-600 hover:text-amber-600 hover:bg-amber-50'
-                            }`}
+                              }`}
                             title="Mover para baixo"
                           >
                             <i className="ri-arrow-down-s-line text-sm"></i>
@@ -1551,9 +2410,9 @@ export default function ConfiguracoesPage() {
                         </div>
                         {/* Toggle de Ativação */}
                         <label className="relative inline-flex items-center cursor-pointer">
-                          <input 
-                            type="checkbox" 
-                            className="sr-only peer" 
+                          <input
+                            type="checkbox"
+                            className="sr-only peer"
                             checked={item.active}
                             onChange={() => toggleItemActive(item.id)}
                           />
@@ -1562,7 +2421,7 @@ export default function ConfiguracoesPage() {
                             {item.active ? 'Ativo' : 'Inativo'}
                           </span>
                         </label>
-                        
+
                         <div className="flex space-x-2">
                           <button
                             onClick={() => openEditItem(item)}
@@ -1602,8 +2461,8 @@ export default function ConfiguracoesPage() {
               <h2 className="text-lg font-semibold text-gray-900">Formas de Pagamento</h2>
               <div className="flex space-x-3">
                 {selectedPayments.length > 0 && (
-                  <Button 
-                    variant="secondary" 
+                  <Button
+                    variant="secondary"
                     onClick={deleteSelectedPayments}
                     className="bg-red-50 text-red-600 hover:bg-red-100"
                   >
@@ -1640,9 +2499,8 @@ export default function ConfiguracoesPage() {
             <div className="bg-white rounded-lg shadow-sm border border-gray-200">
               <div className="divide-y divide-gray-200">
                 {paymentMethods.map((method, index) => (
-                  <div key={index} className={`p-4 flex items-center justify-between transition-colors ${
-                    selectedPayments.includes(method) ? 'bg-amber-50' : ''
-                  }`}>
+                  <div key={index} className={`p-4 flex items-center justify-between transition-colors ${selectedPayments.includes(method) ? 'bg-amber-50' : ''
+                    }`}>
                     <div className="flex items-center space-x-3">
                       <input
                         type="checkbox"
@@ -1681,7 +2539,7 @@ export default function ConfiguracoesPage() {
         {activeTab === 'shortcuts' && (
           <div className="space-y-6">
             <h2 className="text-lg font-semibold text-gray-900">Atalhos de Pedido e Pagamento</h2>
-            
+
             <div className="bg-white rounded-lg shadow-sm border border-gray-200">
               <div className="divide-y divide-gray-200">
                 {/* Atalho de Checkout - Padronizado */}
@@ -1701,7 +2559,7 @@ export default function ConfiguracoesPage() {
                     </span>
                   </div>
                 </div>
-                
+
                 {/* Atalhos de Pagamento */}
                 <div className="p-4 border-t">
                   <h3 className="font-medium text-gray-900 mb-3">Atalhos de Formas de Pagamento</h3>
@@ -1735,10 +2593,40 @@ export default function ConfiguracoesPage() {
         {activeTab === 'general' && (
           <div className="space-y-6">
             <h2 className="text-lg font-semibold text-gray-900">Configurações Gerais</h2>
-            
+
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
               <div className="space-y-6">
-                
+
+                {/* Seletor de Caixa/Estação */}
+                <div className="bg-amber-50 p-4 rounded-lg border border-amber-200 mb-6">
+                  <h3 className="font-medium text-gray-900 mb-2">Identificação do Caixa (Estação)</h3>
+                  <p className="text-sm text-gray-600 mb-3">
+                    Selecione qual caixa está sendo operado neste dispositivo. Esta informação será usada para identificar as sessões e movimentos de caixa nos relatórios.
+                  </p>
+                  <div className="flex gap-4 items-center">
+                    <select
+                      className="block w-full max-w-xs pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-amber-500 focus:border-amber-500 sm:text-sm rounded-md"
+                      value={currentStationId}
+                      onChange={(e) => setCurrentStationId(e.target.value)}
+                    >
+                      <option value="">Selecione o Caixa...</option>
+                      {stations.map(s => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </select>
+                    {currentStationId && (
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                        <i className="ri-check-line mr-1"></i> Ativo
+                      </span>
+                    )}
+                  </div>
+                  {stations.length === 0 && (
+                    <p className="text-xs text-red-500 mt-2">
+                      * Nenhuma estação encontrada. Cadastre 'stations' no banco de dados.
+                    </p>
+                  )}
+                </div>
+
                 {/* Configuração de Formato de Senha */}
                 <div>
                   <h3 className="font-medium text-gray-900 mb-2">Formato da Senha do Pedido</h3>
@@ -1748,49 +2636,46 @@ export default function ConfiguracoesPage() {
                   <div className="flex space-x-4">
                     <button
                       onClick={() => handleConfigChange('passwordFormat', 'numeric')}
-                      className={`flex-1 p-3 rounded-lg border-2 transition-colors cursor-pointer ${
-                        appConfig.passwordFormat === 'numeric'
+                      className={`flex-1 p-3 rounded-lg border-2 transition-colors cursor-pointer ${appConfig.passwordFormat === 'numeric'
                           ? 'border-amber-500 bg-amber-50 text-amber-800'
                           : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
-                      }`}
+                        }`}
                     >
                       <i className="ri-hashtag text-xl mb-1"></i>
                       <div className="font-medium text-sm">Numérica (0-9)</div>
                     </button>
                     <button
                       onClick={() => handleConfigChange('passwordFormat', 'alphabetic')}
-                      className={`flex-1 p-3 rounded-lg border-2 transition-colors cursor-pointer ${
-                        appConfig.passwordFormat === 'alphabetic'
+                      className={`flex-1 p-3 rounded-lg border-2 transition-colors cursor-pointer ${appConfig.passwordFormat === 'alphabetic'
                           ? 'border-amber-500 bg-amber-50 text-amber-800'
                           : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
-                      }`}
+                        }`}
                     >
                       <i className="ri-font-size-2 text-xl mb-1"></i>
                       <div className="font-medium text-sm">Alfabética (A-Z)</div>
                     </button>
                     <button
                       onClick={() => handleConfigChange('passwordFormat', 'alphanumeric')}
-                      className={`flex-1 p-3 rounded-lg border-2 transition-colors cursor-pointer ${
-                        appConfig.passwordFormat === 'alphanumeric'
+                      className={`flex-1 p-3 rounded-lg border-2 transition-colors cursor-pointer ${appConfig.passwordFormat === 'alphanumeric'
                           ? 'border-amber-500 bg-amber-50 text-amber-800'
                           : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
-                      }`}
+                        }`}
                     >
                       <i className="ri-text text-xl mb-1"></i>
                       <div className="font-medium text-sm">Alfanumérica</div>
                     </button>
                   </div>
                 </div>
-                
+
                 <div className="flex items-center justify-between pt-4 border-t">
                   <div>
                     <h3 className="font-medium text-gray-900">Som de novo pedido</h3>
                     <p className="text-sm text-gray-500">Alerta sonoro quando chegar novo pedido na cozinha</p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
-                    <input 
-                      type="checkbox" 
-                      className="sr-only peer" 
+                    <input
+                      type="checkbox"
+                      className="sr-only peer"
                       checked={appConfig.soundAlert}
                       onChange={(e) => handleConfigChange('soundAlert', e.target.checked)}
                     />
@@ -1804,8 +2689,8 @@ export default function ConfiguracoesPage() {
                     <p className="text-sm text-gray-500">Alternar entre tema claro e escuro</p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
-                    <input 
-                      type="checkbox" 
+                    <input
+                      type="checkbox"
                       className="sr-only peer"
                       checked={appConfig.darkMode}
                       onChange={(e) => {
@@ -1848,7 +2733,7 @@ export default function ConfiguracoesPage() {
                   <p className="text-sm text-gray-500 mb-4">
                     Observações que estarão disponíveis para todos os itens do cardápio
                   </p>
-                  
+
                   <div className="space-y-4">
                     <div className="flex space-x-2">
                       <Input
@@ -1861,7 +2746,7 @@ export default function ConfiguracoesPage() {
                         Adicionar
                       </Button>
                     </div>
-                    
+
                     <div className="bg-gray-50 rounded-lg p-4">
                       <h4 className="text-sm font-medium text-gray-700 mb-3">Observações Globais Ativas:</h4>
                       {/* Adicionando rolagem à lista de observações globais */}
@@ -1893,7 +2778,7 @@ export default function ConfiguracoesPage() {
                   <p className="text-sm text-gray-500 mb-4">
                     Reinicia categorias, itens, pagamentos e configurações salvos localmente. Use quando a tela estiver sem dados ou após migrações.
                   </p>
-                  <Button 
+                  <Button
                     onClick={resetLocalData}
                     className="bg-red-600 hover:bg-red-700 text-white"
                   >
@@ -1948,6 +2833,53 @@ export default function ConfiguracoesPage() {
             placeholder="Somente números"
           />
 
+          {/* Seleção de Cozinhas (Múltiplas) */}
+          {kitchens.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <i className="ri-restaurant-line mr-1"></i>
+                Cozinhas que preparam esta categoria
+              </label>
+              <div className="border border-gray-300 rounded-lg p-3 max-h-40 overflow-y-auto space-y-2">
+                {kitchens.map(k => (
+                  <label
+                    key={k.id}
+                    className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors ${categoryForm.kitchenIds.includes(k.id)
+                        ? 'bg-amber-50 border border-amber-300'
+                        : 'hover:bg-gray-50'
+                      }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={categoryForm.kitchenIds.includes(k.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setCategoryForm({
+                            ...categoryForm,
+                            kitchenIds: [...categoryForm.kitchenIds, k.id]
+                          });
+                        } else {
+                          setCategoryForm({
+                            ...categoryForm,
+                            kitchenIds: categoryForm.kitchenIds.filter(id => id !== k.id)
+                          });
+                        }
+                      }}
+                      className="w-4 h-4 text-amber-600 border-gray-300 rounded focus:ring-amber-500"
+                    />
+                    <i className="ri-restaurant-2-line text-orange-500"></i>
+                    <span className="text-sm font-medium text-gray-700">{k.name}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                {categoryForm.kitchenIds.length === 0
+                  ? '⚪ Nenhuma selecionada = Aparece em todas as cozinhas'
+                  : `🟢 ${categoryForm.kitchenIds.length} cozinha(s) selecionada(s)`}
+              </p>
+            </div>
+          )}
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Ícone da categoria *
@@ -1967,22 +2899,20 @@ export default function ConfiguracoesPage() {
                   return !term || opt.label.toLowerCase().includes(term) || opt.value.toLowerCase().includes(term);
                 })
                 .map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => setCategoryForm({ ...categoryForm, icon: option.value })}
-                  className={`p-3 rounded-lg border-2 transition-all cursor-pointer hover:bg-gray-50 ${
-                    categoryForm.icon === option.value
-                      ? 'border-amber-500 bg-amber-50'
-                      : 'border-gray-200'
-                  }`}
-                  title={option.label}
-                >
-                  <i className={`${option.icon} text-xl ${
-                    categoryForm.icon === option.value ? 'text-amber-600' : 'text-gray-600'
-                  }`}></i>
-                </button>
-              ))}
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setCategoryForm({ ...categoryForm, icon: option.value })}
+                    className={`p-3 rounded-lg border-2 transition-all cursor-pointer hover:bg-gray-50 ${categoryForm.icon === option.value
+                        ? 'border-amber-500 bg-amber-50'
+                        : 'border-gray-200'
+                      }`}
+                    title={option.label}
+                  >
+                    <i className={`${option.icon} text-xl ${categoryForm.icon === option.value ? 'text-amber-600' : 'text-gray-600'
+                      }`}></i>
+                  </button>
+                ))}
             </div>
             <p className="text-xs text-gray-500 mt-2">
               Ícone selecionado: <i className={`${categoryForm.icon} mr-1`}></i>
@@ -2084,7 +3014,7 @@ export default function ConfiguracoesPage() {
                 </option>
               ))}
             </select>
-      </div>
+          </div>
 
           {/* NOVO: Toggle para pular Cozinha (Entrega Direta) */}
           <div className="pt-2">
@@ -2103,8 +3033,8 @@ export default function ConfiguracoesPage() {
 
           {/* Campo de unidades removido da edição de item conforme solicitado */}
 
-          
-          
+
+
           {/* NOVO: Grupos de Modificadores Obrigatórios */}
           <div className="pt-4 border-t border-gray-200">
             <h3 className="font-medium text-gray-900 mb-2 flex items-center">
@@ -2114,7 +3044,7 @@ export default function ConfiguracoesPage() {
             <p className="text-sm text-gray-500 mb-3">
               Crie grupos onde o operador deve selecionar exatamente uma opção.
             </p>
-            
+
             {/* Adicionar Novo Grupo */}
             <div className="p-4 border border-blue-200 rounded-lg bg-blue-50 space-y-3 mb-4">
               <h4 className="font-medium text-blue-800">Novo Grupo / Editar Selecionado</h4>
@@ -2123,7 +3053,7 @@ export default function ConfiguracoesPage() {
                 onChange={(e) => setNewModifierGroupName(e.target.value)}
                 placeholder="Nome do Grupo (Ex: Ponto da Carne)"
               />
-              
+
               <div className="flex space-x-2">
                 <Input
                   value={newModifierOption}
@@ -2136,7 +3066,7 @@ export default function ConfiguracoesPage() {
                   + Opção
                 </Button>
               </div>
-              
+
               {currentModifierOptions.length > 0 && (
                 <div className="flex flex-wrap gap-2 p-2 border-t border-blue-200 pt-3">
                   {currentModifierOptions.map((option, index) => (
@@ -2155,14 +3085,14 @@ export default function ConfiguracoesPage() {
                   ))}
                 </div>
               )}
-              
+
               {/* Toggle de Ativação do Novo Grupo */}
               <div className="flex items-center justify-between pt-3 border-t border-blue-200">
                 <h5 className="text-sm font-medium text-blue-800">Status do Grupo:</h5>
                 <label className="relative inline-flex items-center cursor-pointer">
-                  <input 
-                    type="checkbox" 
-                    className="sr-only peer" 
+                  <input
+                    type="checkbox"
+                    className="sr-only peer"
                     checked={newModifierGroupActive}
                     onChange={(e) => setNewModifierGroupActive(e.target.checked)}
                   />
@@ -2172,13 +3102,13 @@ export default function ConfiguracoesPage() {
                   </span>
                 </label>
               </div>
-              
+
               <Button onClick={handleAddModifierGroup} disabled={!newModifierGroupName.trim() || currentModifierOptions.length === 0} className="w-full" variant="primary">
                 <i className="ri-add-line mr-2"></i>
                 Adicionar/Atualizar Grupo
               </Button>
             </div>
-            
+
             {/* Lista de Grupos Ativos */}
             {itemForm.requiredModifierGroups.length > 0 && (
               <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
@@ -2194,9 +3124,9 @@ export default function ConfiguracoesPage() {
                     </div>
                     <div className="flex items-center space-x-2">
                       <label className="relative inline-flex items-center cursor-pointer">
-                        <input 
-                          type="checkbox" 
-                          className="sr-only peer" 
+                        <input
+                          type="checkbox"
+                          className="sr-only peer"
                           checked={group.active}
                           onChange={() => toggleModifierGroupActive(group.id)}
                         />
@@ -2300,9 +3230,9 @@ export default function ConfiguracoesPage() {
             <div className="text-sm text-gray-500">Nenhum insumo cadastrado</div>
           ) : (
             <div className="divide-y">
-              {recipeForItem.map((r:any)=> (
+              {recipeForItem.map((r: any) => (
                 <div key={String(r.id)} className="py-1 flex items-center justify-between">
-                  <div className="text-sm">{ingredients.find(i=>String(i.id)===String(r.ingredient_id))?.name || r.ingredient_id}</div>
+                  <div className="text-sm">{ingredients.find(i => String(i.id) === String(r.ingredient_id))?.name || r.ingredient_id}</div>
                   <div className="text-sm">{r.quantity} {r.unit}</div>
                 </div>
               ))}
@@ -2378,14 +3308,14 @@ export default function ConfiguracoesPage() {
           <div className="space-y-2">
             <div className="text-sm text-gray-600">Itens incluídos (opcional)</div>
             <div className="max-h-40 overflow-y-auto border rounded">
-              {menuItems.filter(mi=>mi.active).map(mi=> (
+              {menuItems.filter(mi => mi.active).map(mi => (
                 <label key={mi.id} className="flex items-center px-3 py-2 text-sm gap-2">
                   <input
                     type="checkbox"
                     checked={comboForm.includedItemIds.includes(mi.id)}
                     onChange={(e) => {
                       const checked = e.target.checked
-                      const next = checked ? [...comboForm.includedItemIds, mi.id] : comboForm.includedItemIds.filter(id=>id!==mi.id)
+                      const next = checked ? [...comboForm.includedItemIds, mi.id] : comboForm.includedItemIds.filter(id => id !== mi.id)
                       setComboForm({ ...comboForm, includedItemIds: next })
                     }}
                   />

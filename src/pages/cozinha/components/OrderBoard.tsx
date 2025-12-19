@@ -67,53 +67,78 @@ export default function OrderBoard({
   const canceledOrders = orders.filter(order => order.status === 'CANCELLED');
   const deliveredOrders = orders.filter(order => order.status === 'DELIVERED');
 
+  // Estilos CSS inline rígidos para garantir one-page
+  const containerStyle: React.CSSProperties = {
+    display: 'grid',
+    gridTemplateColumns: 'calc(50% - 2px) calc(50% - 2px)',
+    gap: '4px',
+    height: '100%',
+    width: '100%',
+    maxWidth: '100%',
+    overflow: 'hidden',
+    boxSizing: 'border-box',
+  };
+
+  const columnStyle: React.CSSProperties = {
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+    padding: '4px',
+    boxSizing: 'border-box',
+    minWidth: 0,
+    maxWidth: '100%',
+  };
+
+  const cardsGridStyle: React.CSSProperties = {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: '4px',
+    alignContent: 'start',
+  };
+
   return (
     <>
-      {/* Botões de modais movidos para o componente pai (CozinhaPage) */}
-      
-      {/* Container principal do Kanban: flex-1 min-h-0 para preencher o espaço restante */}
-      {/* Usamos flex-1 para que o container ocupe o espaço total e overflow-x-auto para rolagem horizontal */}
-      <div className="flex flex-nowrap gap-6 overflow-x-auto flex-1 min-h-0"> 
+      {/* Container ONE-PAGE: 2 seções de 50% cada, grid rígido */}
+      <div style={containerStyle}> 
         {statusColumns.map(column => {
-          // Filtra apenas os pedidos da coluna (NEW ou PREPARING)
           const columnOrders = productionOrders.filter(order => order.status === column.status);
           
           return (
             <div
               key={column.status}
-              // Usando flex-1 para que as colunas se expandam, mas min-w para garantir legibilidade
-              className={`rounded-lg border-2 ${column.color} p-4 flex flex-col h-full min-h-0 flex-shrink-0 flex-grow min-w-[380px] lg:min-w-[45%]`}
+              className={`rounded border ${column.color}`}
+              style={columnStyle}
             >
-              <div className="flex items-center justify-between mb-4 flex-shrink-0">
-                <h2 className="font-semibold text-gray-900 text-lg">{column.title}</h2>
-                <span className="bg-white px-2 py-1 rounded-full text-sm font-medium text-gray-600">
-                  {columnOrders.length}
-                </span>
+              {/* Header da coluna */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px', flexShrink: 0 }}>
+                <span className="font-bold text-gray-800 text-xs">{column.title}</span>
+                <span className="bg-white px-1 rounded text-xs font-bold text-gray-600">{columnOrders.length}</span>
               </div>
               
-              {/* Área de rolagem dos cards */}
-              <div className="flex-1 overflow-hidden min-h-0">
-                <div className="h-full overflow-y-auto space-y-3 pr-2">
-                  {columnOrders.map(order => (
-                    <MemoizedOrderCard
-                      key={order.id}
-                      order={order}
-                      operators={operators}
-                      categories={categories}
-                      onUpdateStatus={handleUpdateStatusWrapper} // USANDO A FUNÇÃO WRAPPER
-                      onCancelOrder={onCancelOrder}
-                      onAssignOperator={onAssignOperator}
-                      onAssignOperatorToAll={onAssignOperatorToAll}
-                      onUpdateItemStatus={onUpdateItemStatus} // NOVO PROP
-                    />
-                  ))}
-                  {columnOrders.length === 0 && (
-                    <div className="text-center py-8 text-gray-400">
-                      <i className="ri-inbox-line text-3xl mb-2 block"></i>
-                      <p className="text-sm">Nenhum pedido</p>
-                    </div>
-                  )}
-                </div>
+              {/* Grid 2x2 de cards - scroll vertical apenas */}
+              <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', minHeight: 0 }}>
+                {columnOrders.length === 0 ? (
+                  <div className="text-center py-4 text-gray-400">
+                    <i className="ri-inbox-line text-2xl block"></i>
+                    <p style={{ fontSize: '10px' }}>Nenhum pedido</p>
+                  </div>
+                ) : (
+                  <div style={cardsGridStyle}>
+                    {columnOrders.map(order => (
+                      <MemoizedOrderCard
+                        key={order.id}
+                        order={order}
+                        operators={operators}
+                        categories={categories}
+                        onUpdateStatus={handleUpdateStatusWrapper}
+                        onCancelOrder={onCancelOrder}
+                        onAssignOperator={onAssignOperator}
+                        onAssignOperatorToAll={onAssignOperatorToAll}
+                        onUpdateItemStatus={onUpdateItemStatus}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           );

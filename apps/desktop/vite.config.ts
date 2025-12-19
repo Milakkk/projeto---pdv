@@ -1,13 +1,20 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react-swc'
 import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url))
+const rootDir = resolve(__dirname, '../..') // Raiz do projeto (2 níveis acima)
 
 const isPreview = process.env.IS_PREVIEW ? true : false
+const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1'
 const userBase = process.env.BASE_PATH
-// Base '/' para dev server HTTP; build para Electron usa file:// com hash
-const base = isPreview ? (userBase || '/') : '/'
+// Base '/' para produção/Vercel; build para Electron usa file:// com hash
+const base = isProduction ? '/' : (isPreview ? (userBase || '/') : '/')
 
 export default defineConfig({
+  envDir: rootDir, // Procura .env na raiz do projeto
+  envPrefix: 'VITE_',
   define: {
    __BASE_PATH__: JSON.stringify(base),
    __IS_PREVIEW__: JSON.stringify(isPreview)
@@ -24,17 +31,25 @@ export default defineConfig({
       'i18next',
       '@supabase/supabase-js',
       'drizzle-orm',
-      'drizzle-orm/sqlite-core',
       'react-hot-toast'
     ],
+    exclude: ['drizzle-orm/sqlite-core', 'better-sqlite3'],
     force: true,
   },
   build: {
-    sourcemap: true,
-    outDir: 'out',
+    sourcemap: false, // Desabilitar sourcemaps em produção para build mais rápido
+    outDir: 'dist',
+    emptyOutDir: true,
     rollupOptions: {
-      external: ['drizzle-orm', 'drizzle-orm/sqlite-core']
-    }
+      external: ['better-sqlite3'],
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          'supabase-vendor': ['@supabase/supabase-js']
+        }
+      }
+    },
+    chunkSizeWarningLimit: 1000
   },
   resolve: {
     alias: {
@@ -43,6 +58,9 @@ export default defineConfig({
       '@db': resolve(__dirname, '../../packages/db/src'),
       '@auth': resolve(__dirname, '../../packages/auth/src'),
       '@ui': resolve(__dirname, '../../packages/ui/src'),
+      '@/offline/db/schema': resolve(__dirname, './src/offline/db/schema.browser.ts'),
+      // Stub para drizzle-orm/sqlite-core no navegador (não usado em produção web)
+      'drizzle-orm/sqlite-core': resolve(__dirname, './src/offline/db/sqlite-core-stub.ts'),
     },
     dedupe: ['react', 'react-dom']
   },

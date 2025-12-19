@@ -7,6 +7,12 @@ interface ReadyOrderListProps {
   onUpdateStatus: (orderId: string, status: Order['status']) => void;
 }
 
+const formatOrderPin = (pin: string) => {
+  const raw = String(pin ?? '').trim()
+  if (!raw) return '#-'
+  return `#${raw.replace(/^#+/, '')}`
+}
+
 // Componente auxiliar para exibir o tempo de espera (tempo desde que ficou pronto)
 function ReadyTimeStatus({ order }: { order: Order }) {
   // O timer deve medir o tempo desde que o status mudou para READY (usando readyAt ou updatedAt)
@@ -57,7 +63,7 @@ export default function ReadyOrderList({ readyOrders, onUpdateStatus }: ReadyOrd
               <div key={order.id} className="bg-green-50 border border-green-300 rounded-lg p-4 shadow-sm">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center space-x-3">
-                    <span className="text-sm font-medium text-gray-900">#{order.pin}</span>
+                    <span className="text-sm font-medium text-gray-900">{formatOrderPin(order.pin)}</span>
                     <span className="bg-green-500 text-white text-xl font-bold px-3 py-1 rounded-lg">
                       {order.password}
                     </span>

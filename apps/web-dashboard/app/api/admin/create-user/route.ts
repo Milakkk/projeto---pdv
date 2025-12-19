@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getSupabaseAdmin } from '@/app/../lib/supabaseAdmin'
+import { getSupabaseAdmin } from '../../../../lib/supabaseAdmin'
 
 export async function POST(req: Request) {
   try {
@@ -33,4 +33,3 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: e?.message ?? 'Erro inesperado' }, { status: 500 })
   }
 }
-

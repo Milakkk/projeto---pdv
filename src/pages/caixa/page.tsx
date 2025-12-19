@@ -12,6 +12,7 @@ import MovementConfirmationModal from './components/MovementConfirmationModal';
 import CodeListModal from './components/CodeListModal';
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { useKitchens, Kitchen, useKitchenSessions, useOutOfStockIngredients } from '../../hooks/useDatabase';
 import { Category, MenuItem, OrderItem, Order, SavedCart, ProductionUnit, OperationalSession } from '../../types';
 import { mockCategories, mockMenuItems } from '../../mocks/data';
 import { useOffline } from '../../hooks/useOffline';
@@ -19,7 +20,7 @@ import Input from '../../components/base/Input';
 import Button from '../../components/base/Button';
 import { showReadyAlert, showSuccess, showError, showInfo } from '../../utils/toast';
 import OrderListTab from './components/OrderListTab';
-import { useAuth } from '../../context/AuthContext'; // Importação corrigida
+import { useAuth } from '../../context/AuthContext';
 
 type CaixaTab = 'pdv' | 'orders';
 
@@ -47,10 +48,15 @@ interface CashSessionHistory extends CashOpeningData {
 
 export default function CaixaPage() {
   const { user, store } = useAuth();
+  const { kitchens } = useKitchens();
+  const { onlineKitchenIds, isKitchenOnline } = useKitchenSessions();
+  const { outOfStockIds } = useOutOfStockIngredients();
   const [categories, setCategories] = useLocalStorage<Category[]>('categories', mockCategories);
   const [menuItems] = useLocalStorage<MenuItem[]>('menuItems', mockMenuItems);
-  const [selectedCategory, setSelectedCategory] = useState<string>('');
-  const [cartItems, setCartItems] = useState<OrderItem[]>([]);
+  const [productRecipes, setProductRecipes] = useState<Record<string, string[]>>({}); // productId -> ingredientIds
+  const [selectedCategory, setSelectedCategory] = useLocalStorage<string>('caixa_selectedCategory', '');
+  const [selectedKitchenFilter, setSelectedKitchenFilter] = useLocalStorage<string>('caixa_selectedKitchenFilter', ''); // Filtro de cozinha
+  const [cartItems, setCartItems] = useLocalStorage<OrderItem[]>('caixa_pendingCart', []);
   const [quickSearchCode, setQuickSearchCode] = useState('');
   
   // Estados de Sessão e Caixa
@@ -98,6 +104,7 @@ export default function CaixaPage() {
 
   const quickSearchRef = useRef<HTMLInputElement>(null);
   const previousOrdersRef = useRef<Order[]>(orders);
+  const notifiedReadyOrdersRef = useRef<Set<string>>(new Set()); // Rastrear pedidos já notificados
 
   const { isOnline, addPendingAction } = useOffline();
 
@@ -125,6 +132,63 @@ export default function CaixaPage() {
   const isCashOpen = useMemo(() => !!cashSession && cashSession.status === 'OPEN', [cashSession]);
   const isOperationalSessionOpen = useMemo(() => !!operationalSession && operationalSession.status === 'OPEN', [operationalSession]);
 
+  // Carregar associações categoria-cozinha do Supabase
+  useEffect(() => {
+    const isElectron = typeof (window as any)?.api?.db?.query === 'function';
+    
+    if (isElectron) {
+      // Modo Electron - já carrega do banco local
+      return;
+    }
+
+    // Modo Navegador - carrega do Supabase
+    (async () => {
+      try {
+        const { supabase } = await import('../../utils/supabase');
+        if (!supabase) {
+          console.warn('[Caixa] Supabase não disponível para carregar associações categoria-cozinha');
+          return;
+        }
+
+        console.log('[Caixa] Carregando associações categoria-cozinha do Supabase...');
+        
+        const { data: associations, error } = await supabase
+          .from('category_kitchens')
+          .select('category_id, kitchen_id');
+
+        if (error) {
+          console.error('[Caixa] Erro ao carregar associações:', error);
+          return;
+        }
+
+        if (associations && associations.length > 0) {
+          // Agrupa por category_id
+          const kitchenIdsByCategory = associations.reduce((acc, assoc) => {
+            if (!acc[assoc.category_id]) {
+              acc[assoc.category_id] = [];
+            }
+            acc[assoc.category_id].push(assoc.kitchen_id);
+            return acc;
+          }, {} as Record<string, string[]>);
+
+          // Atualiza as categorias com os kitchenIds
+          setCategories(prevCategories => 
+            prevCategories.map(cat => ({
+              ...cat,
+              kitchenIds: kitchenIdsByCategory[cat.id] || undefined
+            }))
+          );
+
+          console.log('[Caixa] Associações categoria-cozinha carregadas:', Object.keys(kitchenIdsByCategory).length, 'categorias');
+        } else {
+          console.log('[Caixa] Nenhuma associação categoria-cozinha encontrada');
+        }
+      } catch (err) {
+        console.error('[Caixa] Erro ao carregar associações:', err);
+      }
+    })();
+  }, []);
+
   useEffect(() => {
     // Se a sessão operacional estiver aberta, mas o caixa estiver fechado, abre o modal de abertura de caixa.
     if (isOperationalSessionOpen && !isCashOpen) {
@@ -135,12 +199,20 @@ export default function CaixaPage() {
   // Efeito para monitorar pedidos prontos e disparar notificação
   useEffect(() => {
     const previousOrders = previousOrdersRef.current;
+    const notifiedSet = notifiedReadyOrdersRef.current;
     
     orders.forEach(currentOrder => {
       const previousOrder = previousOrders.find(o => o.id === currentOrder.id);
       
-      if (currentOrder.status === 'READY' && previousOrder?.status !== 'READY') {
+      // Só notifica se mudou para READY E ainda não foi notificado
+      if (currentOrder.status === 'READY' && previousOrder?.status !== 'READY' && !notifiedSet.has(currentOrder.id)) {
         showReadyAlert(`Pedido #${currentOrder.pin} (Senha: ${currentOrder.password}) está PRONTO para retirada!`);
+        notifiedSet.add(currentOrder.id); // Marcar como notificado
+      }
+      
+      // Remove do Set se o pedido não está mais READY (para permitir nova notificação se voltar a ficar pronto)
+      if (currentOrder.status !== 'READY' && notifiedSet.has(currentOrder.id)) {
+        notifiedSet.delete(currentOrder.id);
       }
     });
 
@@ -250,6 +322,11 @@ export default function CaixaPage() {
   // --- Funções de Manipulação do Carrinho ---
 
   const handleAddToCart = (item: MenuItem, observations?: string) => {
+    if (!isOperationalSessionOpen) {
+      displayAlert('Sessão Necessária', 'É necessário iniciar uma sessão operacional para registrar vendas.', 'info');
+      return;
+    }
+
     if (!isCashOpen) {
       displayAlert('Caixa Fechado', 'É necessário abrir o caixa para registrar vendas.', 'info');
       return;
@@ -286,14 +363,30 @@ export default function CaixaPage() {
       newCartItems[existingItemIndex].skipKitchen = !!item.skipKitchen;
       setCartItems(newCartItems);
     } else {
-      // Adiciona novo item com quantity: 1 e unidades de produção condicionais
+      // Usa quantidade padrão do item (unitDeliveryCount) se existir, senão 1
+      const defaultQuantity = item.unitDeliveryCount && item.unitDeliveryCount > 1 ? item.unitDeliveryCount : 1;
+      
+      // Cria unidades de produção baseado na quantidade
+      const productionUnits: ProductionUnit[] = [];
+      if (!item.skipKitchen) {
+        for (let i = 0; i < defaultQuantity; i++) {
+          productionUnits.push({
+            unitId: Date.now().toString() + Math.random().toString(36).substring(2, 9) + i,
+            unitStatus: 'PENDING',
+            operatorName: undefined,
+            completedObservations: [],
+          });
+        }
+      }
+      
+      // Adiciona novo item com quantidade padrão e unidades de produção condicionais
       const newItem: OrderItem = {
         id: Date.now().toString(),
         menuItem: item,
-        quantity: 1,
+        quantity: defaultQuantity,
         unitPrice: item.price,
         observations,
-        productionUnits: item.skipKitchen ? [] : [initialUnit],
+        productionUnits,
         skipKitchen: !!item.skipKitchen,
       };
       setCartItems([...cartItems, newItem]);
@@ -423,15 +516,159 @@ export default function CaixaPage() {
     setShowCodeListModal(false);
   };
 
+  // --- Carrega fichas técnicas (recipes) para verificar insumos esgotados ---
+  useEffect(() => {
+    const loadRecipes = async () => {
+      try {
+        // Tenta carregar via IPC
+        const fn = (window as any)?.api?.db?.query;
+        if (typeof fn === 'function') {
+          const res = await fn('SELECT product_id, ingredient_id FROM product_ingredients');
+          if (res?.rows) {
+            const map: Record<string, string[]> = {};
+            for (const row of res.rows) {
+              const pid = String(row.product_id);
+              const iid = String(row.ingredient_id);
+              if (!map[pid]) map[pid] = [];
+              if (!map[pid].includes(iid)) map[pid].push(iid);
+            }
+            setProductRecipes(map);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('Erro ao carregar fichas técnicas do DB:', err);
+      }
+      
+      // Fallback: localStorage
+      try {
+        const raw = localStorage.getItem('recipes');
+        const list = raw ? JSON.parse(raw) : [];
+        const map: Record<string, string[]> = {};
+        for (const r of list) {
+          const pid = String(r.product_id);
+          const iid = String(r.ingredient_id);
+          if (!map[pid]) map[pid] = [];
+          if (!map[pid].includes(iid)) map[pid].push(iid);
+        }
+        setProductRecipes(map);
+      } catch {
+        setProductRecipes({});
+      }
+    };
+    
+    loadRecipes();
+  }, []);
+
+  // --- Lógica de Filtragem por Cozinha ---
+  // Filtra categorias conforme cozinha selecionada
+  const filteredCategories = useMemo(() => {
+    console.log('[Caixa] Filtragem de categorias:', {
+      totalCategorias: categories.length,
+      filtroSelecionado: selectedKitchenFilter,
+      cozinhasOnline: onlineKitchenIds.length
+    });
+    
+    if (!selectedKitchenFilter) {
+      console.log('[Caixa] Sem filtro - mostrando todas as categorias');
+      return categories; // Sem filtro = todas
+    }
+    
+    // Filtro especial: apenas cozinhas online
+    if (selectedKitchenFilter === 'ONLY_ONLINE') {
+      if (onlineKitchenIds.length === 0) {
+        console.log('[Caixa] Nenhuma cozinha online - mostrando todas as categorias');
+        return categories; // Nenhuma online = mostra todas
+      }
+      const filtered = categories.filter(cat => {
+        // Se a categoria não tem cozinhas específicas, aparece em todas
+        if (!cat.kitchenIds || cat.kitchenIds.length === 0) return true;
+        // Se alguma das cozinhas da categoria está online
+        return cat.kitchenIds.some(kid => onlineKitchenIds.includes(kid));
+      });
+      console.log('[Caixa] Filtro "Apenas Online":', {
+        total: categories.length,
+        filtradas: filtered.length,
+        cozinhasOnline: onlineKitchenIds
+      });
+      return filtered;
+    }
+    
+    const filtered = categories.filter(cat => {
+      // Se a categoria não tem cozinhas específicas, aparece em todas
+      if (!cat.kitchenIds || cat.kitchenIds.length === 0) return true;
+      // Se a cozinha selecionada está na lista da categoria
+      return cat.kitchenIds.includes(selectedKitchenFilter);
+    });
+    
+    console.log('[Caixa] Filtro por cozinha específica:', {
+      cozinhaId: selectedKitchenFilter,
+      total: categories.length,
+      filtradas: filtered.length
+    });
+    
+    return filtered;
+  }, [categories, selectedKitchenFilter, onlineKitchenIds]);
+  
   // --- Lógica de Filtragem de Itens ---
   const filteredMenuItems = useMemo(() => {
     const activeItems = menuItems.filter(item => item.active);
+    console.log('[Caixa] Filtragem de produtos:', {
+      totalAtivos: activeItems.length,
+      categoriaSelecionada: selectedCategory,
+      filtroCozinha: selectedKitchenFilter
+    });
+    
     // Exibir itens apenas quando houver categoria selecionada
     if (!selectedCategory) {
+      console.log('[Caixa] Nenhuma categoria selecionada - sem produtos');
       return [];
     }
-    return activeItems.filter(item => item.categoryId === selectedCategory);
-  }, [menuItems, selectedCategory]);
+    
+    let filtered = activeItems.filter(item => item.categoryId === selectedCategory);
+    console.log('[Caixa] Produtos da categoria selecionada:', filtered.length);
+    
+    // Aplica filtro de cozinha também aos itens
+    // IMPORTANTE: Se não houver filtro selecionado, mostra TODOS os produtos, mesmo que a categoria tenha kitchenIds
+    if (selectedKitchenFilter) {
+      console.log('[Caixa] Aplicando filtro de cozinha aos produtos:', selectedKitchenFilter);
+      if (selectedKitchenFilter === 'ONLY_ONLINE') {
+        // Filtro especial: apenas itens de cozinhas online
+        if (onlineKitchenIds.length > 0) {
+          filtered = filtered.filter(item => {
+            const itemCategory = categories.find(c => c.id === item.categoryId);
+            if (!itemCategory) return true;
+            // Se a categoria não tem cozinhas específicas, aparece em todas
+            if (!itemCategory.kitchenIds || itemCategory.kitchenIds.length === 0) return true;
+            // Se alguma das cozinhas da categoria está online
+            return itemCategory.kitchenIds.some(kid => onlineKitchenIds.includes(kid));
+          });
+        }
+      } else {
+        filtered = filtered.filter(item => {
+          const itemCategory = categories.find(c => c.id === item.categoryId);
+          if (!itemCategory) return true;
+          // Se a categoria não tem cozinhas específicas, aparece em todas
+          if (!itemCategory.kitchenIds || itemCategory.kitchenIds.length === 0) return true;
+          // Se a cozinha selecionada está na lista da categoria
+          return itemCategory.kitchenIds.includes(selectedKitchenFilter);
+        });
+      }
+    }
+    // Se não houver filtro (selectedKitchenFilter vazio), mostra TODOS os produtos da categoria selecionada
+    
+    // Filtra itens que usam insumos esgotados
+    if (outOfStockIds.length > 0) {
+      filtered = filtered.filter(item => {
+        const ingredientIds = productRecipes[item.id] || [];
+        // Se algum insumo do item está esgotado, não exibe o item
+        const hasOutOfStock = ingredientIds.some(iid => outOfStockIds.includes(iid));
+        return !hasOutOfStock;
+      });
+    }
+    
+    return filtered;
+  }, [menuItems, selectedCategory, selectedKitchenFilter, categories, outOfStockIds, productRecipes]);
 
   // --- Lógica de Reordenação de Categoria ---
   const handleReorderCategory = (categoryId: string, direction: 'up' | 'down') => {
@@ -798,7 +1035,7 @@ export default function CaixaPage() {
             {/* Sidebar de Categorias */}
             <div className="order-1 xl:order-1 flex-shrink-0">
               <CategorySidebar
-                categories={categories}
+                categories={filteredCategories}
                 selectedCategory={selectedCategory}
                 onSelectCategory={setSelectedCategory}
                 onReorderCategory={handleReorderCategory}
@@ -807,9 +1044,76 @@ export default function CaixaPage() {
 
             {/* Área Central: Busca e Menu Grid */}
             <div className="order-2 flex-1 min-w-0 flex flex-col overflow-hidden">
-              {/* Busca Rápida */}
+              {/* Busca Rápida e Filtro de Cozinha */}
               <div className="h-16 px-4 border-b border-gray-200 flex items-center flex-shrink-0 bg-white">
                 <div className="flex items-center space-x-3 w-full">
+                  {/* Filtro de Cozinha com indicador de online */}
+                  {kitchens.filter(k => k.isActive).length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <label className="text-sm font-medium text-gray-700 whitespace-nowrap">
+                        Filtrar por Cozinha:
+                      </label>
+                      <select
+                        value={selectedKitchenFilter}
+                        onChange={(e) => {
+                          const newFilter = e.target.value;
+                          console.log('[Caixa] Mudando filtro de cozinha:', {
+                            antigo: selectedKitchenFilter,
+                            novo: newFilter
+                          });
+                          setSelectedKitchenFilter(newFilter);
+                          
+                          // Só limpa categoria se ela não pertencer à nova cozinha selecionada
+                          if (selectedCategory) {
+                            const currentCategory = categories.find(c => c.id === selectedCategory);
+                            if (currentCategory) {
+                              if (newFilter && newFilter !== 'ONLY_ONLINE') {
+                                // Verifica se a categoria pertence à nova cozinha
+                                if (currentCategory.kitchenIds && currentCategory.kitchenIds.length > 0) {
+                                  if (!currentCategory.kitchenIds.includes(newFilter)) {
+                                    setSelectedCategory(''); // Limpa apenas se não pertencer
+                                  }
+                                }
+                              } else if (newFilter === 'ONLY_ONLINE') {
+                                // Se filtro é "apenas online", verifica se categoria tem cozinha online
+                                if (currentCategory.kitchenIds && currentCategory.kitchenIds.length > 0) {
+                                  const hasOnlineKitchen = currentCategory.kitchenIds.some(kid => onlineKitchenIds.includes(kid));
+                                  if (!hasOnlineKitchen) {
+                                    setSelectedCategory(''); // Limpa apenas se não tiver cozinha online
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }}
+                        className={`h-10 px-3 border rounded-lg text-sm bg-white hover:border-gray-400 focus:ring-2 focus:ring-amber-500 focus:border-transparent min-w-[180px] ${
+                          selectedKitchenFilter === 'ONLY_ONLINE'
+                            ? 'border-green-500 bg-green-50 text-green-800'
+                            : selectedKitchenFilter && isKitchenOnline(selectedKitchenFilter)
+                              ? 'border-green-500 bg-green-50 text-green-800'
+                              : 'border-gray-300'
+                        }`}
+                      >
+                        <option value="">🍽️ Todas Cozinhas</option>
+                        {onlineKitchenIds.length > 0 && (
+                          <option value="ONLY_ONLINE">🟢 Apenas Online ({onlineKitchenIds.length})</option>
+                        )}
+                        {kitchens.filter(k => k.isActive).map(kitchen => (
+                          <option key={kitchen.id} value={kitchen.id}>
+                            {isKitchenOnline(kitchen.id) ? '🟢' : '⚪'} {kitchen.name}
+                          </option>
+                        ))}
+                      </select>
+                      {/* Legenda de status */}
+                      {onlineKitchenIds.length > 0 && (
+                        <div className="flex items-center gap-1 text-xs text-gray-500">
+                          <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                          <span>Online: {onlineKitchenIds.length}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
                   <Input
                     ref={quickSearchRef}
                     type="text"
@@ -861,6 +1165,9 @@ export default function CaixaPage() {
                 onSaveOrders={setOrders}
                 operationalSession={operationalSession}
                 onSetCashMovements={setCashMovements}
+                categories={categories}
+                onlineKitchenIds={onlineKitchenIds}
+                isKitchenOnline={isKitchenOnline}
               />
             </div>
           </div>

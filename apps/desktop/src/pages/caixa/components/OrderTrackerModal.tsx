@@ -18,6 +18,12 @@ const statusInfo = {
   READY: { text: 'Pronto para Retirada', color: 'bg-green-100 text-green-800', icon: 'ri-check-line', order: 3 },
 };
 
+const formatOrderPin = (pin: string) => {
+  const raw = String(pin ?? '').trim()
+  if (!raw) return '#-'
+  return `#${raw.replace(/^#+/, '')}`
+}
+
 // Componente auxiliar para exibir o status do tempo
 function OrderTimeStatus({ order }: { order: Order }) {
   const isTimerActive = order.status !== 'DELIVERED' && order.status !== 'CANCELLED';
@@ -54,7 +60,7 @@ function OrderTimeStatus({ order }: { order: Order }) {
       const isOverdueTotal = (totalTimeSeconds / 60) > order.slaMinutes;
       return { isOverdueTotal, totalKitchenTimeSeconds: totalTimeSeconds };
     }
-    // Se está NEW ou PREPARING, o tempo total de cozinha é o tempo decorrido do timer (que começa em createdAt)
+    // Se está NEW, tempo cozinha = tempo espera. Se PREPARING, tempo cozinha = espera + preparo
     return { isOverdueTotal: isOverdue, totalKitchenTimeSeconds: timeElapsed };
   }, [order, isOverdue, timeElapsed]);
 
@@ -260,7 +266,7 @@ export default function OrderTrackerModal({ isOpen, onClose, activeOrders, onMar
                     onClick={() => handleViewDetails(order)}
                   >
                     <div className="col-span-3 flex flex-col min-w-0">
-                      <span className="text-lg font-bold text-gray-900 flex-shrink-0">#{order.pin}</span>
+                      <span className="text-lg font-bold text-gray-900 flex-shrink-0">{formatOrderPin(order.pin)}</span>
                       <span className="text-sm font-medium text-gray-900 block truncate">
                         Senha: <span className="font-bold text-blue-600">{order.password}</span>
                       </span>

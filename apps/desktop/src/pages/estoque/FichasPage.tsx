@@ -4,6 +4,7 @@ import Button from '@/components/base/Button'
 import Modal from '@/components/base/Modal'
 import * as inventory from '@/offline/services/inventoryService'
 import * as productsService from '@/offline/services/productsService'
+import { importRecipesAndPrices } from '@/utils/importRecipes'
 
 export default function EstoqueFichasPage() {
   const [products, setProducts] = useState<any[]>([])
@@ -19,6 +20,9 @@ export default function EstoqueFichasPage() {
   const [expandedProductIds, setExpandedProductIds] = useState<Set<string>>(new Set())
   const [editingLineId, setEditingLineId] = useState<string>('')
   const [showDuplicateModal, setShowDuplicateModal] = useState(false)
+  const [isImporting, setIsImporting] = useState(false)
+  const [importLog, setImportLog] = useState<string[]>([])
+  const [showImportModal, setShowImportModal] = useState(false)
 
   const [newLine, setNewLine] = useState<{ ingredientId: string; quantity: string; unit: string }>({ ingredientId: '', quantity: '', unit: 'g' })
 
@@ -26,7 +30,8 @@ export default function EstoqueFichasPage() {
     ;(async () => {
       try {
         const prods = await productsService.listProducts()
-        setProducts(Array.isArray(prods) ? prods : [])
+        const prodsArr = Array.isArray(prods) ? prods : []
+        setProducts(prodsArr)
       } catch { setProducts([]) }
       try {
         const ing = await inventory.listIngredients()
@@ -42,7 +47,7 @@ export default function EstoqueFichasPage() {
       } catch { setIngredientPrices([]) }
       try {
         const map: Record<string, any[]> = {}
-        for (const p of (products || [])) {
+        for (const p of (prodsArr || [])) {
           const pid = String((p as any).id)
           try { map[pid] = await inventory.listRecipeByProduct(pid) } catch { map[pid] = [] }
         }
@@ -87,6 +92,7 @@ export default function EstoqueFichasPage() {
     await inventory.upsertRecipeLine({ productId: selectedProductId, ingredientId: newLine.ingredientId, quantity: qty, unit: newLine.unit })
     const lines = await inventory.listRecipeByProduct(selectedProductId)
     setRecipe(lines)
+    setRecipesByProduct(prev => ({ ...prev, [String(selectedProductId)]: Array.isArray(lines) ? lines : [] }))
     setNewLine({ ingredientId: '', quantity: '', unit: 'g' })
   }
 
@@ -94,6 +100,7 @@ export default function EstoqueFichasPage() {
     await inventory.deleteRecipeLine(id)
     const lines = await inventory.listRecipeByProduct(selectedProductId)
     setRecipe(lines)
+    setRecipesByProduct(prev => ({ ...prev, [String(selectedProductId)]: Array.isArray(lines) ? lines : [] }))
   }
 
   const allowedUnitsForIngredient = useMemo(() => {
@@ -149,6 +156,14 @@ export default function EstoqueFichasPage() {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-bold">Fichas Técnicas</h1>
         <div className="flex gap-2">
+          <Button 
+            variant="secondary" 
+            onClick={() => setShowImportModal(true)}
+            disabled={isImporting}
+          >
+            <i className="ri-download-line mr-2"></i>
+            {isImporting ? 'Importando...' : 'Importar Dados'}
+          </Button>
           <Button variant={activeTab==='list'?'primary':'secondary'} onClick={()=>setActiveTab('list')}>Listar</Button>
           <Button variant={activeTab==='edit'?'primary':'secondary'} onClick={()=>setActiveTab('edit')}>Criar/Editar</Button>
         </div>
@@ -205,6 +220,7 @@ export default function EstoqueFichasPage() {
                               await inventory.upsertRecipeLine({ id: r.id, productId: selectedProductId, ingredientId: r.ingredient_id, quantity: qty, unit: r.unit })
                               const lines = await inventory.listRecipeByProduct(selectedProductId)
                               setRecipe(lines)
+                              setRecipesByProduct(prev => ({ ...prev, [String(selectedProductId)]: Array.isArray(lines) ? lines : [] }))
                             }
                           }} />
                         )}
@@ -218,6 +234,7 @@ export default function EstoqueFichasPage() {
                             await inventory.upsertRecipeLine({ id: r.id, productId: selectedProductId, ingredientId: r.ingredient_id, quantity: r.quantity, unit: nu })
                             const lines = await inventory.listRecipeByProduct(selectedProductId)
                             setRecipe(lines)
+                            setRecipesByProduct(prev => ({ ...prev, [String(selectedProductId)]: Array.isArray(lines) ? lines : [] }))
                           }}>
                             {getUnitsFor(String(r.ingredient_id)).map(u => (
                               <option key={u} value={u}>{u === 'l' ? 'L' : u}</option>
@@ -225,8 +242,8 @@ export default function EstoqueFichasPage() {
                           </select>
                         )}
                       </div>
-                      <div className="text-sm text-center">R$ {(unitCents/100).toFixed(2)}</div>
-                      <div className="text-sm font-medium text-center">R$ {(totalCents/100).toFixed(2)}</div>
+                      <div className="text-sm text-center">R$ {(unitCents/10000).toFixed(4)}</div>
+                      <div className="text-sm font-medium text-center">R$ {(totalCents/10000).toFixed(4)}</div>
                       <div className="flex items-center justify-center gap-2">
                         {isEditing ? (
                           <Button size="sm" onClick={()=>setEditingLineId('')}>Concluir</Button>
@@ -243,7 +260,7 @@ export default function EstoqueFichasPage() {
                   <div></div>
                   <div></div>
                   <div></div>
-                  <div className="text-sm font-medium text-center">R$ {(editTotalCents/100).toFixed(2)}</div>
+                  <div className="text-sm font-medium text-center">R$ {(editTotalCents/10000).toFixed(4)}</div>
                   <div></div>
                 </div>
               </div>
@@ -278,7 +295,7 @@ export default function EstoqueFichasPage() {
           </div>
           <div className="mt-2 text-sm text-gray-600">
             {newLine.ingredientId && newLine.quantity ? (
-              <>Preço unitário: R$ {(newLinePreview.unitCents/100).toFixed(2)} • Total: R$ {(newLinePreview.totalCents/100).toFixed(2)}</>
+              <>Preço unitário: R$ {(newLinePreview.unitCents/10000).toFixed(4)} • Total: R$ {(newLinePreview.totalCents/10000).toFixed(4)}</>
             ) : null}
           </div>
           <div className="mt-3">
@@ -327,7 +344,7 @@ export default function EstoqueFichasPage() {
                   }}>
                     <div>
                       <div className="text-sm font-medium">{catName ? `${catName} • ` : ''}{p.name}</div>
-                      <div className="text-xs text-gray-500">Custo: R$ {(totalCents/100).toFixed(2)}</div>
+                      <div className="text-xs text-gray-500">Custo: R$ {(totalCents/10000).toFixed(4)}</div>
                     </div>
                     <i className={isExpanded ? "ri-arrow-up-s-line" : "ri-arrow-down-s-line"}></i>
                   </div>
@@ -351,8 +368,8 @@ export default function EstoqueFichasPage() {
                               <div key={String(r.id)} className="py-1 grid gap-2 items-center bg-gray-50 rounded px-2" style={{ gridTemplateColumns: '6fr 2fr 2fr 2fr' }}>
                                 <div className="text-sm">{ingName}</div>
                                 <div className="text-sm text-center">{r.quantity} {r.unit}</div>
-                                <div className="text-sm text-center">R$ {(unitCents/100).toFixed(2)}</div>
-                                <div className="text-sm font-medium text-center">R$ {(totalLineCents/100).toFixed(2)}</div>
+                                <div className="text-sm text-center">R$ {(unitCents/10000).toFixed(4)}</div>
+                                <div className="text-sm font-medium text-center">R$ {(totalLineCents/10000).toFixed(4)}</div>
                               </div>
                             )
                           })}
@@ -360,7 +377,7 @@ export default function EstoqueFichasPage() {
                             <div></div>
                             <div></div>
                             <div></div>
-                            <div className="text-sm font-medium text-center">R$ {(totalCents/100).toFixed(2)}</div>
+                            <div className="text-sm font-medium text-center">R$ {(totalCents/10000).toFixed(4)}</div>
                           </div>
                         </div>
                       )}
@@ -385,6 +402,100 @@ export default function EstoqueFichasPage() {
             <div className="flex justify-end gap-2">
               <Button variant="secondary" onClick={()=>setShowDuplicateModal(false)}>Cancelar</Button>
               <Button onClick={async ()=>{ setShowDuplicateModal(false); await addLine() }}>Adicionar</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {showImportModal && (
+        <Modal
+          isOpen={showImportModal}
+          onClose={() => {
+            if (!isImporting) {
+              setShowImportModal(false);
+              setImportLog([]);
+            }
+          }}
+          title="Importar Fichas Técnicas e Preços"
+          size="lg"
+        >
+          <div className="space-y-4">
+            <div className="text-sm text-gray-600">
+              Esta função irá importar ingredientes com preços e fichas técnicas dos produtos cadastrados.
+            </div>
+            
+            {importLog.length > 0 && (
+              <div className="bg-gray-50 border rounded p-3 max-h-96 overflow-y-auto">
+                <div className="text-xs font-mono space-y-1">
+                  {importLog.map((log, idx) => (
+                    <div key={idx} className="text-gray-700">{log}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button 
+                variant="secondary" 
+                onClick={() => {
+                  if (!isImporting) {
+                    setShowImportModal(false);
+                    setImportLog([]);
+                  }
+                }}
+                disabled={isImporting}
+              >
+                {isImporting ? 'Importando...' : 'Cancelar'}
+              </Button>
+              <Button
+                onClick={async () => {
+                  setIsImporting(true);
+                  setImportLog([]);
+                  
+                  try {
+                    await importRecipesAndPrices(
+                      inventory,
+                      productsService,
+                      (message) => {
+                        setImportLog(prev => [...prev, message]);
+                      }
+                    );
+                    
+                    // Recarrega dados
+                    const prods = await productsService.listProducts();
+                    setProducts(Array.isArray(prods) ? prods : []);
+                    const ing = await inventory.listIngredients();
+                    setIngredients(Array.isArray(ing) ? ing : []);
+                    const pr = await inventory.listPrices();
+                    setIngredientPrices(Array.isArray(pr) ? pr : []);
+                    
+                    const map: Record<string, any[]> = {};
+                    for (const p of (prods || [])) {
+                      const pid = String((p as any).id);
+                      try {
+                        map[pid] = await inventory.listRecipeByProduct(pid);
+                      } catch {
+                        map[pid] = [];
+                      }
+                    }
+                    setRecipesByProduct(map);
+                    
+                    setImportLog(prev => [...prev, '\n✅ Importação concluída! Recarregue a página para ver os dados atualizados.']);
+                    
+                    setTimeout(() => {
+                      setIsImporting(false);
+                      setShowImportModal(false);
+                      setImportLog([]);
+                    }, 2000);
+                  } catch (err: any) {
+                    setImportLog(prev => [...prev, `\n❌ Erro: ${err?.message || String(err)}`]);
+                    setIsImporting(false);
+                  }
+                }}
+                disabled={isImporting}
+              >
+                {isImporting ? 'Importando...' : 'Iniciar Importação'}
+              </Button>
             </div>
           </div>
         </Modal>

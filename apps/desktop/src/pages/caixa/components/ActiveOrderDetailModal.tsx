@@ -2,6 +2,7 @@ import Modal from '../../../components/base/Modal';
 import Button from '../../../components/base/Button';
 import type { Order } from '../../../types';
 import { useMemo } from 'react';
+import { formatDurationSeconds } from '../../../utils/time';
 
 interface ActiveOrderDetailModalProps {
   isOpen: boolean;
@@ -38,19 +39,11 @@ const extractOptionalObservations = (observations: string | undefined): string[]
         .filter(p => p.length > 0);
 };
 
-// Função auxiliar para formatar a duração (copiada de OrderListTab)
-const formatDuration = (seconds: number) => {
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  
-  if (mins === 0 && secs === 0) return '0s';
-  
-  const parts = [];
-  if (mins > 0) parts.push(`${mins.toString().padStart(2, '0')}m`);
-  if (secs > 0) parts.push(`${secs.toString().padStart(2, '0')}s`);
-  
-  return parts.join(' ');
-};
+const formatOrderPin = (pin: string) => {
+  const raw = String(pin ?? '').trim()
+  if (!raw) return '#-'
+  return `#${raw.replace(/^#+/, '')}`
+}
 
 export default function ActiveOrderDetailModal({ isOpen, onClose, order, onMarkAsDelivered }: ActiveOrderDetailModalProps) {
   if (!order) return null;
@@ -92,7 +85,7 @@ export default function ActiveOrderDetailModal({ isOpen, onClose, order, onMarkA
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={`Detalhes do Pedido #${order.pin} (Senha: ${order.password})`}
+      title={`Detalhes do Pedido ${formatOrderPin(order.pin)} (Senha: ${order.password})`}
       size="lg"
     >
       <div className="space-y-6">

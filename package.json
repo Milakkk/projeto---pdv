@@ -8,12 +8,14 @@
     "dev:desktop:kds": "pnpm --filter desktop dev:desktop:kds",
     "dev:desktop:both": "pnpm --filter desktop dev:desktop:both",
     "dev:web": "turbo run dev --filter=web-dashboard",
+    "dev:browser": "pnpm --filter desktop dev:browser",
     "dev:mobile": "turbo run dev --filter=mobile",
     "dev:hub": "tsx apps/hub/server.ts",
     "build": "turbo run build",
     "lint": "turbo run lint",
     "test": "turbo run test",
-    "rebuild:sqlite": "node scripts/rebuild-sqlite.js"
+    "rebuild:sqlite": "node scripts/rebuild-sqlite.js",
+    "clear:orders": "pnpm --filter desktop clear:orders"
   },
   "pnpm": {
     "allowedBuiltDependencies": [

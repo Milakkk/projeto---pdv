@@ -29,7 +29,7 @@ export default function LoginPage() {
       await new Promise(resolve => setTimeout(resolve, 500));
       const success = login(username, password);
       if (success) {
-        navigate('/dashboard', { replace: true });
+        navigate('/module-selector', { replace: true });
       } else {
         setAlertMessage('Credenciais inválidas.');
         setShowAlert(true);

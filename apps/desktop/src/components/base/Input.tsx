@@ -11,8 +11,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
     // Função para prevenir a alteração de valor ao rolar o mouse
     const handleWheel = (e: React.WheelEvent<HTMLInputElement>) => {
       if (type === 'number') {
-        e.currentTarget.blur(); // Tira o foco para evitar que o valor mude
-        e.preventDefault();
+        e.currentTarget.blur();
       }
     };
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 export function useLocalStorage<T>(key: string, initialValue: T) {
   // Função para ler o valor do localStorage
@@ -32,29 +32,31 @@ export function useLocalStorage<T>(key: string, initialValue: T) {
   }, [key]);
 
   // Função para escrever o valor no localStorage
-  const setValue = (value: T | ((val: T) => T)) => {
+  const setValue = useCallback((value: T | ((val: T) => T)) => {
     try {
-      const valueToStore = value instanceof Function ? value(storedValue) : value;
-      setStoredValue(valueToStore);
-      window.localStorage.setItem(key, JSON.stringify(valueToStore));
-      
-      // NOVO: Disparar evento de storage manualmente para sincronizar outras abas
-      // Nota: O evento 'storage' nativo só dispara em outras janelas, não na atual.
-      // Disparar um evento customizado ou o evento 'storage' com a chave correta
-      // garante que o useEffect abaixo seja acionado em todas as instâncias.
-      const event = new StorageEvent('storage', {
-        key: key,
-        newValue: JSON.stringify(valueToStore),
-        oldValue: JSON.stringify(storedValue),
-        url: window.location.href,
-        storageArea: window.localStorage,
+      setStoredValue(current => {
+        const valueToStore = value instanceof Function ? (value as Function)(current) : value;
+        window.localStorage.setItem(key, JSON.stringify(valueToStore));
+        
+        // NOVO: Disparar evento de storage manualmente para sincronizar outras abas
+        // Nota: O evento 'storage' nativo só dispara em outras janelas, não na atual.
+        // Disparar um evento customizado ou o evento 'storage' com a chave correta
+        // garante que o useEffect abaixo seja acionado em todas as instâncias.
+        const event = new StorageEvent('storage', {
+          key: key,
+          newValue: JSON.stringify(valueToStore),
+          oldValue: JSON.stringify(current),
+          url: window.location.href,
+          storageArea: window.localStorage,
+        });
+        window.dispatchEvent(event);
+        
+        return valueToStore;
       });
-      window.dispatchEvent(event);
-      
     } catch (error) {
       console.error(`Error setting localStorage key "${key}":`, error);
     }
-  };
+  }, [key]);
 
   useEffect(() => {
     // Listener para sincronizar o estado quando o localStorage muda em outra aba/instância

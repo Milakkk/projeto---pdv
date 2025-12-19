@@ -1,7 +1,12 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL as string | undefined
-const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string | undefined
+const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
-export const supabaseClient = url && anon ? createClient(url, anon) : null as any
+export const supabaseClient: SupabaseClient | null =
+  url && anonKey
+    ? createClient(url, anonKey, {
+        auth: { autoRefreshToken: true, persistSession: true },
+      })
+    : null
 

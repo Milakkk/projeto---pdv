@@ -1,4 +1,4 @@
-import { createContext, useState, useMemo, useCallback } from 'react';
+import { createContext, useState, useMemo, useCallback, useContext } from 'react';
 import { AuthContextType, User, Store, Role, Module } from '../types';
 import { useLocalStorage } from '../hooks/useLocalStorage'; // Alterado para localStorage
 import { mockUsers, mockRoles, mockStores } from '../mocks/auth';

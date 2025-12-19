@@ -6,6 +6,7 @@ export interface Category {
   active: boolean;
   // Código de integração opcional (numérico, pode ficar vazio)
   integrationCode?: string;
+  kitchenIds?: string[];
   isPromo?: boolean;
 }
 

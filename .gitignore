@@ -17,3 +17,6 @@ lan-sync-store/
 *.asar
 *.7z
 .turbo/
+
+# Arquivos não utilizados em produção
+_nao-usar-producao/

@@ -11,7 +11,7 @@ import { DEFAULT_PAYMENT_SHORTCUTS, DEFAULT_GLOBAL_OBSERVATIONS } from '../../..
 import type { CashMovement as CashMovementType } from './CashMovement';
 import { useAuth } from '../../../context/AuthContext'; // IMPORTAÇÃO CORRIGIDA
 // Serviços offline: pedidos e caixa
-import { createOrder, addItem, addPayment, closeOrder } from '@/offline/services/ordersService'
+import { createOrder, addItem, addPayment, closeOrder, setOrderDetails } from '../../../offline/services/ordersService'
 import { enqueueTicket } from '@/offline/services/kdsService'
 import { addMovement, getCurrentSession } from '@/offline/services/cashService'
 
@@ -221,33 +221,34 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
 
   // Função para verificar se há opções obrigatórias não selecionadas nos itens do carrinho
   const hasItemsWithMissingRequiredOptions = useCallback(() => {
-    console.log('=== DEBUG hasItemsWithMissingRequiredOptions ===');
-    console.log('Total de itens:', items.length);
+    const dev = (import.meta as any)?.env?.DEV
+    if (dev) console.log('=== DEBUG hasItemsWithMissingRequiredOptions ===')
+    if (dev) console.log('Total de itens:', items.length)
     
     const result = items.some(item => {
       const requiredGroups = item.menuItem.requiredModifierGroups || [];
-      console.log(`Item: ${item.menuItem.name}, Grupos obrigatórios:`, requiredGroups.length);
+      if (dev) console.log(`Item: ${item.menuItem.name}, Grupos obrigatórios:`, requiredGroups.length)
       
       if (requiredGroups.length === 0) return false;
       
       // Parse das observações atuais do item para verificar quais opções obrigatórias estão selecionadas
       const { required: selectedRequiredOptions } = parseObservations(item.observations, item, globalObservations);
-      console.log(`Observações selecionadas:`, selectedRequiredOptions);
+      if (dev) console.log(`Observações selecionadas:`, selectedRequiredOptions)
       
       // Verificar se todos os grupos obrigatórios têm uma opção selecionada
       const missingOption = requiredGroups.some(group => {
         // Verificar se alguma opção deste grupo está nas observações selecionadas
         // O formato após o parse é: "Nome do Grupo: Opção Selecionada" (sem [OBRIGATÓRIO])
         const hasSelectedOption = selectedRequiredOptions.some(obs => obs.startsWith(`${group.name}:`));
-        console.log(`Grupo: ${group.name}, tem opção selecionada: ${hasSelectedOption}`);
+        if (dev) console.log(`Grupo: ${group.name}, tem opção selecionada: ${hasSelectedOption}`)
         return !hasSelectedOption;
       });
       
-      console.log(`Item ${item.menuItem.name} está faltando opção:`, missingOption);
+      if (dev) console.log(`Item ${item.menuItem.name} está faltando opção:`, missingOption)
       return missingOption;
     });
     
-    console.log('Resultado final (tem itens faltando opções):', result);
+    if (dev) console.log('Resultado final (tem itens faltando opções):', result)
     return result;
   }, [items, globalObservations]);
 
@@ -262,8 +263,9 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
     
     // 2. Verificar se há itens com opções obrigatórias não selecionadas
     const hasMissingOptions = hasItemsWithMissingRequiredOptions();
-    console.log('=== DEBUG isConfirmDisabled ===');
-    console.log('hasItemsWithMissingRequiredOptions:', hasMissingOptions);
+    const dev = (import.meta as any)?.env?.DEV
+    if (dev) console.log('=== DEBUG isConfirmDisabled ===')
+    if (dev) console.log('hasItemsWithMissingRequiredOptions:', hasMissingOptions)
     if (hasMissingOptions) return true;
     
     if (isMultiplePayment) {
@@ -365,13 +367,13 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [showCheckout, items.length, isMultiplePayment, selectedPayment, orderPassword, config.checkoutShortcut, paymentShortcuts, isConfirmDisabled]); 
 
-  // Função para gerar o número do pedido no formato p + mês + últimos 2 dígitos do ano + sequencial (4 dígitos)
+  // Função para gerar o número do pedido no formato # + mês + últimos 2 dígitos do ano + sequencial (4 dígitos)
   const generateOrderPin = () => {
     const now = new Date();
     const month = (now.getMonth() + 1).toString().padStart(2, '0');
     const year = now.getFullYear().toString().slice(-2);
     const sequential = orderCounter.toString().padStart(4, '0');
-    return `p${month}${year}${sequential}`;
+    return `#${month}${year}${sequential}`;
   };
 
   // Atualizar valor restante quando breakdown mudar
@@ -439,6 +441,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
 
   // Usando useCallback para memoizar a função de checkout e garantir que 'operationalSession' seja capturado
   const handleCheckout = useCallback(async () => {
+    let ticketEnqueued = false;
     // Recalcular paidAmount e total aqui para garantir que estamos usando os valores mais recentes
     const currentSubtotal = items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
     const currentTotal = Math.max(0, currentSubtotal * (1 - Math.max(0, Math.min(100, globalDiscountPercentage)) / 100));
@@ -477,6 +480,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
     }
 
     // --- Se a validação passou, prosseguimos com a criação do pedido ---
+    setShowCheckout(false);
 
     const totalSla = items.reduce((sum, item) => sum + (item.menuItem.sla * item.quantity), 0);
     const orderPin = generateOrderPin();
@@ -528,7 +532,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
       }
     }
 
-    const onlyDirectDelivery = items.every(item => item.skipKitchen);
+    const onlyDirectDelivery = items.every(item => (item.skipKitchen || item.menuItem?.skipKitchen));
     const newOrder: Order = {
       id: Date.now().toString(),
       pin: orderPin,
@@ -545,10 +549,33 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
       ...paymentData
     };
 
+    onSaveOrders(prevOrders => [...prevOrders, newOrder]);
+    setOrderCounter(orderCounter >= 9999 ? 1 : (orderCounter + 1));
+
+    setConfirmedOrderData({
+      pin: orderPin,
+      password: orderPassword.trim(),
+      total: currentTotal,
+      changeAmount: finalChangeAmount,
+      items,
+      paymentMethod: newOrder.paymentMethod,
+      createdAt: newOrder.createdAt,
+      createdBy: newOrder.createdBy,
+      amountPaid: newOrder.amountPaid,
+      paymentBreakdown: newOrder.paymentBreakdown,
+    });
+
+    setShowCheckout(false);
+    onClearCart();
+    resetCheckoutData();
+    setTimeout(() => setShowConfirmationModal(true), 0);
+
     // Persistência offline no SQLite via serviços
     let movementPersisted = false;
+    let lastTicketId: string | undefined;
     try {
-      const orderId = await createOrder({ openedAt: now.toISOString() })
+      const orderId = await createOrder({ openedAt: now.toISOString(), operationalSessionId: operationalSession?.id || null, notes: `CREATED_BY=${user?.name || 'Caixa'}` })
+      try { await setOrderDetails(orderId, { pin: orderPin, password: orderPassword.trim() }) } catch {}
       // Itens
       for (const it of itemsForOrder) {
         const productId = (it.menuItem as any)?.id ? String((it.menuItem as any).id) : null
@@ -570,7 +597,15 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
       }
       // Enfileirar ticket na cozinha somente se houver itens que passam pela cozinha
       if (!onlyDirectDelivery) {
-        try { await enqueueTicket({ orderId }) } catch {}
+        try {
+          const { supabase } = await import('../../../utils/supabase')
+          if (!supabase) {
+            const ticketId = await enqueueTicket({ orderId });
+            ticketEnqueued = true;
+            lastTicketId = ticketId;
+            try { onSaveOrders(prev => prev.map(o => o.id===newOrder.id ? ({ ...o, ticketId } as any) : o)) } catch {}
+          }
+        } catch {}
       } else {
         try { await closeOrder(orderId) } catch {}
       }
@@ -591,17 +626,15 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
       
     }
 
-    // CHAMA O PROP setOrders DO PAI
-    onSaveOrders(prevOrders => [...prevOrders, newOrder]); 
-    setOrderCounter(orderCounter >= 9999 ? 1 : (orderCounter + 1));
+    
 
     try {
       const unitId = (typeof localStorage !== 'undefined' && localStorage.getItem('unitId')) || 'default'
       const hubUrl = (import.meta as any)?.env?.VITE_LAN_HUB_URL || 'http://localhost:4000'
       const secret = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || ''
+      if (!secret) return
       const url = hubUrl.replace(/\/$/, '') + '/push'
-      const headers: Record<string,string> = { 'Content-Type': 'application/json' }
-      if (secret) headers['Authorization'] = `Bearer ${secret}`
+      const headers: Record<string,string> = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${secret}` }
       const events: any[] = [{ table: 'orders', row: { ...newOrder, id: (typeof orderId!=='undefined' ? orderId : newOrder.id) }, unit_id: unitId }]
       if (cashSession && cashAmountForMovement > 0) {
         events.push({
@@ -648,23 +681,15 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
       }
     }
 
-    // Preparar dados para o modal de confirmação (incluindo dados de impressão)
-    setConfirmedOrderData({
-      pin: orderPin,
-      password: orderPassword.trim(),
-      total: currentTotal,
-      changeAmount: finalChangeAmount, 
-      items,
-      paymentMethod: newOrder.paymentMethod,
-      createdAt: newOrder.createdAt, // Passando o tempo de criação
-      createdBy: newOrder.createdBy, // Passando o criador
-      amountPaid: newOrder.amountPaid,
-      paymentBreakdown: newOrder.paymentBreakdown,
-    });
-
-    onClearCart();
-    resetCheckoutData();
-    setShowConfirmationModal(true);
+    try {
+      const hasKitchenItems = items.some(it => !(it.skipKitchen || it.menuItem?.skipKitchen))
+      if (hasKitchenItems && !ticketEnqueued) {
+        try {
+          const { supabase } = await import('../../../utils/supabase')
+          if (!supabase) { enqueueTicket({ orderId: newOrder.id }).catch(()=>{}) }
+        } catch {}
+      } else if (!hasKitchenItems) { closeOrder(newOrder.id).catch(()=>{}) }
+    } catch {}
 
     // Simular som de novo pedido
     const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8diJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7blmGgU7k9n1unEiBC13yO/eizEIHWq+8+OWT');

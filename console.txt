@@ -1,0 +1,735 @@
+favicon.ico:1  Failed to load resource: the server responded with a status of 404 ()
+login:1  Failed to load resource: the server responded with a status of 404 ()
+index-BUgluAMl.js:372 [productsService] ID "cat_burritos" não é um UUID válido, gerando novo UUID: 802809d1-7c3a-4534-bd6e-b6ce44f6319f
+upsertCategory @ index-BUgluAMl.js:372
+migrateLocalStorageCatalog @ index-BUgluAMl.js:372
+(anonymous) @ index-BUgluAMl.js:548
+(anonymous) @ index-BUgluAMl.js:548
+bd @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Jx @ index-BUgluAMl.js:32
+(anonymous) @ index-BUgluAMl.js:32
+Ct @ index-BUgluAMl.js:17
+index-BUgluAMl.js:372 [productsService] Salvando categoria no Supabase: {id: '802809d1-7c3a-4534-bd6e-b6ce44f6319f', name: 'Burritos'}
+index-BUgluAMl.js:182 [KDS] listTickets supabase {status: 'READY', kitchenId: null, count: 0}
+index-BUgluAMl.js:372 [productsService] Categoria não encontrada pelo ID, buscando pelo nome...
+index-BUgluAMl.js:182 [KDS] listTickets supabase {status: 'PREPARING', kitchenId: null, count: 0}
+index-BUgluAMl.js:548 [Caixa] Já existem associações categoria-cozinha, pulando bootstrap
+index-BUgluAMl.js:182 [KDS] listTickets supabase {status: 'DELIVERED', kitchenId: null, count: 0}
+index-BUgluAMl.js:182 [KDS] listTickets supabase {status: 'NEW', kitchenId: null, count: 4}
+index-BUgluAMl.js:548 [Caixa] Já existem associações categoria-cozinha, pulando bootstrap
+index-BUgluAMl.js:372 [productsService] ✅ Categoria encontrada pelo nome: {id: '0cb5094f-ac66-4cd1-8c54-f20704d53873', name: 'Burritos'}
+index-BUgluAMl.js:372 [productsService] Usando ID existente: 0cb5094f-ac66-4cd1-8c54-f20704d53873 (ao invés de 802809d1-7c3a-4534-bd6e-b6ce44f6319f)
+index-BUgluAMl.js:372 [productsService] Atualizando categoria existente com ID: 0cb5094f-ac66-4cd1-8c54-f20704d53873
+supabase-vendor-DQwqY6dM.js:23  GET https://zwmiikhkmqmislowfsdb.supabase.co/rest/v1/kds_phase_times?select=*&order_id=eq.30ee7f41-6571-45fd-8678-d90a7a7c431f 400 (Bad Request)
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+a @ supabase-vendor-DQwqY6dM.js:23
+Promise.then
+c @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+Is @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+then @ supabase-vendor-DQwqY6dM.js:1
+index-BUgluAMl.js:372 [productsService] ✅ Categoria atualizada no Supabase: {id: '0cb5094f-ac66-4cd1-8c54-f20704d53873', name: 'Burritos', unit_id: null, default_station: null, updated_at: '2025-12-11T05:30:59.39832+00:00', …}
+supabase-vendor-DQwqY6dM.js:23  GET https://zwmiikhkmqmislowfsdb.supabase.co/rest/v1/products?select=id%2Ccategory_id%2Cname&id=in.%28null%29 400 (Bad Request)
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+a @ supabase-vendor-DQwqY6dM.js:23
+Promise.then
+c @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+Is @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+then @ supabase-vendor-DQwqY6dM.js:1
+supabase-vendor-DQwqY6dM.js:23  GET https://zwmiikhkmqmislowfsdb.supabase.co/rest/v1/kds_phase_times?select=*&order_id=eq.aa11b5a5-5cae-49ee-ac09-8a60cf55abab 400 (Bad Request)
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+a @ supabase-vendor-DQwqY6dM.js:23
+Promise.then
+c @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+Is @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+then @ supabase-vendor-DQwqY6dM.js:1
+index-BUgluAMl.js:182 [KDS] listTickets supabase {status: 'PREPARING', kitchenId: null, count: 0}
+index-BUgluAMl.js:182 [KDS] listTickets supabase {status: 'DELIVERED', kitchenId: null, count: 0}
+index-BUgluAMl.js:182 [KDS] listTickets supabase {status: 'NEW', kitchenId: null, count: 4}
+index-BUgluAMl.js:372 [productsService] ID "cat_quesadilla" não é um UUID válido, gerando novo UUID: abd7821f-028c-43d6-8dd9-26c28aafcf5f
+upsertCategory @ index-BUgluAMl.js:372
+migrateLocalStorageCatalog @ index-BUgluAMl.js:372
+await in migrateLocalStorageCatalog
+(anonymous) @ index-BUgluAMl.js:548
+(anonymous) @ index-BUgluAMl.js:548
+bd @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Jx @ index-BUgluAMl.js:32
+(anonymous) @ index-BUgluAMl.js:32
+Ct @ index-BUgluAMl.js:17
+index-BUgluAMl.js:372 [productsService] Salvando categoria no Supabase: {id: 'abd7821f-028c-43d6-8dd9-26c28aafcf5f', name: 'Quesadilla'}
+index-BUgluAMl.js:182 [KDS] listTickets supabase {status: 'READY', kitchenId: null, count: 0}
+supabase-vendor-DQwqY6dM.js:23  GET https://zwmiikhkmqmislowfsdb.supabase.co/rest/v1/kds_phase_times?select=*&order_id=eq.aa11b5a5-5cae-49ee-ac09-8a60cf55abab 400 (Bad Request)
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+a @ supabase-vendor-DQwqY6dM.js:23
+Promise.then
+c @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+Is @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+then @ supabase-vendor-DQwqY6dM.js:1
+supabase-vendor-DQwqY6dM.js:23  GET https://zwmiikhkmqmislowfsdb.supabase.co/rest/v1/kds_phase_times?select=*&order_id=eq.30ee7f41-6571-45fd-8678-d90a7a7c431f 400 (Bad Request)
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+a @ supabase-vendor-DQwqY6dM.js:23
+Promise.then
+c @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+Is @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+then @ supabase-vendor-DQwqY6dM.js:1
+index-BUgluAMl.js:372 [productsService] Categoria não encontrada pelo ID, buscando pelo nome...
+supabase-vendor-DQwqY6dM.js:23  GET https://zwmiikhkmqmislowfsdb.supabase.co/rest/v1/kds_phase_times?select=*&order_id=eq.aa11b5a5-5cae-49ee-ac09-8a60cf55abab 400 (Bad Request)
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+a @ supabase-vendor-DQwqY6dM.js:23
+Promise.then
+c @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+Is @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+then @ supabase-vendor-DQwqY6dM.js:1
+index-BUgluAMl.js:372 [productsService] ✅ Categoria encontrada pelo nome: {id: 'c492b155-158d-481f-ba87-b724faeb987e', name: 'Quesadilla'}
+index-BUgluAMl.js:372 [productsService] Usando ID existente: c492b155-158d-481f-ba87-b724faeb987e (ao invés de abd7821f-028c-43d6-8dd9-26c28aafcf5f)
+index-BUgluAMl.js:372 [productsService] Atualizando categoria existente com ID: c492b155-158d-481f-ba87-b724faeb987e
+supabase-vendor-DQwqY6dM.js:23  GET https://zwmiikhkmqmislowfsdb.supabase.co/rest/v1/kds_phase_times?select=*&order_id=eq.aa11b5a5-5cae-49ee-ac09-8a60cf55abab 400 (Bad Request)
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+a @ supabase-vendor-DQwqY6dM.js:23
+Promise.then
+c @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+Is @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+then @ supabase-vendor-DQwqY6dM.js:1
+index-BUgluAMl.js:372 [productsService] ✅ Categoria atualizada no Supabase: {id: 'c492b155-158d-481f-ba87-b724faeb987e', name: 'Quesadilla', unit_id: null, default_station: null, updated_at: '2025-12-11T05:31:00.532193+00:00', …}
+supabase-vendor-DQwqY6dM.js:23  GET https://zwmiikhkmqmislowfsdb.supabase.co/rest/v1/kds_phase_times?select=*&order_id=eq.aa11b5a5-5cae-49ee-ac09-8a60cf55abab 400 (Bad Request)
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+a @ supabase-vendor-DQwqY6dM.js:23
+Promise.then
+c @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+Is @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+then @ supabase-vendor-DQwqY6dM.js:1
+index-BUgluAMl.js:372 [productsService] ID "cat_tacos" não é um UUID válido, gerando novo UUID: 52207c50-0bc1-4234-ab1d-6ade4087a918
+upsertCategory @ index-BUgluAMl.js:372
+migrateLocalStorageCatalog @ index-BUgluAMl.js:372
+await in migrateLocalStorageCatalog
+(anonymous) @ index-BUgluAMl.js:548
+(anonymous) @ index-BUgluAMl.js:548
+bd @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Jx @ index-BUgluAMl.js:32
+(anonymous) @ index-BUgluAMl.js:32
+Ct @ index-BUgluAMl.js:17
+index-BUgluAMl.js:372 [productsService] Salvando categoria no Supabase: {id: '52207c50-0bc1-4234-ab1d-6ade4087a918', name: 'Tacos'}
+supabase-vendor-DQwqY6dM.js:23  GET https://zwmiikhkmqmislowfsdb.supabase.co/rest/v1/kds_phase_times?select=*&order_id=eq.aa11b5a5-5cae-49ee-ac09-8a60cf55abab 400 (Bad Request)
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+a @ supabase-vendor-DQwqY6dM.js:23
+Promise.then
+c @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+Is @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+then @ supabase-vendor-DQwqY6dM.js:1
+index-BUgluAMl.js:372 [productsService] Categoria não encontrada pelo ID, buscando pelo nome...
+index-BUgluAMl.js:372 [productsService] ✅ Categoria encontrada pelo nome: {id: '743e80ed-127c-425e-854f-2fe1dc0d0bc5', name: 'Tacos'}
+index-BUgluAMl.js:372 [productsService] Usando ID existente: 743e80ed-127c-425e-854f-2fe1dc0d0bc5 (ao invés de 52207c50-0bc1-4234-ab1d-6ade4087a918)
+index-BUgluAMl.js:372 [productsService] Atualizando categoria existente com ID: 743e80ed-127c-425e-854f-2fe1dc0d0bc5
+supabase-vendor-DQwqY6dM.js:23  GET https://zwmiikhkmqmislowfsdb.supabase.co/rest/v1/products?select=id%2Ccategory_id%2Cname&id=in.%28null%29 400 (Bad Request)
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+a @ supabase-vendor-DQwqY6dM.js:23
+Promise.then
+c @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+Is @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+then @ supabase-vendor-DQwqY6dM.js:1
+index-BUgluAMl.js:372 [productsService] ✅ Categoria atualizada no Supabase: {id: '743e80ed-127c-425e-854f-2fe1dc0d0bc5', name: 'Tacos', unit_id: null, default_station: null, updated_at: '2025-12-11T05:31:01.621301+00:00', …}
+index-BUgluAMl.js:182 [KDS] listTickets supabase {status: 'PREPARING', kitchenId: null, count: 0}
+index-BUgluAMl.js:182 [KDS] listTickets supabase {status: 'NEW', kitchenId: null, count: 4}
+index-BUgluAMl.js:182 [KDS] listTickets supabase {status: 'DELIVERED', kitchenId: null, count: 0}
+index-BUgluAMl.js:182 [KDS] listTickets supabase {status: 'READY', kitchenId: null, count: 0}
+index-BUgluAMl.js:32 ReferenceError: Cannot access 'Xr' before initialization
+    at ConfiguracoesPage (index-BUgluAMl.js:548:178373)
+    at Ri (index-BUgluAMl.js:32:49321)
+    at lu (index-BUgluAMl.js:32:72589)
+    at mx (index-BUgluAMl.js:32:83282)
+    at Hx (index-BUgluAMl.js:32:119877)
+    at Jf (index-BUgluAMl.js:32:118894)
+    at Bm (index-BUgluAMl.js:32:118718)
+    at Lx (index-BUgluAMl.js:32:115405)
+    at rf (index-BUgluAMl.js:32:127589)
+    at MessagePort.Ct (index-BUgluAMl.js:17:1850)
+dl @ index-BUgluAMl.js:32
+Il @ index-BUgluAMl.js:32
+Iu.$e.componentDidCatch.O.callback @ index-BUgluAMl.js:32
+te @ index-BUgluAMl.js:32
+oe @ index-BUgluAMl.js:32
+px @ index-BUgluAMl.js:32
+Ex @ index-BUgluAMl.js:32
+Ml @ index-BUgluAMl.js:32
+Ex @ index-BUgluAMl.js:32
+Ml @ index-BUgluAMl.js:32
+Ex @ index-BUgluAMl.js:32
+Ml @ index-BUgluAMl.js:32
+Ex @ index-BUgluAMl.js:32
+Ml @ index-BUgluAMl.js:32
+Ex @ index-BUgluAMl.js:32
+Ml @ index-BUgluAMl.js:32
+Ex @ index-BUgluAMl.js:32
+Ml @ index-BUgluAMl.js:32
+Ex @ index-BUgluAMl.js:32
+Ml @ index-BUgluAMl.js:32
+Ex @ index-BUgluAMl.js:32
+Ml @ index-BUgluAMl.js:32
+Ex @ index-BUgluAMl.js:32
+Ml @ index-BUgluAMl.js:32
+Ex @ index-BUgluAMl.js:32
+Ml @ index-BUgluAMl.js:32
+Ex @ index-BUgluAMl.js:32
+Wx @ index-BUgluAMl.js:32
+$x @ index-BUgluAMl.js:32
+Bx @ index-BUgluAMl.js:32
+Lx @ index-BUgluAMl.js:32
+rf @ index-BUgluAMl.js:32
+Ct @ index-BUgluAMl.js:17
+index-BUgluAMl.js:680 [ErrorBoundary] Uncaught error: ReferenceError: Cannot access 'Xr' before initialization
+    at ConfiguracoesPage (index-BUgluAMl.js:548:178373)
+    at Ri (index-BUgluAMl.js:32:49321)
+    at lu (index-BUgluAMl.js:32:72589)
+    at mx (index-BUgluAMl.js:32:83282)
+    at Hx (index-BUgluAMl.js:32:119877)
+    at Jf (index-BUgluAMl.js:32:118894)
+    at Bm (index-BUgluAMl.js:32:118718)
+    at Lx (index-BUgluAMl.js:32:115405)
+    at rf (index-BUgluAMl.js:32:127589)
+    at MessagePort.Ct (index-BUgluAMl.js:17:1850) {componentStack: '\n    at ConfiguracoesPage (https://pdv-natajr-mila…ex-BUgluAMl.js:33:94761)\n    at App (<anonymous>)'}
+componentDidCatch @ index-BUgluAMl.js:680
+Iu.$e.componentDidCatch.O.callback @ index-BUgluAMl.js:32
+te @ index-BUgluAMl.js:32
+oe @ index-BUgluAMl.js:32
+px @ index-BUgluAMl.js:32
+Ex @ index-BUgluAMl.js:32
+Ml @ index-BUgluAMl.js:32
+Ex @ index-BUgluAMl.js:32
+Ml @ index-BUgluAMl.js:32
+Ex @ index-BUgluAMl.js:32
+Ml @ index-BUgluAMl.js:32
+Ex @ index-BUgluAMl.js:32
+Ml @ index-BUgluAMl.js:32
+Ex @ index-BUgluAMl.js:32
+Ml @ index-BUgluAMl.js:32
+Ex @ index-BUgluAMl.js:32
+Ml @ index-BUgluAMl.js:32
+Ex @ index-BUgluAMl.js:32
+Ml @ index-BUgluAMl.js:32
+Ex @ index-BUgluAMl.js:32
+Ml @ index-BUgluAMl.js:32
+Ex @ index-BUgluAMl.js:32
+Ml @ index-BUgluAMl.js:32
+Ex @ index-BUgluAMl.js:32
+Ml @ index-BUgluAMl.js:32
+Ex @ index-BUgluAMl.js:32
+Wx @ index-BUgluAMl.js:32
+$x @ index-BUgluAMl.js:32
+Bx @ index-BUgluAMl.js:32
+Lx @ index-BUgluAMl.js:32
+rf @ index-BUgluAMl.js:32
+Ct @ index-BUgluAMl.js:17
+supabase-vendor-DQwqY6dM.js:23  GET https://zwmiikhkmqmislowfsdb.supabase.co/rest/v1/kds_phase_times?select=*&order_id=eq.30ee7f41-6571-45fd-8678-d90a7a7c431f 400 (Bad Request)
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+a @ supabase-vendor-DQwqY6dM.js:23
+Promise.then
+c @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+Is @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+then @ supabase-vendor-DQwqY6dM.js:1
+index-BUgluAMl.js:372 [productsService] ID "cat_nachos" não é um UUID válido, gerando novo UUID: 38113b36-8322-474b-826f-f9426f497b73
+upsertCategory @ index-BUgluAMl.js:372
+migrateLocalStorageCatalog @ index-BUgluAMl.js:372
+await in migrateLocalStorageCatalog
+(anonymous) @ index-BUgluAMl.js:548
+(anonymous) @ index-BUgluAMl.js:548
+bd @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Jx @ index-BUgluAMl.js:32
+(anonymous) @ index-BUgluAMl.js:32
+Ct @ index-BUgluAMl.js:17
+index-BUgluAMl.js:372 [productsService] Salvando categoria no Supabase: {id: '38113b36-8322-474b-826f-f9426f497b73', name: 'Nachos'}
+index-BUgluAMl.js:372 [productsService] Categoria não encontrada pelo ID, buscando pelo nome...
+supabase-vendor-DQwqY6dM.js:23  GET https://zwmiikhkmqmislowfsdb.supabase.co/rest/v1/kds_phase_times?select=*&order_id=eq.aa11b5a5-5cae-49ee-ac09-8a60cf55abab 400 (Bad Request)
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+a @ supabase-vendor-DQwqY6dM.js:23
+Promise.then
+c @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+Is @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+then @ supabase-vendor-DQwqY6dM.js:1
+index-BUgluAMl.js:372 [productsService] ✅ Categoria encontrada pelo nome: {id: '4366a276-d04a-47f9-a2b9-187ff4a4f5d3', name: 'Nachos'}
+index-BUgluAMl.js:372 [productsService] Usando ID existente: 4366a276-d04a-47f9-a2b9-187ff4a4f5d3 (ao invés de 38113b36-8322-474b-826f-f9426f497b73)
+index-BUgluAMl.js:372 [productsService] Atualizando categoria existente com ID: 4366a276-d04a-47f9-a2b9-187ff4a4f5d3
+index-BUgluAMl.js:372 [productsService] ✅ Categoria atualizada no Supabase: {id: '4366a276-d04a-47f9-a2b9-187ff4a4f5d3', name: 'Nachos', unit_id: null, default_station: null, updated_at: '2025-12-11T05:31:02.694044+00:00', …}
+supabase-vendor-DQwqY6dM.js:23  GET https://zwmiikhkmqmislowfsdb.supabase.co/rest/v1/kds_phase_times?select=*&order_id=eq.aa11b5a5-5cae-49ee-ac09-8a60cf55abab 400 (Bad Request)
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+a @ supabase-vendor-DQwqY6dM.js:23
+Promise.then
+c @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+Is @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+then @ supabase-vendor-DQwqY6dM.js:1
+supabase-vendor-DQwqY6dM.js:23  GET https://zwmiikhkmqmislowfsdb.supabase.co/rest/v1/kds_phase_times?select=*&order_id=eq.aa11b5a5-5cae-49ee-ac09-8a60cf55abab 400 (Bad Request)
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+a @ supabase-vendor-DQwqY6dM.js:23
+Promise.then
+c @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+Is @ supabase-vendor-DQwqY6dM.js:23
+(anonymous) @ supabase-vendor-DQwqY6dM.js:23
+then @ supabase-vendor-DQwqY6dM.js:1
+index-BUgluAMl.js:372 [productsService] ID "cat_extras" não é um UUID válido, gerando novo UUID: a5c49c60-a48f-40bb-bb81-6aadc8eeed4a
+upsertCategory @ index-BUgluAMl.js:372
+migrateLocalStorageCatalog @ index-BUgluAMl.js:372
+await in migrateLocalStorageCatalog
+(anonymous) @ index-BUgluAMl.js:548
+(anonymous) @ index-BUgluAMl.js:548
+bd @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Jx @ index-BUgluAMl.js:32
+(anonymous) @ index-BUgluAMl.js:32
+Ct @ index-BUgluAMl.js:17
+index-BUgluAMl.js:372 [productsService] Salvando categoria no Supabase: {id: 'a5c49c60-a48f-40bb-bb81-6aadc8eeed4a', name: 'Extras'}
+index-BUgluAMl.js:372 [productsService] Categoria não encontrada pelo ID, buscando pelo nome...
+index-BUgluAMl.js:372 [productsService] ✅ Categoria encontrada pelo nome: {id: '6ee58ea9-cc21-4df0-9375-d3fed296e220', name: 'Extras'}
+index-BUgluAMl.js:372 [productsService] Usando ID existente: 6ee58ea9-cc21-4df0-9375-d3fed296e220 (ao invés de a5c49c60-a48f-40bb-bb81-6aadc8eeed4a)
+index-BUgluAMl.js:372 [productsService] Atualizando categoria existente com ID: 6ee58ea9-cc21-4df0-9375-d3fed296e220
+index-BUgluAMl.js:372 [productsService] ✅ Categoria atualizada no Supabase: {id: '6ee58ea9-cc21-4df0-9375-d3fed296e220', name: 'Extras', unit_id: null, default_station: null, updated_at: '2025-12-11T05:31:03.764939+00:00', …}
+index-BUgluAMl.js:372 [productsService] ID "cat_bebidas" não é um UUID válido, gerando novo UUID: ca1eae02-55ea-40cd-ba1c-e82eb5ced4b9
+upsertCategory @ index-BUgluAMl.js:372
+migrateLocalStorageCatalog @ index-BUgluAMl.js:372
+await in migrateLocalStorageCatalog
+(anonymous) @ index-BUgluAMl.js:548
+(anonymous) @ index-BUgluAMl.js:548
+bd @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Jx @ index-BUgluAMl.js:32
+(anonymous) @ index-BUgluAMl.js:32
+Ct @ index-BUgluAMl.js:17
+index-BUgluAMl.js:372 [productsService] Salvando categoria no Supabase: {id: 'ca1eae02-55ea-40cd-ba1c-e82eb5ced4b9', name: 'Bebidas'}
+index-BUgluAMl.js:372 [productsService] Categoria não encontrada pelo ID, buscando pelo nome...
+index-BUgluAMl.js:372 [productsService] ✅ Categoria encontrada pelo nome: {id: '72feb2f9-4c09-4620-8c7d-7f4276d97423', name: 'Bebidas'}
+index-BUgluAMl.js:372 [productsService] Usando ID existente: 72feb2f9-4c09-4620-8c7d-7f4276d97423 (ao invés de ca1eae02-55ea-40cd-ba1c-e82eb5ced4b9)
+index-BUgluAMl.js:372 [productsService] Atualizando categoria existente com ID: 72feb2f9-4c09-4620-8c7d-7f4276d97423
+index-BUgluAMl.js:372 [productsService] ✅ Categoria atualizada no Supabase: {id: '72feb2f9-4c09-4620-8c7d-7f4276d97423', name: 'Bebidas', unit_id: null, default_station: null, updated_at: '2025-12-11T05:31:04.833499+00:00', …}
+index-BUgluAMl.js:372 [productsService] ID "cat_drinks" não é um UUID válido, gerando novo UUID: f7084c5c-0627-4157-be3a-2534f2e67123
+upsertCategory @ index-BUgluAMl.js:372
+migrateLocalStorageCatalog @ index-BUgluAMl.js:372
+await in migrateLocalStorageCatalog
+(anonymous) @ index-BUgluAMl.js:548
+(anonymous) @ index-BUgluAMl.js:548
+bd @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Go @ index-BUgluAMl.js:32
+Ax @ index-BUgluAMl.js:32
+Jx @ index-BUgluAMl.js:32
+(anonymous) @ index-BUgluAMl.js:32
+Ct @ index-BUgluAMl.js:17
+index-BUgluAMl.js:372 [productsService] Salvando categoria no Supabase: {id: 'f7084c5c-0627-4157-be3a-2534f2e67123', name: 'Drinks'}
+index-BUgluAMl.js:372 [productsService] Categoria não encontrada pelo ID, buscando pelo nome...
