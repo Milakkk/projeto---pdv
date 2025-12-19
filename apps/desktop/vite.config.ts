@@ -7,7 +7,8 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const rootDir = resolve(__dirname, '../..') // Raiz do projeto (2 níveis acima)
 
 const isPreview = process.env.IS_PREVIEW ? true : false
-const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1'
+const isProduction = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1' // Updated for deploy trigger
+
 const userBase = process.env.BASE_PATH
 // Base '/' para produção/Vercel; build para Electron usa file:// com hash
 const base = isProduction ? '/' : (isPreview ? (userBase || '/') : '/')
