@@ -41,6 +41,40 @@ const createLocalEndOfDay = (dateString: string) => {
   return new Date(year, month - 1, day, 23, 59, 59, 999);
 };
 
+const inferSlaMinutesFromCategory = (categoryId: string) => {
+  const cat = String(categoryId || '')
+  const fast = new Set(['cat_extras', 'cat_bebidas', 'cat_drinks', 'cat_chopes', 'cat_drinks_na', 'cat_drinks_a', 'cat_chope'])
+  if (fast.has(cat)) return 3
+  const low = cat.toLowerCase()
+  if (low.includes('bebida') || low.includes('drink') || low.includes('chope') || low.includes('extra')) return 3
+  return 8
+}
+
+const getSlaByProductIdFromLocalStorage = (): Record<string, number> => {
+  try {
+    const raw = localStorage.getItem('menuItems')
+    const arr = raw ? JSON.parse(raw) : []
+    if (!Array.isArray(arr)) return {}
+    const out: Record<string, number> = {}
+    for (const it of arr) {
+      const id = it?.id ? String(it.id) : ''
+      if (!id) continue
+      const sla = Number(it?.sla)
+      if (Number.isFinite(sla) && sla > 0) out[id] = sla
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+const resolveSlaForItem = (params: { productId?: any; categoryId?: any; slaByProductId?: Record<string, number> }) => {
+  const pid = params.productId ? String(params.productId) : ''
+  const fromLs = pid && params.slaByProductId ? params.slaByProductId[pid] : undefined
+  if (typeof fromLs === 'number' && Number.isFinite(fromLs) && fromLs > 0) return fromLs
+  return inferSlaMinutesFromCategory(params.categoryId ? String(params.categoryId) : '')
+}
+
 // Função para calcular o tempo de entrega e status
 const calculateDeliveryMetrics = (order: Order) => {
   const createdAt = new Date(order.createdAt).getTime();
@@ -179,6 +213,7 @@ export default function RelatoriosPage() {
 
     (async () => {
       try {
+        const slaByProductId = getSlaByProductIdFromLocalStorage()
         const cats = await productsService.listCategories();
         const prods = await productsService.listProducts();
         const categoriesOut: Category[] = (cats || []).map((c: any) => ({
@@ -192,7 +227,7 @@ export default function RelatoriosPage() {
           id: String(p.id),
           name: String(p.name || ''),
           price: Math.max(0, Number(p.priceCents ?? 0) / 100),
-          sla: 0,
+          sla: resolveSlaForItem({ productId: p.id, categoryId: p.categoryId, slaByProductId }),
           categoryId: p.categoryId ? String(p.categoryId) : '',
           observations: [],
           active: Boolean(p.isActive ?? true),
@@ -214,12 +249,13 @@ export default function RelatoriosPage() {
           const orderItems = (items || []).map((it: any) => {
             const pid = it.product_id ?? it.productId;
             const mi = pid ? productMap[String(pid)] : undefined;
+            const categoryId = String(it.category_id ?? mi?.categoryId ?? '')
             const menuItem: MenuItem = mi || {
               id: String(pid || String(it.id)),
               name: String(it.product_name ?? mi?.name ?? 'Item'),
               price: Math.max(0, Number(it.unit_price_cents ?? it.unitPriceCents ?? 0) / 100),
-              sla: 0,
-              categoryId: String(it.category_id ?? mi?.categoryId ?? ''),
+              sla: resolveSlaForItem({ productId: pid, categoryId, slaByProductId }),
+              categoryId,
               observations: [],
               active: true,
             };
@@ -234,6 +270,22 @@ export default function RelatoriosPage() {
           const paid = (payments || []).reduce((s: number, p: any) => s + Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100), 0);
           const breakdown = (payments || []).length > 1 ? Object.fromEntries((payments || []).map((p: any) => [String(p.method).toUpperCase(), Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100)])) : undefined;
           const method = (payments || []).length > 1 ? 'MÚLTIPLO' : ((payments || [])[0]?.method ? String((payments || [])[0].method).toUpperCase() : '');
+          const phaseTimes = (d as any).phaseTimes || {}
+          const createdAtRaw = phaseTimes.newStart ?? r.opened_at ?? r.openedAt ?? r.created_at ?? r.createdAt
+          const preparingStartRaw = phaseTimes.preparingStart ?? r.updated_at ?? r.updatedAt
+          const readyAtRaw = phaseTimes.readyAt ?? r.ready_at ?? r.readyAt
+          const deliveredAtRaw = phaseTimes.deliveredAt ?? r.closed_at ?? r.closedAt ?? r.completed_at ?? r.completedAt
+          const rawLower = String(r.status || '').toLowerCase()
+          const rawUpper = String(r.status || '').toUpperCase()
+          const status: Order['status'] = (() => {
+            if (rawLower === 'cancelled' || rawUpper === 'CANCELLED') return 'CANCELLED'
+            if (deliveredAtRaw || rawLower === 'closed' || rawUpper === 'DELIVERED') return 'DELIVERED'
+            if (readyAtRaw) return 'READY'
+            if (preparingStartRaw) return 'PREPARING'
+            if (rawLower === 'open' || rawUpper === 'NEW') return 'NEW'
+            return 'NEW'
+          })()
+          const slaMinutes = (orderItems || []).reduce((sum: number, it: any) => sum + (Number(it?.menuItem?.sla ?? 0) * Math.max(1, Number(it?.quantity ?? 1))), 0)
           const ord: Order = {
             id: String(r.id),
             pin: pinVal || String(r.id),
@@ -242,19 +294,12 @@ export default function RelatoriosPage() {
             total: paid > 0 ? paid : Math.max(0, Number(r.total_cents ?? 0) / 100),
             paymentMethod: breakdown ? 'MÚLTIPLO' : (method || 'Não informado'),
             paymentBreakdown: breakdown,
-            status:
-              r.closed_at
-                ? 'DELIVERED'
-                : String(r.status).toLowerCase() === 'closed' || String(r.status).toUpperCase() === 'DELIVERED'
-                ? 'DELIVERED'
-                : String(r.status).toLowerCase() === 'cancelled' || String(r.status).toUpperCase() === 'CANCELLED'
-                ? 'CANCELLED'
-                : 'NEW',
-            createdAt: r.opened_at ? new Date(r.opened_at) : new Date(),
-            updatedAt: r.updated_at ? new Date(r.updated_at) : undefined,
-            readyAt: r.ready_at ? new Date(r.ready_at) : undefined,
-            deliveredAt: r.closed_at ? new Date(r.closed_at) : undefined,
-            slaMinutes: 0,
+            status,
+            createdAt: createdAtRaw ? new Date(createdAtRaw) : new Date(),
+            updatedAt: preparingStartRaw ? new Date(preparingStartRaw) : (r.updated_at ? new Date(r.updated_at) : undefined),
+            readyAt: readyAtRaw ? new Date(readyAtRaw) : undefined,
+            deliveredAt: deliveredAtRaw ? new Date(deliveredAtRaw) : undefined,
+            slaMinutes,
             createdBy: '',
           } as any;
           out.push(ord);
@@ -277,6 +322,7 @@ export default function RelatoriosPage() {
       try {
         const detailed = await ordersService.listOrdersDetailed();
         if (!mounted) return;
+        const slaByProductId = getSlaByProductIdFromLocalStorage()
         const out: Order[] = [];
         for (const d of detailed) {
           const r = d.order as any;
@@ -284,44 +330,59 @@ export default function RelatoriosPage() {
           const payments = d.payments || [];
           const pinVal = d.details?.pin;
           const passVal = d.details?.password;
+          const phaseTimes = (d as any).phaseTimes || {}
+          const createdAtRaw = phaseTimes.newStart ?? r.opened_at ?? r.openedAt ?? r.created_at ?? r.createdAt
+          const preparingStartRaw = phaseTimes.preparingStart ?? r.updated_at ?? r.updatedAt
+          const readyAtRaw = phaseTimes.readyAt ?? r.ready_at ?? r.readyAt
+          const deliveredAtRaw = phaseTimes.deliveredAt ?? r.closed_at ?? r.closedAt ?? r.completed_at ?? r.completedAt
+          const rawLower = String(r.status || '').toLowerCase()
+          const rawUpper = String(r.status || '').toUpperCase()
           const paid = (payments || []).reduce((s: number, p: any) => s + Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100), 0);
           const breakdown = (payments || []).length > 1 ? Object.fromEntries((payments || []).map((p: any) => [String(p.method).toUpperCase(), Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100)])) : undefined;
           const method = (payments || []).length > 1 ? 'MÚLTIPLO' : ((payments || [])[0]?.method ? String((payments || [])[0].method).toUpperCase() : '');
-          const ord: Order = {
-            id: String(r.id),
-            pin: pinVal || String(r.id),
-            password: passVal || '',
-            items: (items || []).map((it: any) => ({
+          const orderItems = (items || []).map((it: any) => {
+            const pid = it.product_id ?? it.productId
+            const categoryId = String(it.category_id ?? '')
+            const sla = resolveSlaForItem({ productId: pid, categoryId, slaByProductId })
+            return {
               id: String(it.id),
               menuItem: {
-                id: String(it.product_id ?? it.productId ?? String(it.id)),
+                id: String(pid ?? String(it.id)),
                 name: String(it.product_name ?? 'Item'),
                 price: Math.max(0, Number(it.unit_price_cents ?? it.unitPriceCents ?? 0) / 100),
-                sla: 0,
-                categoryId: String(it.category_id ?? ''),
+                sla,
+                categoryId,
                 observations: [],
                 active: true,
               } as any,
               quantity: Number(it.qty ?? it.quantity ?? 1),
               unitPrice: Math.max(0, Number(it.unit_price_cents ?? it.unitPriceCents ?? 0) / 100),
               productionUnits: [],
-            })) as any,
+            }
+          }) as any
+          const status: Order['status'] = (() => {
+            if (rawLower === 'cancelled' || rawUpper === 'CANCELLED') return 'CANCELLED'
+            if (deliveredAtRaw || rawLower === 'closed' || rawUpper === 'DELIVERED') return 'DELIVERED'
+            if (readyAtRaw) return 'READY'
+            if (preparingStartRaw) return 'PREPARING'
+            if (rawLower === 'open' || rawUpper === 'NEW') return 'NEW'
+            return 'NEW'
+          })()
+          const slaMinutes = (orderItems || []).reduce((sum: number, it: any) => sum + (Number(it?.menuItem?.sla ?? 0) * Math.max(1, Number(it?.quantity ?? 1))), 0)
+          const ord: Order = {
+            id: String(r.id),
+            pin: pinVal || String(r.id),
+            password: passVal || '',
+            items: orderItems,
             total: paid > 0 ? paid : Math.max(0, Number(r.total_cents ?? 0) / 100),
             paymentMethod: breakdown ? 'MÚLTIPLO' : (method || 'Não informado'),
             paymentBreakdown: breakdown,
-            status:
-              r.closed_at
-                ? 'DELIVERED'
-                : String(r.status).toLowerCase() === 'closed' || String(r.status).toUpperCase() === 'DELIVERED'
-                ? 'DELIVERED'
-                : String(r.status).toLowerCase() === 'cancelled' || String(r.status).toUpperCase() === 'CANCELLED'
-                ? 'CANCELLED'
-                : 'NEW',
-            createdAt: r.opened_at ? new Date(r.opened_at) : new Date(),
-            updatedAt: r.updated_at ? new Date(r.updated_at) : undefined,
-            readyAt: r.ready_at ? new Date(r.ready_at) : undefined,
-            deliveredAt: r.closed_at ? new Date(r.closed_at) : undefined,
-            slaMinutes: 0,
+            status,
+            createdAt: createdAtRaw ? new Date(createdAtRaw) : new Date(),
+            updatedAt: preparingStartRaw ? new Date(preparingStartRaw) : (r.updated_at ? new Date(r.updated_at) : undefined),
+            readyAt: readyAtRaw ? new Date(readyAtRaw) : undefined,
+            deliveredAt: deliveredAtRaw ? new Date(deliveredAtRaw) : undefined,
+            slaMinutes,
             createdBy: '',
           } as any;
           out.push(ord);

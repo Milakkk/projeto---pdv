@@ -82,6 +82,8 @@ export default function CozinhaPage() {
 
   const previousOrdersRef = useRef<Order[]>(orders);
   const hasMigratedRef = useRef(false); // NOVO: Ref para controlar se a migração já foi tentada
+  const ticketsRefreshRef = useRef<null | (() => void)>(null)
+  const ackedTicketsRef = useRef<Record<string, number>>({})
   const getOrderDetails = (id: string): { pin?: string; password?: string } => {
     try { const raw = localStorage.getItem('kdsOrderDetails'); const map = raw ? JSON.parse(raw) : {}; return map[id] || {} } catch { return {} }
   }
@@ -190,35 +192,28 @@ export default function CozinhaPage() {
             try {
               const { supabase } = await import('../../utils/supabase')
               if (supabase && mounted) {
-                const loadAll = async () => {
-                  const kitchenFilter = selectedKitchenId || undefined
-                  const queued = await kdsService.listTicketsByStatus('queued', kitchenFilter)
-                  const prep = await kdsService.listTicketsByStatus('prep', kitchenFilter)
-                  const ready = await kdsService.listTicketsByStatus('ready', kitchenFilter)
-                  const done = await kdsService.listTicketsByStatus('done', kitchenFilter)
-                  const all = [...queued, ...prep, ...ready, ...done]
-                  startTransition(() => { setOrders(all as any) })
-                }
-                await loadAll()
-
-                // Debounce para prevenir loop infinito: agrupa múltiplas mudanças em 500ms
                 let debounceTimer: NodeJS.Timeout | null = null
+                const scheduleReload = () => {
+                  if (debounceTimer) return
+                  debounceTimer = setTimeout(() => {
+                    debounceTimer = null
+                    try { ticketsRefreshRef.current?.() } catch { }
+                  }, 50)
+                }
 
                 const sub = supabase
-                  .channel('kds_tickets_changes')
-                  .on('postgres_changes', { event: '*', schema: 'public', table: 'kds_tickets' }, async () => {
-                    if (debounceTimer) clearTimeout(debounceTimer)
-                    debounceTimer = setTimeout(async () => {
-                      await loadAll()
-                      debounceTimer = null
-                    }, 500)
-                  })
+                  .channel('kds_realtime_changes')
+                  .on('postgres_changes', { event: '*', schema: 'public', table: 'kds_tickets' }, () => scheduleReload())
+                  .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, () => scheduleReload())
+                  .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => scheduleReload())
+                  .on('postgres_changes', { event: '*', schema: 'public', table: 'kds_phase_times' }, () => scheduleReload())
+                  .on('postgres_changes', { event: '*', schema: 'public', table: 'kds_unit_states' }, () => scheduleReload())
                   .subscribe()
-                const unsub = () => {
+
+                return () => {
                   if (debounceTimer) clearTimeout(debounceTimer)
                   try { sub.unsubscribe() } catch { }
                 }
-                return () => { unsub() }
               }
             } catch { }
             return
@@ -242,6 +237,9 @@ export default function CozinhaPage() {
               const tickets = events.filter((e: any) => String(e.table) === 'kdsTickets' && (e.row || e.rows))
               const ordersEv = events.filter((e: any) => String(e.table) === 'orders' && (e.row || e.rows))
               const phaseTimesEv = events.filter((e: any) => String(e.table) === 'kds_phase_times' && (e.row || e.rows))
+              if (tickets.length || ordersEv.length || phaseTimesEv.length) {
+                try { ticketsRefreshRef.current?.() } catch { }
+              }
               if (tickets.length) {
                 const mapToOrderStatus = (s: string) => {
                   const normalized = String(s).toUpperCase();
@@ -253,11 +251,42 @@ export default function CozinhaPage() {
                 }
                 const byIdStatus: Record<string, string> = {}
                 for (const e of tickets) {
-                  const r = e.row || {}
-                  const id = String(r.order_id ?? r.orderId ?? r.id)
-                  const st = mapToOrderStatus(String(r.status ?? e.status ?? 'queued'))
-                  byIdStatus[id] = st
+                  const rows = e.row ? [e.row] : (Array.isArray(e.rows) ? e.rows : [])
+                  for (const r of rows) {
+                    const id = String(r.order_id ?? r.orderId ?? r.id)
+                    const st = mapToOrderStatus(String(r.status ?? e.status ?? 'queued'))
+                    byIdStatus[id] = st
+                  }
                 }
+                try {
+                  const nowIso = new Date().toISOString()
+                  const ackEvents: any[] = []
+                  for (const e of tickets) {
+                    const rows = e.row ? [e.row] : (Array.isArray(e.rows) ? e.rows : [])
+                    for (const r of rows) {
+                      const ticketId = String(r.id ?? '')
+                      const orderId = String(r.order_id ?? r.orderId ?? '')
+                      if (!ticketId || !orderId) continue
+                      if (ackedTicketsRef.current[ticketId]) continue
+                      ackedTicketsRef.current[ticketId] = Date.now()
+                      const senderUpdatedAt = r.updated_at ?? r.updatedAt ?? null
+                      const receiveDelayMs = (() => {
+                        const ts = senderUpdatedAt ? new Date(String(senderUpdatedAt)).getTime() : NaN
+                        const ms = Date.now() - ts
+                        return Number.isFinite(ms) && ms >= 0 ? ms : null
+                      })()
+                      ackEvents.push({
+                        table: 'kdsAcks',
+                        row: { ticketId, orderId, receivedAt: nowIso, receiverDeviceId: deviceId, senderUpdatedAt, receiveDelayMs },
+                        unit_id: unitId,
+                      })
+                    }
+                  }
+                  if (ackEvents.length) {
+                    const headers: Record<string, string> = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${secret}` }
+                    fetch(`${hubUrl.replace(/\/$/, '')}/push`, { method: 'POST', headers, body: JSON.stringify({ events: ackEvents }) }).catch(() => {})
+                  }
+                } catch { }
                 startTransition(() => {
                   setOrders(prev => prev.map(o => {
                     const oid = String(o.id)
@@ -651,88 +680,175 @@ export default function CozinhaPage() {
       if (normalized === 'DONE' || normalized === 'DELIVERED') return 'DELIVERED';
       return 'NEW';
     };
+    const normalizeSla = (v: any) => {
+      const n = Number(v)
+      if (Number.isFinite(n) && n > 0) return n
+      return 15
+    }
     const fetchTickets = async () => {
+      if (!mounted) return;
+      const startTime = performance.now();
       try {
-        const [tkQueued, tkPrep, tkReady, tkDone] = await Promise.all([
-          kdsService.listTicketsByStatus('queued'),
-          kdsService.listTicketsByStatus('prep'),
-          kdsService.listTicketsByStatus('ready'),
-          kdsService.listTicketsByStatus('done'),
-        ]);
+        const kitchenFilter = selectedKitchenId || undefined
+        const { supabase } = await import('../../utils/supabase')
+        const canQuerySupabase =
+          Boolean(supabase) && (typeof navigator === 'undefined' || navigator.onLine)
 
-        const tk = ([] as any[]).concat(tkQueued || [], tkPrep || [], tkReady || [], tkDone || []);
+        let tk: any[] = []
+        let useSupabase = canQuerySupabase
+        if (useSupabase) {
+          let q = supabase!
+            .from('kds_tickets')
+            .select('id, order_id, status, created_at, updated_at, kitchen_id')
+            .in('status', ['NEW', 'PREPARING', 'READY', 'DELIVERED'])
+          if (kitchenFilter) q = q.eq('kitchen_id', kitchenFilter)
+          const { data, error } = await q
+          if (error) useSupabase = false
+          tk = Array.isArray(data) ? data : []
+
+          try {
+            const nowIso = new Date().toISOString()
+            const toAck = tk
+              .filter((t: any) => t && String(t.status) === 'NEW' && t.created_at && t.updated_at && String(t.created_at) === String(t.updated_at))
+              .map((t: any) => String(t.id))
+              .filter(Boolean)
+            if (toAck.length > 0) {
+              await supabase!.from('kds_tickets').update({ updated_at: nowIso }).in('id', toAck)
+              const transferMsList = tk
+                .filter((t: any) => toAck.includes(String(t?.id)) && t?.created_at)
+                .map((t: any) => {
+                  const createdAtMs = new Date(String(t.created_at)).getTime()
+                  const ms = Date.now() - createdAtMs
+                  return Number.isFinite(ms) && ms >= 0 ? ms : null
+                })
+                .filter((v: any) => typeof v === 'number') as number[]
+              const avgTransferMs =
+                transferMsList.length > 0 ? Math.round(transferMsList.reduce((a, b) => a + b, 0) / transferMsList.length) : null
+              console.log('[PDV->KDS] Confirmação de recebimento (KDS)', { count: toAck.length, kitchenId: kitchenFilter ?? null, avgTransferMs })
+            }
+          } catch {}
+        }
+
+        if (!useSupabase) {
+          const [tkQueued, tkPrep, tkReady, tkDone] = await Promise.all([
+            kdsService.listTicketsByStatus('queued', kitchenFilter),
+            kdsService.listTicketsByStatus('prep', kitchenFilter),
+            kdsService.listTicketsByStatus('ready', kitchenFilter),
+            kdsService.listTicketsByStatus('done', kitchenFilter),
+          ])
+          tk = ([] as any[]).concat(tkQueued || [], tkPrep || [], tkReady || [], tkDone || [])
+        }
         if (!mounted || !Array.isArray(tk)) return;
 
         // [FIX] Fetch order timestamps from 'orders' table to prevent reset on reload
         const orderIds = tk.map((t: any) => String(t.order_id ?? t.orderId ?? '')).filter(id => id);
         let ordersMap: Record<string, any> = {};
         
-        if (orderIds.length > 0) {
+        if (useSupabase && orderIds.length > 0) {
            try {
-              const { supabase } = await import('../../utils/supabase');
-              if (supabase) {
-                 const { data } = await supabase
-                    .from('orders')
-                    .select('id, opened_at, created_at')
-                    .in('id', orderIds);
-                 if (data) {
-                    ordersMap = data.reduce((acc: any, o: any) => ({ ...acc, [o.id]: o }), {});
-                 }
-              }
+             const { data } = await supabase
+               .from('orders')
+               .select('id, opened_at, created_at')
+               .in('id', orderIds);
+             if (data) {
+               ordersMap = data.reduce((acc: any, o: any) => ({ ...acc, [o.id]: o }), {});
+             }
            } catch {}
         }
 
-        const supabaseItemsCache: Record<string, any[]> = {};
-        const fetchItemsFromSupabase = async (orderId: string) => {
+        const timesByOrder: Record<string, any> = {}
+        if (useSupabase && orderIds.length > 0) {
           try {
-            const { supabase } = await import('../../utils/supabase');
-            if (!supabase) return [];
+            const { data } = await supabase.from('kds_phase_times').select('*').in('order_id', orderIds)
+            for (const t of (data || []) as any[]) {
+              const oid = String(t.order_id)
+              timesByOrder[oid] = {
+                newStart: t.new_start ?? t.newStart,
+                preparingStart: t.preparing_start ?? t.preparingStart,
+                readyAt: t.ready_at ?? t.readyAt,
+                deliveredAt: t.delivered_at ?? t.deliveredAt,
+              }
+            }
+          } catch {}
+        }
+
+        const unitMapByOrder: Record<string, Record<string, any>> = {}
+        if (orderIds.length > 0) {
+          if (useSupabase) {
+            try {
+              const { data } = await supabase.from('kds_unit_states').select('*').in('order_id', orderIds)
+              for (const r of (data || []) as any[]) {
+                const oid = String(r.order_id)
+                if (!unitMapByOrder[oid]) unitMapByOrder[oid] = {}
+                const unitId = r.production_unit_id || r.unit_id
+                const key = `${oid}:${String(r.order_item_id || r.item_id)}:${String(unitId)}`
+                unitMapByOrder[oid][key] = {
+                  operatorName: r.operator_name ?? undefined,
+                  unitStatus: r.status || r.unit_status || undefined,
+                  completedObservations: (() => {
+                    try {
+                      const arr = JSON.parse(String(r.completed_observations_json ?? 'null'))
+                      return Array.isArray(arr) ? arr : []
+                    } catch { return [] }
+                  })(),
+                  completedAt: r.completed_at || r.updated_at || undefined,
+                  deliveredAt: r.delivered_at || undefined,
+                }
+              }
+            } catch {}
+          } else {
+            for (const oid of orderIds) {
+              try {
+                const unitMap = await kdsService.loadUnitStatesForOrder(oid)
+                unitMapByOrder[oid] = unitMap || {}
+              } catch {
+                unitMapByOrder[oid] = {}
+              }
+            }
+          }
+        }
+
+        const itemsByOrder: Record<string, any[]> = {}
+        if (useSupabase && orderIds.length > 0) {
+          try {
             const { data, error } = await supabase
               .from('order_items')
-              .select(`id, qty, unit_price_cents, product_id, products:products(id, name, sla_minutes, skip_kitchen, unit_delivery_count, category_id)`) // join
-              .eq('order_id', orderId);
-            if (error) return [];
-            return (data || []).map((it: any) => ({
-              id: String(it.id),
-              quantity: Number(it.qty ?? 1),
-              skipKitchen: Boolean(it.products?.skip_kitchen ?? false),
-              menuItem: {
-                id: String(it.products?.id ?? ''),
-                name: String(it.products?.name ?? 'Item'),
-                unitDeliveryCount: Number(it.products?.unit_delivery_count ?? 1),
-                sla: Number(it.products?.sla_minutes ?? 15),
-                categoryId: String(it.products?.category_id ?? ''),
-              },
-              productionUnits: Array.from({ length: Math.max(1, Number(it.qty ?? 1)) }, (_, idx) => ({
-                unitId: `${String(it.id)}-${idx + 1}`,
-                unitStatus: 'PENDING' as ProductionUnit['unitStatus'],
-                operatorName: undefined,
-                completedObservations: [],
-                completedAt: undefined,
-              })),
-            }));
-          } catch { return [] }
-        };
+              .select('id, order_id, quantity, unit_price_cents, product_id, product_name')
+              .in('order_id', orderIds)
+            if (!error) {
+              for (const it of (data || []) as any[]) {
+                const oid = String(it.order_id)
+                if (!itemsByOrder[oid]) itemsByOrder[oid] = []
+                itemsByOrder[oid].push({
+                  id: String(it.id),
+                  quantity: Number(it.quantity ?? 1),
+                  skipKitchen: false,
+                  menuItem: {
+                    id: String(it.product_id ?? ''),
+                    name: String(it.product_name ?? 'Item'),
+                    unitDeliveryCount: 1,
+                    sla: 15,
+                    categoryId: '',
+                  },
+                  productionUnits: Array.from({ length: Math.max(1, Number(it.quantity ?? 1)) }, (_, idx) => ({
+                    unitId: `${String(it.id)}-${idx + 1}`,
+                    unitStatus: 'PENDING' as ProductionUnit['unitStatus'],
+                    operatorName: undefined,
+                    completedObservations: [],
+                    completedAt: undefined,
+                  })),
+                })
+              }
+            }
+          } catch {}
+        }
 
         const mappedOrders: Order[] = [];
         for (const t of tk as any[]) {
           const oid = String(t.order_id ?? t.orderId ?? '')
-          let items: any[] = Array.isArray(t.items) ? t.items : []
-          if (!items.length && oid) {
-            if (supabaseItemsCache[oid]) {
-              items = supabaseItemsCache[oid]
-            } else {
-              const fetched = await fetchItemsFromSupabase(oid)
-              supabaseItemsCache[oid] = fetched
-              items = fetched
-            }
-          }
-
-          // [FIX] Load persisted unit states from Supabase/DB to prevent overwriting with PENDING
-          let unitMap: Record<string, any> = {}
-          try {
-             unitMap = await kdsService.loadUnitStatesForOrder(oid)
-          } catch {}
+          const times = timesByOrder[oid] || {}
+          let items: any[] = (itemsByOrder[oid] && itemsByOrder[oid].length > 0) ? itemsByOrder[oid] : (Array.isArray(t.items) ? t.items : [])
+          const unitMap: Record<string, any> = unitMapByOrder[oid] || {}
 
           items = items.map((item: any) => {
             // Base production units (default)
@@ -771,23 +887,31 @@ export default function CozinhaPage() {
                 id: String(item.menuItem?.id ?? item.menuItemId ?? ''),
                 name: String(item.menuItem?.name ?? item.name ?? 'Item'),
                 unitDeliveryCount: Number(item.menuItem?.unitDeliveryCount ?? item.unitDeliveryCount ?? 1),
-                sla: Number(item.menuItem?.sla ?? item.sla ?? 15),
+                sla: normalizeSla(item.menuItem?.sla ?? item.sla ?? 15),
                 categoryId: String(item.menuItem?.categoryId ?? item.categoryId ?? ''),
               },
               productionUnits: mergedUnits
             }
           })
-          const slaMinutes = items.reduce((sum: number, it: any) => sum + (Number(it.menuItem?.sla ?? 15) * Math.max(1, Number(it.quantity ?? 1))), 0)
+          const slaMinutes = Math.max(1, items.reduce((sum: number, it: any) => sum + (normalizeSla(it.menuItem?.sla ?? 15) * Math.max(1, Number(it.quantity ?? 1))), 0))
           const details = getOrderDetails(String(t.order_id ?? t.orderId ?? t.id ?? ''))
           const ord: Order = {
             id: String(t.order_id ?? t.orderId ?? ''),
             pin: String(t.pin ?? t.orderPin ?? details.pin ?? ''),
             password: String(t.password ?? details.password ?? ''),
             status: mapStatus(String(t.status ?? 'queued')),
-            createdAt: t.createdAt ? new Date(t.createdAt) : (ordersMap[String(t.order_id ?? t.orderId ?? '')]?.opened_at ? new Date(ordersMap[String(t.order_id ?? t.orderId ?? '')].opened_at) : (ordersMap[String(t.order_id ?? t.orderId ?? '')]?.created_at ? new Date(ordersMap[String(t.order_id ?? t.orderId ?? '')].created_at) : new Date())),
-            updatedAt: t.updatedAt ? new Date(t.updatedAt) : undefined,
-            readyAt: t.readyAt ? new Date(t.readyAt) : undefined,
-            deliveredAt: t.deliveredAt ? new Date(t.deliveredAt) : undefined,
+            createdAt: t.createdAt
+              ? new Date(t.createdAt)
+              : (times.newStart
+                ? new Date(times.newStart)
+                : (ordersMap[oid]?.opened_at
+                  ? new Date(ordersMap[oid].opened_at)
+                  : (ordersMap[oid]?.created_at
+                    ? new Date(ordersMap[oid].created_at)
+                    : (t.created_at ? new Date(t.created_at) : new Date())))),
+            updatedAt: t.updatedAt ? new Date(t.updatedAt) : (times.preparingStart ? new Date(times.preparingStart) : (t.updated_at ? new Date(t.updated_at) : undefined)),
+            readyAt: t.readyAt ? new Date(t.readyAt) : (times.readyAt ? new Date(times.readyAt) : undefined),
+            deliveredAt: t.deliveredAt ? new Date(t.deliveredAt) : (times.deliveredAt ? new Date(times.deliveredAt) : undefined),
             items,
             slaMinutes,
             total: 0,
@@ -815,12 +939,32 @@ export default function CozinhaPage() {
       }
     };
     fetchTickets();
-    const timer = setInterval(fetchTickets, 2000);
+    let refreshTimer: any = null
+    let inFlight = false
+    let pending = false
+    const triggerRefresh = () => {
+      if (refreshTimer) return
+      refreshTimer = setTimeout(async () => {
+        refreshTimer = null
+        if (inFlight) { pending = true; return }
+        inFlight = true
+        try { await fetchTickets() } finally {
+          inFlight = false
+          if (pending) { pending = false; triggerRefresh() }
+        }
+      }, 50)
+    }
+    ticketsRefreshRef.current = triggerRefresh
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') fetchTickets()
+    }, 8000)
     return () => {
       mounted = false;
+      ticketsRefreshRef.current = null
+      if (refreshTimer) clearTimeout(refreshTimer)
       clearInterval(timer);
     };
-  }, [setOrders]);
+  }, [setOrders, selectedKitchenId]);
 
   // useEffect para monitorar pedidos prontos e disparar notificação (mantido separado)
   useEffect(() => {
@@ -934,8 +1078,12 @@ export default function CozinhaPage() {
                   .from('orders')
                   .update({ status: status, updated_at: new Date().toISOString() })
                   .eq('id', orderId);
-                
-                return; // Sucesso, não precisa do kdsService
+
+                try {
+                  await kdsService.setTicketStatus(String(tId), mapToKds(status));
+                } catch {}
+
+                return;
               }
             }
         }

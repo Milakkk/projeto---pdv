@@ -7,6 +7,8 @@ import { seedCatalogIfEmpty } from '@/offline/bootstrap/catalog.seed';
 import ErrorBoundary from './components/base/ErrorBoundary'
 import { ensureDeviceProfile, getDeviceProfile } from '@/offline/services/deviceProfileService'
 import * as kdsService from '@/offline/services/kdsService'
+import * as ordersService from '@/offline/services/ordersService'
+import { runFullIntegrityCheck } from '@/utils/dataIntegrity'
 import { useCatalogSync } from './hooks/useCatalogSync';
 
 // Componente Wrapper para lidar com o redirecionamento inicial
@@ -23,6 +25,32 @@ function AppWrapper() {
       console.error('[boot:error]', (e as any)?.message || e)
     }
   }, []);
+
+  // Background integrity check
+  useEffect(() => {
+    const runCheck = async () => {
+      try {
+        const [orders, tickets] = await Promise.all([
+          ordersService.listAllLocalOrders(),
+          kdsService.listAllLocalTickets()
+        ])
+        await runFullIntegrityCheck({ orders, kdsTickets: tickets })
+      } catch (err) {
+        console.error('[App] Erro no check de integridade:', err)
+      }
+    }
+
+    // Executa após 30 segundos do boot
+    const initialTimeout = setTimeout(runCheck, 30000)
+    
+    // Executa a cada 5 minutos
+    const interval = setInterval(runCheck, 300000)
+
+    return () => {
+      clearTimeout(initialTimeout)
+      clearInterval(interval)
+    }
+  }, [])
 
   useEffect(() => {
     let ws: WebSocket | null = null
@@ -103,6 +131,13 @@ function AppWrapper() {
                 localStorage.setItem('kdsTickets', next)
                 dispatchStorage('kdsTickets', next, oldTk)
               }
+            } catch {}
+          } else if (table === 'kdsAcks' && row) {
+            try {
+              const ticketId = String(row.ticketId ?? row.ticket_id ?? '')
+              const orderId = String(row.orderId ?? row.order_id ?? '')
+              const receiveDelayMs = row.receiveDelayMs ?? row.receive_delay_ms ?? null
+              console.log('[PDV->KDS] Confirmação de recebimento (LAN)', { ticketId, orderId, receiveDelayMs })
             } catch {}
           } else if (table === 'kds_operators' && row) {
             try {

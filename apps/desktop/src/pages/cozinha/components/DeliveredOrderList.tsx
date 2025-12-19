@@ -1,24 +1,11 @@
 import { useState, useMemo } from 'react';
 import type { Order } from '../../../types';
 import Button from '../../../components/base/Button';
+import { formatDurationSeconds, normalizeSlaMinutes } from '../../../utils/time';
 
 interface DeliveredOrderListProps {
   deliveredOrders: Order[];
 }
-
-// Função auxiliar para formatar a duração (copiada de OrderBoard)
-const formatDuration = (seconds: number) => {
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  
-  if (mins === 0 && secs === 0) return '0s';
-  
-  const parts = [];
-  if (mins > 0) parts.push(`${mins.toString().padStart(2, '0')}m`);
-  if (secs > 0) parts.push(`${secs.toString().padStart(2, '0')}s`);
-  
-  return parts.join(' ');
-};
 
 // Função auxiliar para extrair opções obrigatórias (igual às outras listas)
 const extractRequiredOptions = (observations: string | undefined): string[] => {
@@ -39,9 +26,16 @@ const extractOptionalObservations = (observations: string | undefined): string[]
     .filter(p => p.length > 0);
 };
 
+const formatOrderPin = (pin: string) => {
+  const raw = String(pin ?? '').trim()
+  if (!raw) return '#-'
+  return `#${raw.replace(/^#+/, '')}`
+}
+
 // Componente para um único item expansível
 function DeliveredOrderItem({ order }: { order: Order }) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const slaMinutes = normalizeSlaMinutes(order.slaMinutes, 15)
 
   const { 
     totalTimeSeconds, 
@@ -125,9 +119,9 @@ function DeliveredOrderItem({ order }: { order: Order }) {
         className={`p-4 cursor-pointer transition-colors ${isExpanded ? 'bg-gray-50' : 'hover:bg-gray-50'}`}
         onClick={() => setIsExpanded(!isExpanded)}
       >
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <span className="text-sm font-medium text-gray-900">#{order.pin}</span>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+            <span className="text-sm font-medium text-gray-900">{formatOrderPin(order.pin)}</span>
             <span className="bg-green-500 text-white text-sm font-bold px-3 py-1 rounded">
               {order.password}
             </span>
@@ -139,7 +133,7 @@ function DeliveredOrderItem({ order }: { order: Order }) {
           </div>
           
           <div className="flex items-center space-x-3 text-sm text-gray-600">
-            <span className="hidden sm:inline">Tempo Cozinha: {formatDuration(totalTimeSeconds)}</span>
+            <span className="hidden sm:inline">Tempo Cozinha: {formatDurationSeconds(totalTimeSeconds, { minSeconds: 1 })}</span>
             <i className={`ri-arrow-${isExpanded ? 'up' : 'down'}-s-line text-xl`}></i>
           </div>
         </div>
@@ -153,7 +147,7 @@ function DeliveredOrderItem({ order }: { order: Order }) {
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 text-sm text-gray-700">
             <div>
               <i className="ri-time-line mr-1 text-gray-600"></i>
-              SLA: <span className="font-bold">{order.slaMinutes} min</span>
+              SLA: <span className="font-bold">{slaMinutes} min</span>
             </div>
             <div>
               <i className="ri-calendar-line mr-1 text-gray-600"></i>
@@ -165,21 +159,21 @@ function DeliveredOrderItem({ order }: { order: Order }) {
             </div>
             <div>
               <i className="ri-restaurant-line mr-1 text-amber-600"></i>
-              Tempo Cozinha: <span className="font-bold">{formatDuration(totalTimeSeconds)}</span>
+              Tempo Cozinha: <span className="font-bold">{formatDurationSeconds(totalTimeSeconds)}</span>
             </div>
             
             {/* NOVOS CAMPOS */}
             <div>
               <i className="ri-hourglass-line mr-1 text-blue-600"></i>
-              Tempo de Espera: <span className="font-bold">{formatDuration(newTimeSeconds)}</span>
+              Tempo de Espera: <span className="font-bold">{formatDurationSeconds(newTimeSeconds)}</span>
             </div>
             <div>
               <i className="ri-fire-line mr-1 text-red-600"></i>
-              Tempo de Preparo: <span className="font-bold">{formatDuration(preparingTimeSeconds)}</span>
+              Tempo de Preparo: <span className="font-bold">{formatDurationSeconds(preparingTimeSeconds, { minSeconds: 1 })}</span>
             </div>
             <div>
               <i className="ri-truck-line mr-1 text-purple-600"></i>
-              Tempo para Entregar: <span className="font-bold">{formatDuration(readyTimeSeconds)}</span>
+              Tempo para Entregar: <span className="font-bold">{formatDurationSeconds(readyTimeSeconds, { minSeconds: 1 })}</span>
             </div>
           </div>
 

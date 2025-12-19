@@ -123,6 +123,11 @@ export const products = sqliteTable(
     isActive: integer("is_active", { mode: "boolean" })
       .notNull()
       .default(true),
+    slaMinutes: integer("sla_minutes").notNull().default(15),
+    skipKitchen: integer("skip_kitchen", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    unitDeliveryCount: integer("unit_delivery_count").notNull().default(1),
     updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
     version: integer("version").notNull().default(1),
     pendingSync: integer("pending_sync", { mode: "boolean" })
@@ -224,6 +229,7 @@ export const kdsTickets = sqliteTable(
       .notNull()
       .default("queued"),
     station: text("station"),
+    acknowledgedAt: text("acknowledged_at"),
     updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
     version: integer("version").notNull().default(1),
     pendingSync: integer("pending_sync", { mode: "boolean" })
@@ -235,6 +241,16 @@ export const kdsTickets = sqliteTable(
     unitStatusIdx: uniqueIndex("ix_kds_unit_status").on(t.unitId, t.status),
   }),
 );
+
+export const kdsSyncLogs = sqliteTable("kds_sync_logs", {
+  id: text("id").primaryKey(),
+  ticketId: text("ticket_id").references(() => kdsTickets.id),
+  orderId: text("order_id"),
+  eventType: text("event_type").notNull(),
+  latencyMs: integer("latency_ms"),
+  payload: text("payload"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
 
 // Tempos das fases dos pedidos (não altera a tabela orders)
 export const kdsPhaseTimes = sqliteTable("kds_phase_times", {
@@ -404,6 +420,7 @@ export type OrderRow = typeof orders.$inferSelect;
 export type OrderItemRow = typeof orderItems.$inferSelect;
 export type PaymentRow = typeof payments.$inferSelect;
 export type KDSTicketRow = typeof kdsTickets.$inferSelect;
+export type KDSSyncLogRow = typeof kdsSyncLogs.$inferSelect;
 export type KDSPhaseTimesRow = typeof kdsPhaseTimes.$inferSelect;
 export type KDSUnitStatesRow = typeof kdsUnitStates.$inferSelect;
 export type OrdersDetailsRow = typeof ordersDetails.$inferSelect;
@@ -429,6 +446,7 @@ export const ALL_TABLES = {
   orderItems,
   payments,
   kdsTickets,
+  kdsSyncLogs,
   kdsPhaseTimes,
   kdsUnitStates,
   ordersDetails,

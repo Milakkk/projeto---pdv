@@ -554,34 +554,35 @@ export default function CaixaPage() {
     let mounted = true;
     const syncStatuses = async () => {
       try {
-        const [tkQueued, tkPrep, tkReady, tkDone] = await Promise.all([
-          kdsService.listTicketsByStatus('queued'),
-          kdsService.listTicketsByStatus('prep'),
-          kdsService.listTicketsByStatus('ready'),
-          kdsService.listTicketsByStatus('done'),
-        ]);
-        const mapIds = (arr: any[]) =>
-          (Array.isArray(arr) ? arr : [])
-            .map((t: any) => t?.order_id ?? t?.orderId)
-            .filter(Boolean)
-            .map((id: any) => String(id));
-        const queuedIds = mapIds(tkQueued)
-        const prepIds = mapIds(tkPrep)
-        const readyIds = mapIds(tkReady)
-        const doneIds = mapIds(tkDone)
+        const rows = await kdsService.listTicketStatusRows()
+        const queuedIds = new Set<string>()
+        const prepIds = new Set<string>()
+        const readyIds = new Set<string>()
+        const doneIds = new Set<string>()
+        for (const r of (Array.isArray(rows) ? rows : []) as any[]) {
+          const oid = String(r?.orderId ?? '')
+          const st = String(r?.status ?? '')
+          if (!oid) continue
+          if (st === 'queued') queuedIds.add(oid)
+          if (st === 'prep') prepIds.add(oid)
+          if (st === 'ready') readyIds.add(oid)
+          if (st === 'done') doneIds.add(oid)
+        }
         if (!mounted) return;
         setOrders(prev => prev.map(o => {
           const oid = String(o.id)
-          if (doneIds.includes(oid)) return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date() }
-          if (readyIds.includes(oid)) return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
-          if (prepIds.includes(oid)) return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date() }
-          if (queuedIds.includes(oid)) return o.status === 'NEW' ? o : o
+          if (doneIds.has(oid)) return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date() }
+          if (readyIds.has(oid)) return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
+          if (prepIds.has(oid)) return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date() }
+          if (queuedIds.has(oid)) return o.status === 'NEW' ? o : o
           return o
         }))
       } catch {}
     };
     syncStatuses();
-    const timer = setInterval(syncStatuses, 2000);
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') syncStatuses()
+    }, 15000);
     return () => { mounted = false; clearInterval(timer); };
   }, [setOrders])
 
@@ -792,98 +793,157 @@ export default function CaixaPage() {
       return `http://${host}:4000`
     })()
     const secret = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || undefined
+    let cleanupSupabase: (() => void) | null = null
+    let ws: WebSocket | null = null
+    let reconnectTimer: any = null
+
     ;(async () => {
       try {
         const dp = await getDeviceProfile()
         const unitId = dp?.unitId || 'default'
         const deviceId = dp?.deviceId || crypto.randomUUID()
+
+        try {
+          const { supabase } = await import('../../utils/supabase')
+          if (supabase && mounted) {
+            const loadStatuses = async () => {
+              const rows = await kdsService.listTicketStatusRows()
+              const queuedIds = new Set<string>()
+              const prepIds = new Set<string>()
+              const readyIds = new Set<string>()
+              const doneIds = new Set<string>()
+              for (const r of (Array.isArray(rows) ? rows : []) as any[]) {
+                const oid = String(r?.orderId ?? '')
+                const st = String(r?.status ?? '')
+                if (!oid) continue
+                if (st === 'queued') queuedIds.add(oid)
+                if (st === 'prep') prepIds.add(oid)
+                if (st === 'ready') readyIds.add(oid)
+                if (st === 'done') doneIds.add(oid)
+              }
+              if (!mounted) return
+              setOrders(prev => prev.map(o => {
+                const oid = String(o.id)
+                if (doneIds.has(oid)) return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date() }
+                if (readyIds.has(oid)) return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
+                if (prepIds.has(oid)) return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date() }
+                if (queuedIds.has(oid)) return o.status === 'NEW' ? o : o
+                return o
+              }))
+            }
+
+            await loadStatuses()
+
+            let debounceTimer: any = null
+            const scheduleReload = async () => {
+              if (debounceTimer) clearTimeout(debounceTimer)
+              debounceTimer = setTimeout(async () => {
+                try { await loadStatuses() } catch {}
+                debounceTimer = null
+              }, 50)
+            }
+
+            const ch = supabase
+              .channel('pdv_kds_status_changes')
+              .on('postgres_changes', { event: '*', schema: 'public', table: 'kds_tickets' }, scheduleReload)
+              .on('postgres_changes', { event: '*', schema: 'public', table: 'kds_phase_times' }, scheduleReload)
+              .subscribe()
+
+            cleanupSupabase = () => {
+              if (debounceTimer) clearTimeout(debounceTimer)
+              try { ch.unsubscribe() } catch { }
+            }
+          }
+        } catch {}
+
         if (!secret) return
+
         const wsUrl = hubUrl.replace(/^http/, 'ws') + `/realtime?token=${encodeURIComponent(secret)}`
         let attempt = 0
-        let reconnectTimer: any = null
         const connect = () => {
           if (!mounted) return
           attempt++
-          const ws = new WebSocket(wsUrl)
+          try { ws?.close() } catch {}
+          ws = new WebSocket(wsUrl)
           ws.addEventListener('open', () => {
-            ws.send(JSON.stringify({ unit_id: unitId, device_id: deviceId }))
+            ws?.send(JSON.stringify({ unit_id: unitId, device_id: deviceId }))
           })
           ws.addEventListener('message', (ev) => {
             if (!mounted) return
-          let events: any[] = []
-          try { const msg = JSON.parse(String((ev as MessageEvent).data)); if (msg?.type==='events') events = msg.events || [] } catch {}
-          try { (async()=>{ await kdsService.applyHubEvents(events) })() } catch {}
-          const tickets = events.filter((e:any)=> String(e.table)==='kdsTickets' && (e.row || e.rows))
-          if (tickets.length){
-            const mapToOrderStatus = (s: string) => {
-              const low = String(s || '').toLowerCase()
-              if (low === 'done' || low === 'delivered') return 'DELIVERED'
-              if (low === 'ready') return 'READY'
-              if (low === 'prep' || low === 'preparing') return 'PREPARING'
-              return 'NEW'
+            let events: any[] = []
+            try { const msg = JSON.parse(String((ev as MessageEvent).data)); if (msg?.type === 'events') events = msg.events || [] } catch {}
+            try { (async () => { await kdsService.applyHubEvents(events) })() } catch {}
+            const tickets = events.filter((e: any) => String(e.table) === 'kdsTickets' && (e.row || e.rows))
+            if (tickets.length) {
+              const mapToOrderStatus = (s: string) => {
+                const low = String(s || '').toLowerCase()
+                if (low === 'done' || low === 'delivered') return 'DELIVERED'
+                if (low === 'ready') return 'READY'
+                if (low === 'prep' || low === 'preparing') return 'PREPARING'
+                return 'NEW'
+              }
+              const byIdStatus: Record<string, string> = {}
+              for (const e of tickets) {
+                const r = e.row || {}
+                const oid = r.order_id ?? r.orderId ?? null
+                if (!oid) continue
+                const id = String(oid)
+                const st = mapToOrderStatus(String(r.status ?? e.status ?? 'queued'))
+                byIdStatus[id] = st
+              }
+              setOrders(prev => prev.map(o => {
+                const oid = String(o.id)
+                const st = byIdStatus[oid]
+                if (!st) return o
+                if (st === 'DELIVERED') return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date() }
+                if (st === 'READY') return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
+                if (st === 'PREPARING') return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date() }
+                if (st === 'NEW') return o.status === 'NEW' ? o : o
+                return o
+              }))
             }
-            const byIdStatus: Record<string,string> = {}
-            for (const e of tickets){
-              const r = e.row || {}
-              const oid = r.order_id ?? r.orderId ?? null
-              if (!oid) continue
-              const id = String(oid)
-              const st = mapToOrderStatus(String(r.status ?? e.status ?? 'queued'))
-              byIdStatus[id] = st
-            }
-            setOrders(prev => prev.map(o => {
-              const oid = String(o.id)
-              const st = byIdStatus[oid]
-              if (!st) return o
-              if (st==='DELIVERED') return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date() }
-              if (st==='READY') return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
-              if (st==='PREPARING') return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date() }
-              if (st==='NEW') return o.status === 'NEW' ? o : o
-              return o
-            }))
-          }
-          const ordEvents = events.filter((e:any)=> String(e.table)==='orders' && (e.row || e.rows))
-          if (ordEvents.length){
-            const incoming: Record<string, any> = {}
-            for (const e of ordEvents){
-              const r = e.row || {}
-              const id = String(r.id ?? '')
-              if (!id) continue
-              incoming[id] = r
-            }
-            setOrders(prev => {
-              const statusRank: Record<string, number> = { NEW: 0, PREPARING: 1, READY: 2, DELIVERED: 3, CANCELLED: 3 }
-              const map: Record<string, Order> = {}
-              for (const o of prev) map[String(o.id)] = o
-              for (const [id, r] of Object.entries(incoming)){
-                const existing = map[id]
-                if (existing){
-                  const incomingStatus = (r as any).status ? String((r as any).status).toUpperCase() : undefined
-                  const currentStatus = String(existing.status || 'NEW').toUpperCase()
-                  const keepStatus = incomingStatus && (statusRank[incomingStatus] ?? 0) < (statusRank[currentStatus] ?? 0)
-                  map[id] = {
-                    ...existing,
-                    ...r,
-                    status: keepStatus ? existing.status : ((r as any).status ?? existing.status),
-                    createdAt: r.createdAt ? new Date(r.createdAt) : existing.createdAt,
-                    updatedAt: r.updatedAt ? new Date(r.updatedAt) : (existing.updatedAt ?? new Date()),
-                    readyAt: r.readyAt ? new Date(r.readyAt) : existing.readyAt,
-                    deliveredAt: r.deliveredAt ? new Date(r.deliveredAt) : existing.deliveredAt,
-                  } as any
-                } else {
-                  map[id] = {
-                    ...(r as any),
-                    createdAt: r.createdAt ? new Date(r.createdAt) : new Date(),
-                    updatedAt: r.updatedAt ? new Date(r.updatedAt) : new Date(),
-                    readyAt: r.readyAt ? new Date(r.readyAt) : undefined,
-                    deliveredAt: r.deliveredAt ? new Date(r.deliveredAt) : undefined,
+            const ordEvents = events.filter((e: any) => String(e.table) === 'orders' && (e.row || e.rows))
+            if (ordEvents.length) {
+              const incoming: Record<string, any> = {}
+              for (const e of ordEvents) {
+                const r = e.row || {}
+                const id = String(r.id ?? '')
+                if (!id) continue
+                incoming[id] = r
+              }
+              setOrders(prev => {
+                const statusRank: Record<string, number> = { NEW: 0, PREPARING: 1, READY: 2, DELIVERED: 3, CANCELLED: 3 }
+                const map: Record<string, Order> = {}
+                for (const o of prev) map[String(o.id)] = o
+                for (const [id, r] of Object.entries(incoming)) {
+                  const existing = map[id]
+                  if (existing) {
+                    const incomingStatus = (r as any).status ? String((r as any).status).toUpperCase() : undefined
+                    const currentStatus = String(existing.status || 'NEW').toUpperCase()
+                    const keepStatus = incomingStatus && (statusRank[incomingStatus] ?? 0) < (statusRank[currentStatus] ?? 0)
+                    map[id] = {
+                      ...existing,
+                      ...r,
+                      status: keepStatus ? existing.status : ((r as any).status ?? existing.status),
+                      createdAt: r.createdAt ? new Date(r.createdAt) : existing.createdAt,
+                      updatedAt: r.updatedAt ? new Date(r.updatedAt) : (existing.updatedAt ?? new Date()),
+                      readyAt: r.readyAt ? new Date(r.readyAt) : existing.readyAt,
+                      deliveredAt: r.deliveredAt ? new Date(r.deliveredAt) : existing.deliveredAt,
+                    } as any
+                  } else {
+                    map[id] = {
+                      ...(r as any),
+                      createdAt: r.createdAt ? new Date(r.createdAt) : new Date(),
+                      updatedAt: r.updatedAt ? new Date(r.updatedAt) : new Date(),
+                      readyAt: r.readyAt ? new Date(r.readyAt) : undefined,
+                      deliveredAt: r.deliveredAt ? new Date(r.deliveredAt) : undefined,
+                    }
                   }
                 }
-              }
-              return Object.values(map)
-            })
-          }
-        })
+                return Object.values(map)
+              })
+            }
+          })
           const scheduleReconnect = () => {
             if (!mounted) return
             const delay = Math.min(30000, 1000 * Math.pow(2, Math.min(5, attempt)))
@@ -894,10 +954,15 @@ export default function CaixaPage() {
           ws.addEventListener('close', () => { scheduleReconnect() })
         }
         connect()
-        // handler unificado com backoff; removido ws2 duplicado
       } catch {}
     })()
-    return () => { mounted = false }
+
+    return () => {
+      mounted = false
+      clearTimeout(reconnectTimer)
+      try { ws?.close() } catch {}
+      try { cleanupSupabase?.() } catch {}
+    }
   }, [setOrders])
 
   

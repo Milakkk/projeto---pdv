@@ -43,6 +43,9 @@ export const products = sqliteTable('products', {
   unitId: text('unit_id').references(() => units.id),
   priceCents: integer('price_cents').notNull(),
   active: integer('active', { mode: 'boolean' }).default(true).notNull(),
+  slaMinutes: integer('sla_minutes').default(15).notNull(),
+  skipKitchen: integer('skip_kitchen', { mode: 'boolean' }).default(false).notNull(),
+  unitDeliveryCount: integer('unit_delivery_count').default(1).notNull(),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
 })
@@ -53,6 +56,7 @@ export const orders = sqliteTable('orders', {
   code: text('code').notNull(),
   status: text('status').notNull(),
   totalCents: integer('total_cents').default(0).notNull(),
+  notes: text('notes'),
   pendingSync: integer('pending_sync', { mode: 'boolean' }).default(false).notNull(),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -83,8 +87,19 @@ export const kdsTickets = sqliteTable('kds_tickets', {
   orderId: text('order_id').references(() => orders.id).notNull(),
   status: text('status').notNull(),
   station: text('station'),
+  acknowledgedAt: text('acknowledged_at'),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
+})
+
+export const kdsSyncLogs = sqliteTable('kds_sync_logs', {
+  id: text('id').primaryKey(),
+  ticketId: text('ticket_id').references(() => kdsTickets.id),
+  orderId: text('order_id'),
+  eventType: text('event_type').notNull(), // 'RECEIVED', 'SYNC_DELAY'
+  latencyMs: integer('latency_ms'),
+  payload: text('payload'),
+  createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`).notNull(),
 })
 
 export const cashSessions = sqliteTable('cash_sessions', {
@@ -150,6 +165,7 @@ export type Order = typeof orders.$inferSelect
 export type OrderItem = typeof orderItems.$inferSelect
 export type Payment = typeof payments.$inferSelect
 export type KDSTicket = typeof kdsTickets.$inferSelect
+export type KDSSyncLog = typeof kdsSyncLogs.$inferSelect
 export type CashSession = typeof cashSessions.$inferSelect
 export type CashMovement = typeof cashMovements.$inferSelect
 export type SavedCart = typeof savedCarts.$inferSelect
@@ -167,6 +183,7 @@ export const ALL_TABLES = {
   orderItems,
   payments,
   kdsTickets,
+  kdsSyncLogs,
   cashSessions,
   cashMovements,
   savedCarts,

@@ -64,6 +64,12 @@ const statusInfo = {
   CANCELLED: { text: 'Cancelado', color: 'bg-red-100 text-red-800', bgColor: 'bg-red-50' },
 } as const;
 
+const formatOrderPin = (pin: string) => {
+  const raw = String(pin ?? '').trim()
+  if (!raw) return '#-'
+  return `#${raw.replace(/^#+/, '')}`
+}
+
 function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAssignOperator, onAssignOperatorToAll, onDisplayAlert, onUpdateItemStatus, onCancelOrder }: OrderRowProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -363,7 +369,7 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
       <div className={`p-4 ${bgColor} grid grid-cols-1 lg:grid-cols-12 gap-4 items-start border-b border-gray-200 cursor-pointer`} onClick={() => setIsExpanded(prev => !prev)}>
         {/* Coluna Pedido */}
         <div className="lg:col-span-2 min-w-0">
-          <div className="text-xs font-medium text-gray-600">#{order.pin}</div>
+          <div className="text-xs font-medium text-gray-600">{formatOrderPin(order.pin)}</div>
           <div className="bg-blue-500 text-white text-lg font-bold px-3 py-1 rounded-lg inline-block mt-1 whitespace-nowrap">
             {order.password}
           </div>
@@ -791,7 +797,7 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
       >
         <div className="space-y-4">
           <p className="text-sm text-gray-600">
-            Tem certeza que deseja cancelar o pedido #{order.pin}?
+            Tem certeza que deseja cancelar o pedido {formatOrderPin(order.pin)}?
           </p>
           
           <Input

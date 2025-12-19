@@ -18,6 +18,12 @@ const statusInfo = {
   READY: { text: 'Pronto para Retirada', color: 'bg-green-100 text-green-800', icon: 'ri-check-line', order: 3 },
 };
 
+const formatOrderPin = (pin: string) => {
+  const raw = String(pin ?? '').trim()
+  if (!raw) return '#-'
+  return `#${raw.replace(/^#+/, '')}`
+}
+
 // Componente auxiliar para exibir o status do tempo
 function OrderTimeStatus({ order }: { order: Order }) {
   const isTimerActive = order.status !== 'DELIVERED' && order.status !== 'CANCELLED';
@@ -260,7 +266,7 @@ export default function OrderTrackerModal({ isOpen, onClose, activeOrders, onMar
                     onClick={() => handleViewDetails(order)}
                   >
                     <div className="col-span-3 flex flex-col min-w-0">
-                      <span className="text-lg font-bold text-gray-900 flex-shrink-0">#{order.pin}</span>
+                      <span className="text-lg font-bold text-gray-900 flex-shrink-0">{formatOrderPin(order.pin)}</span>
                       <span className="text-sm font-medium text-gray-900 block truncate">
                         Senha: <span className="font-bold text-blue-600">{order.password}</span>
                       </span>

@@ -5,25 +5,12 @@ import Input from '../../../components/base/Input';
 import { useTimer } from '../../../hooks/useTimer'; // Importando useTimer
 import { printOrder } from '../../../utils/print'; // Importando a função de impressão
 import { useAuth } from '../../../context/AuthContext';
+import { formatDurationSeconds, normalizeSlaMinutes } from '../../../utils/time';
 
 interface OrderListTabProps {
   orders: Order[];
   onMarkAsDelivered: (orderId: string) => void;
 }
-
-// Função auxiliar para formatar a duração (copiada de DeliveredOrderList)
-const formatDuration = (seconds: number) => {
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  
-  if (mins === 0 && secs === 0) return '0s';
-  
-  const parts = [];
-  if (mins > 0) parts.push(`${mins.toString().padStart(2, '0')}m`);
-  if (secs > 0) parts.push(`${secs.toString().padStart(2, '0')}s`);
-  
-  return parts.join(' ');
-};
 
 // Função auxiliar para consolidar pagamentos (copiada de RelatoriosPage)
 const consolidatePayments = (order: Order) => {
@@ -60,10 +47,17 @@ const extractOptionalObservations = (observations: string | undefined): string[]
         .filter(p => p.length > 0);
 };
 
+const formatOrderPin = (pin: string) => {
+  const raw = String(pin ?? '').trim()
+  if (!raw) return '#-'
+  return `#${raw.replace(/^#+/, '')}`
+}
+
 // Componente auxiliar para exibir o status do tempo (adaptado para exibir todas as métricas)
 function OrderTimeStatus({ order }: { order: Order }) {
   const isTimerActive = order.status !== 'DELIVERED' && order.status !== 'CANCELLED';
-  const { timeElapsed, isOverdue, formatTime } = useTimer(order.createdAt, order.slaMinutes, isTimerActive);
+  const slaMinutes = normalizeSlaMinutes(order.slaMinutes, 15)
+  const { timeElapsed, isOverdue, formatTime } = useTimer(order.createdAt, slaMinutes, isTimerActive);
 
   // 1. Cálculo das métricas de tempo
   const { 
@@ -144,7 +138,7 @@ function OrderTimeStatus({ order }: { order: Order }) {
     // Se o pedido estiver em NEW, a métrica de "Cozinha (SLA)" deve ser apenas o tempo de espera
     // Se já estiver em PREPARING ou READY/DELIVERED, é o tempo total
     const tempoCozinha = Math.floor(tempoCozinhaMs / 1000);
-    const wasLate = (tempoCozinha / 60) > order.slaMinutes;
+    const wasLate = (tempoCozinha / 60) > slaMinutes;
     
     // 4. Tempo para Entregar (READY): Tempo entre fim da produção e entrega
     const tempoEntregaMs = finalTime - productionEndTime;
@@ -161,7 +155,7 @@ function OrderTimeStatus({ order }: { order: Order }) {
             tempoEntrega: Math.floor((finalTime - productionEndTime) / 1000),
             tempoCozinha: Math.floor((productionEndTime - createdAt) / 1000),
             tempoTotalDecorrido: Math.floor((finalTime - createdAt) / 1000),
-            wasLate: ((productionEndTime - createdAt) / 60000) > order.slaMinutes,
+            wasLate: ((productionEndTime - createdAt) / 60000) > slaMinutes,
         };
     }
     
@@ -182,29 +176,27 @@ function OrderTimeStatus({ order }: { order: Order }) {
       <div className={`text-xs font-medium flex flex-col space-y-1`}>
         <div className="flex justify-between">
           <span className="text-gray-500">Espera:</span>
-          <span className="font-medium">{formatDuration(tempoEspera)}</span>
+          <span className="font-medium">{formatDurationSeconds(tempoEspera)}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-gray-500">Preparo:</span>
-          <span className="font-medium">{formatDuration(tempoPreparo)}</span>
+          <span className="font-medium">{formatDurationSeconds(tempoPreparo, { minSeconds: 1 })}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-gray-500">Entrega:</span>
-          <span className="font-medium">{formatDuration(tempoEntrega)}</span>
+          <span className="font-medium">{formatDurationSeconds(tempoEntrega, { minSeconds: 1 })}</span>
         </div>
         <div className="flex justify-between border-t border-gray-200 pt-1 mt-1">
           <span className="text-gray-500">Cozinha (SLA):</span>
           <span className={`font-bold ${wasLate ? 'text-red-600' : 'text-green-600'}`}>
-            {formatDuration(tempoCozinha)}
+            {formatDurationSeconds(tempoCozinha)}
           </span>
         </div>
         <div className="flex justify-between">
           <span className="text-gray-500">Total Decorrido:</span>
-          <span className="font-medium">{formatDuration(tempoTotalDecorrido)}</span>
+          <span className="font-medium">{formatDurationSeconds(tempoTotalDecorrido)}</span>
         </div>
-        <span className="text-gray-500">
-          SLA: {order.slaMinutes}m
-        </span>
+        <span className="text-gray-500">SLA: {slaMinutes}m</span>
       </div>
     );
   }
@@ -214,32 +206,30 @@ function OrderTimeStatus({ order }: { order: Order }) {
     <div className={`text-xs font-medium flex flex-col space-y-1`}>
       <div className="flex justify-between">
         <span className="text-gray-500">Espera:</span>
-        <span className="font-medium">{formatDuration(tempoEspera)}</span>
+        <span className="font-medium">{formatDurationSeconds(tempoEspera)}</span>
       </div>
       <div className="flex justify-between">
         <span className="text-gray-500">Preparo:</span>
-        <span className="font-medium">{formatDuration(tempoPreparo)}</span>
+        <span className="font-medium">{formatDurationSeconds(tempoPreparo, { minSeconds: 1 })}</span>
       </div>
       <div className="flex justify-between">
         <span className="text-gray-500">Entrega:</span>
-        <span className="font-medium">{formatDuration(tempoEntrega)}</span>
+        <span className="font-medium">{formatDurationSeconds(tempoEntrega, { minSeconds: 1 })}</span>
       </div>
       <div className="flex justify-between border-t border-gray-200 pt-1 mt-1">
         <span className="text-gray-500">Cozinha (SLA):</span>
         <span className={`font-bold ${wasLate ? 'text-red-600' : 'text-green-600'}`}>
-          {formatDuration(tempoCozinha)}
+          {formatDurationSeconds(tempoCozinha)}
         </span>
       </div>
       <div className="flex justify-between">
         <span className="text-gray-500">Total Decorrido:</span>
-        <span className="font-medium">{formatDuration(tempoTotalDecorrido)}</span>
+        <span className="font-medium">{formatDurationSeconds(tempoTotalDecorrido)}</span>
       </div>
-      <span className="text-gray-500">
-        SLA: {order.slaMinutes}m
-      </span>
+      <span className="text-gray-500">SLA: {slaMinutes}m</span>
     </div>
   );
-}
+} 
 
 
 export default function OrderListTab({ orders, onMarkAsDelivered }: OrderListTabProps) {
@@ -394,7 +384,7 @@ export default function OrderListTab({ orders, onMarkAsDelivered }: OrderListTab
                     <tr key={order.id} className="hover:bg-gray-50">
                       <td className="px-4 py-4 align-top">
                         <span className="bg-amber-100 text-amber-800 px-2 py-1 rounded-full text-xs font-bold inline-block w-fit">
-                          #{order.pin}
+                          {formatOrderPin(order.pin)}
                         </span>
                       </td>
                       

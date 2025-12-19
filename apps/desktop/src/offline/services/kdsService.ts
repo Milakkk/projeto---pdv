@@ -1,4 +1,5 @@
 import { supabase } from '../../utils/supabase'
+import { supabaseSync } from '../../utils/supabaseSync'
 // Renderer: usar IPC seguro exposto pelo preload
 const query = async (sql: string, params?: any[]) => {
   const fn = (window as any)?.api?.db?.query
@@ -49,16 +50,93 @@ async function pushLanEvents(events: any[]) {
   }
 }
 
+export async function acknowledgeTicket(ticketId: string, orderId?: string) {
+  const now = new Date().toISOString()
+  
+  // Log receipt if not already logged
+  try {
+    if (supabase) {
+      const { data: ticket } = await supabaseSync.select('kds_tickets', (q) => 
+        q.select('created_at, acknowledged_at').eq('id', ticketId).maybeSingle(),
+        { silent: true }
+      )
+      
+      if (ticket && !ticket.acknowledged_at) {
+        const createdAt = new Date(ticket.created_at).getTime()
+        const nowMs = Date.now()
+        const latencyMs = nowMs - createdAt
+        
+        await supabaseSync.update('kds_tickets', 
+          { acknowledged_at: now, updated_at: now }, 
+          { id: ticketId }
+        )
+          
+        await supabaseSync.insert('kds_sync_logs', {
+          id: uuid(),
+          ticket_id: ticketId,
+          order_id: orderId || null,
+          event_type: 'RECEIVED',
+          latency_ms: latencyMs,
+          created_at: now
+        })
+      }
+    }
+  } catch (err) {
+    console.error('[KDS] Acknowledge error:', err)
+  }
+
+  // SQLite local update
+  try {
+    await query('UPDATE kds_tickets SET acknowledged_at = ?, updated_at = ? WHERE id = ?', [now, now, ticketId])
+  } catch { }
+}
+
+export async function logSyncDelay(ticketId: string, orderId: string, latencyMs: number) {
+  const now = new Date().toISOString()
+  if (supabase) {
+    try {
+      await supabaseSync.insert('kds_sync_logs', {
+        id: uuid(),
+        ticket_id: ticketId,
+        order_id: orderId,
+        event_type: 'SYNC_DELAY',
+        latency_ms: latencyMs,
+        created_at: now
+      }, { silent: true })
+    } catch { }
+  }
+}
+
+export async function listAllLocalTickets() {
+  try {
+    const api = (window as any)?.api?.db?.query
+    if (typeof api === 'function') {
+      const res = await query('SELECT * FROM kds_tickets')
+      return res?.rows ?? []
+    }
+    const raw = localStorage.getItem('kdsTickets')
+    return raw ? JSON.parse(raw) : []
+  } catch { return [] }
+}
+
 export async function getPhaseTimes(orderId: string): Promise<any> {
   // [FIX] Supabase call enabled after schema fix
   try {
     if (supabase) {
-      const { data } = await supabase
-        .from('kds_phase_times')
-        .select('*')
-        .eq('order_id', orderId)
-        .maybeSingle()
-      return data || {}
+      const { data } = await supabaseSync.select('kds_phase_times', (q) => 
+        q.select('*').eq('order_id', orderId).maybeSingle(),
+        { silent: true }
+      )
+      const row: any = data || {}
+      return {
+        ...row,
+        orderId: row.orderId ?? row.order_id ?? orderId,
+        newStart: row.newStart ?? row.new_start ?? null,
+        preparingStart: row.preparingStart ?? row.preparing_start ?? null,
+        readyAt: row.readyAt ?? row.ready_at ?? null,
+        deliveredAt: row.deliveredAt ?? row.delivered_at ?? null,
+        updatedAt: row.updatedAt ?? row.updated_at ?? null,
+      }
     }
   } catch { /* ignore */ }
   
@@ -257,10 +335,10 @@ export async function loadUnitStatesForOrder(orderId: string): Promise<Record<st
     return map
   } catch {
     if (supabase) {
-      const { data } = await supabase
-        .from('kds_unit_states')
-        .select('*')
-        .eq('order_id', orderId)
+      const { data } = await supabaseSync.select('kds_unit_states', (q) =>
+        q.select('*').eq('order_id', orderId),
+        { silent: true }
+      )
       const out: Record<string, any> = {}
       for (const r of (data || [])) {
         // [FIX] Use new columns for correct key mapping
@@ -418,7 +496,7 @@ export async function enqueueTicket(params: { orderId: UUID; station?: string | 
   if (supabase) {
     await supabase
       .from('kds_tickets')
-      .insert({ id, order_id: params.orderId, unit_id: unitId ?? null, status: 'NEW', station: params.station ?? null, updated_at: now, version: 1, pending_sync: false })
+      .insert({ id, order_id: params.orderId, kitchen_id: null, operator_id: null, status: 'NEW', updated_at: now, version: 1, pending_sync: false })
     try { console.log('[KDS] enqueueTicket supabase', { id, orderId: params.orderId, status: 'NEW', kitchenId: null }) } catch { }
   } else {
     try {
@@ -569,6 +647,82 @@ export async function setTicketStatus(id: UUID, status: 'queued' | 'prep' | 'rea
   } catch { }
 }
 
+export async function listTicketStatusRows(kitchenId?: string | null) {
+  const supabaseToLocal = (s: any): 'queued' | 'prep' | 'ready' | 'done' | null => {
+    const up = String(s ?? '').toUpperCase()
+    if (up === 'NEW' || up === 'QUEUED') return 'queued'
+    if (up === 'PREPARING' || up === 'PREP') return 'prep'
+    if (up === 'READY') return 'ready'
+    if (up === 'DELIVERED' || up === 'DONE') return 'done'
+    return null
+  }
+
+  if (supabase) {
+    try {
+      let q = supabase
+        .from('kds_tickets')
+        .select('id, order_id, status, updated_at, kitchen_id')
+        .in('status', ['NEW', 'PREPARING', 'READY', 'DELIVERED'])
+      if (kitchenId) q = q.eq('kitchen_id', kitchenId)
+      const { data } = await q
+      const out = [] as Array<{ ticketId: string; orderId: string; status: 'queued' | 'prep' | 'ready' | 'done'; updatedAt?: string; kitchenId?: string | null }>
+      for (const r of (Array.isArray(data) ? data : []) as any[]) {
+        const orderId = r?.order_id ? String(r.order_id) : ''
+        const status = supabaseToLocal(r?.status)
+        if (!orderId || !status) continue
+        out.push({
+          ticketId: String(r?.id ?? ''),
+          orderId,
+          status,
+          updatedAt: r?.updated_at ? String(r.updated_at) : undefined,
+          kitchenId: r?.kitchen_id != null ? String(r.kitchen_id) : null,
+        })
+      }
+      return out
+    } catch {}
+  }
+
+  try {
+    const res = await query(
+      'SELECT id, order_id, status, updated_at FROM kds_tickets WHERE status IN (?, ?, ?, ?)',
+      ['queued', 'prep', 'ready', 'done'],
+    )
+    const out = [] as Array<{ ticketId: string; orderId: string; status: 'queued' | 'prep' | 'ready' | 'done'; updatedAt?: string }>
+    for (const r of (res?.rows ?? []) as any[]) {
+      const orderId = r?.order_id ? String(r.order_id) : ''
+      const status = supabaseToLocal(r?.status) as any
+      if (!orderId || !status) continue
+      out.push({
+        ticketId: String(r?.id ?? ''),
+        orderId,
+        status,
+        updatedAt: r?.updated_at ? String(r.updated_at) : undefined,
+      })
+    }
+    return out
+  } catch {
+    try {
+      const raw = localStorage.getItem('kdsTickets')
+      const arr = raw ? JSON.parse(raw) : []
+      const out = [] as Array<{ ticketId: string; orderId: string; status: 'queued' | 'prep' | 'ready' | 'done'; updatedAt?: string }>
+      for (const r of (Array.isArray(arr) ? arr : []) as any[]) {
+        const orderId = String(r?.order_id ?? r?.orderId ?? '')
+        const status = supabaseToLocal(r?.status) as any
+        if (!orderId || !status) continue
+        out.push({
+          ticketId: String(r?.id ?? ''),
+          orderId,
+          status,
+          updatedAt: r?.updated_at ? String(r.updated_at) : undefined,
+        })
+      }
+      return out
+    } catch {
+      return []
+    }
+  }
+}
+
 export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 'done', kitchenId?: string | null) {
   let tickets: any[] = []
 
@@ -581,25 +735,81 @@ export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 
       // Log removido para performance
       // try { console.log('[KDS] listTickets supabase', { status: map[status], kitchenId: kitchenId ?? null, count: (data || []).length }) } catch { }
       const sbTickets = data || []
+      try {
+        const nowIso = new Date().toISOString()
+        const toAck = sbTickets
+          .filter((t: any) => t && t.id && t.status === 'NEW' && t.created_at && t.updated_at && String(t.created_at) === String(t.updated_at))
+          .map((t: any) => String(t.id))
+        if (toAck.length > 0) {
+          await supabase.from('kds_tickets').update({ updated_at: nowIso }).in('id', toAck)
+          try { console.log('[KDS] Confirmação de recebimento enviada', { count: toAck.length, kitchenId: kitchenId ?? null }) } catch {}
+        }
+      } catch {}
+
+      const chunk = <T,>(arr: T[], size: number) => {
+        const out: T[][] = []
+        for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
+        return out
+      }
+
+      const orderIds = (Array.isArray(sbTickets) ? sbTickets : [])
+        .map((t: any) => String(t?.order_id ?? ''))
+        .filter((v: string) => v)
+
+      const phaseTimesMap: Record<string, any> = {}
+      try {
+        for (const part of chunk(orderIds, 200)) {
+          const { data: rows } = await supabase
+            .from('kds_phase_times')
+            .select('order_id, new_start, preparing_start, ready_at, delivered_at, updated_at')
+            .in('order_id', part)
+          for (const r of (Array.isArray(rows) ? rows : []) as any[]) {
+            const oid = String(r?.order_id ?? '')
+            if (!oid) continue
+            phaseTimesMap[oid] = {
+              orderId: oid,
+              newStart: r?.new_start ?? null,
+              preparingStart: r?.preparing_start ?? null,
+              readyAt: r?.ready_at ?? null,
+              deliveredAt: r?.delivered_at ?? null,
+              updatedAt: r?.updated_at ?? null,
+            }
+          }
+        }
+      } catch { }
+
+      const itemsByOrderId: Record<string, any[]> = {}
+      try {
+        for (const part of chunk(orderIds, 200)) {
+          const { data: rows } = await supabase
+            .from('order_items')
+            .select('*')
+            .in('order_id', part)
+          for (const r of (Array.isArray(rows) ? rows : []) as any[]) {
+            const oid = String(r?.order_id ?? '')
+            if (!oid) continue
+            if (!itemsByOrderId[oid]) itemsByOrderId[oid] = []
+            itemsByOrderId[oid].push(r)
+          }
+        }
+      } catch { }
 
       const enriched = [] as any[]
       for (const t of sbTickets) {
         const ordId = String(t.order_id)
-        const times = await getPhaseTimes(ordId)
-        let items: any[] = []
-        try {
-          const { data: oi } = await supabase
-            .from('order_items')
-            .select('*')
-            .eq('order_id', ordId)
-          items = (oi || []).map((it: any) => ({
-            id: String(it.id),
-            quantity: Number(it.quantity ?? it.qty ?? 1),
+        const times = phaseTimesMap[ordId] || {}
+        const rows = itemsByOrderId[ordId] || []
+        const items = rows.map((it: any) => {
+          const quantity = Math.max(1, Number(it.quantity ?? it.qty ?? 1))
+          const id = String(it.id)
+          return {
+            id,
+            quantity,
             skipKitchen: false,
             menuItem: { id: String(it.product_id ?? ''), name: String(it.product_name ?? 'Item'), unitDeliveryCount: 1, categoryId: String(it.category_id ?? '') },
-            productionUnits: Array.from({ length: Math.max(1, Number(it.qty ?? 1)) }, (_, idx) => ({ unitId: `${String(it.id)}-${idx + 1}`, unitStatus: 'PENDING', operatorName: undefined, completedObservations: [], completedAt: undefined })),
-          }))
-        } catch { }
+            productionUnits: Array.from({ length: quantity }, (_, idx) => ({ unitId: `${id}-${idx + 1}`, unitStatus: 'PENDING', operatorName: undefined, completedObservations: [], completedAt: undefined })),
+          }
+        })
         enriched.push({ ...t, items, createdAt: times?.newStart || t.created_at, updatedAt: times?.preparingStart || t.updated_at, readyAt: times?.readyAt, deliveredAt: times?.deliveredAt })
       }
       tickets = [...tickets, ...enriched]

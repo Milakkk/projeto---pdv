@@ -1,18 +1,44 @@
 import { getSupabaseAdmin } from '../../lib/supabaseAdmin'
 
-export default async function ChecklistDashboard() {
-  const supa = getSupabaseAdmin()
-  const { data: masters } = await supa
-    .from('checklist_masters')
-    .select('id,name,description,frequency,active,assigned_roles,unit_id')
-    .order('updated_at', { ascending: false })
-    .limit(50)
+export const dynamic = 'force-dynamic'
 
-  const { data: executions } = await supa
-    .from('checklist_executions')
-    .select('id,name,unit_id,status,completion_percentage,started_at,completed_at')
-    .order('started_at', { ascending: false })
-    .limit(50)
+export default async function ChecklistDashboard() {
+  let masters: any[] = []
+  let executions: any[] = []
+  let fatal: string | null = null
+
+  try {
+    const supa = getSupabaseAdmin()
+    const [{ data: mastersData, error: mastersErr }, { data: execData, error: execErr }] = await Promise.all([
+      supa
+        .from('checklist_masters')
+        .select('id,name,description,frequency,active,assigned_roles,unit_id')
+        .order('updated_at', { ascending: false })
+        .limit(50),
+      supa
+        .from('checklist_executions')
+        .select('id,name,unit_id,status,completion_percentage,started_at,completed_at')
+        .order('started_at', { ascending: false })
+        .limit(50),
+    ])
+
+    if (mastersErr) throw mastersErr
+    if (execErr) throw execErr
+
+    masters = mastersData || []
+    executions = execData || []
+  } catch (e: any) {
+    fatal = e?.message ?? 'Erro ao carregar dados'
+  }
+
+  if (fatal) {
+    return (
+      <div style={{ padding: 24 }}>
+        <h1 style={{ fontSize: 20, fontWeight: 600 }}>Dashboard de Checklists</h1>
+        <p style={{ marginTop: 12, color: '#b91c1c', fontSize: 13 }}>{fatal}</p>
+      </div>
+    )
+  }
 
   return (
     <div style={{ padding: 24 }}>
@@ -20,7 +46,7 @@ export default async function ChecklistDashboard() {
       <div style={{ marginTop: 16 }}>
         <h2 style={{ fontSize: 16, fontWeight: 600 }}>Modelos</h2>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(280px,1fr))', gap: 12 }}>
-          {(masters || []).map((m) => (
+          {masters.map((m) => (
             <div key={m.id} style={{ border: '1px solid #e5e7eb', borderRadius: 8, padding: 12 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <strong>{m.name}</strong>
@@ -66,4 +92,3 @@ export default async function ChecklistDashboard() {
     </div>
   )
 }
-

@@ -1,4 +1,5 @@
 import { supabase } from '../../utils/supabase'
+import { supabaseSync } from '../../utils/supabaseSync'
 
 const query = async (sql: string, params?: any[]) => {
   const fn = (window as any)?.api?.db?.query
@@ -35,18 +36,17 @@ async function setDeliveredPhaseTime(orderId: UUID, deliveredAtIso: string) {
 
   if (supabase) {
     try {
-      const { data: existing } = await supabase
-        .from('kds_phase_times')
-        .select('id, delivered_at')
-        .eq('order_id', orderId)
-        .maybeSingle()
+      const { data: existing } = await supabaseSync.select('kds_phase_times', (q) =>
+        q.select('id, delivered_at').eq('order_id', orderId).maybeSingle(),
+        { silent: true }
+      )
 
       const payload: any = { order_id: orderId, updated_at: now }
       if (!existing?.delivered_at) payload.delivered_at = deliveredAtIso
       if (existing?.id) {
-        await supabase.from('kds_phase_times').update(payload).eq('id', existing.id)
+        await supabaseSync.update('kds_phase_times', payload, { id: existing.id })
       } else {
-        await supabase.from('kds_phase_times').insert({ ...payload, delivered_at: deliveredAtIso })
+        await supabaseSync.insert('kds_phase_times', { ...payload, delivered_at: deliveredAtIso })
       }
       return
     } catch {}
@@ -58,6 +58,32 @@ async function setDeliveredPhaseTime(orderId: UUID, deliveredAtIso: string) {
     const cur = obj[String(orderId)] || {}
     obj[String(orderId)] = { ...cur, deliveredAt: cur.deliveredAt ?? deliveredAtIso, updatedAt: now }
     localStorage.setItem('kdsPhaseTimes', JSON.stringify(obj))
+  } catch {}
+}
+
+async function scheduleTicketReceiptCheck(params: { orderId: UUID; ticketId: UUID; sentAtIso: string; kitchenId: string | null }) {
+  if (!supabase) return
+  try {
+    const sentAtMs = new Date(params.sentAtIso).getTime()
+    setTimeout(async () => {
+      try {
+        if (!supabase) return
+        const { data } = await supabaseSync.select('kds_tickets', (q) =>
+          q.select('id, created_at, updated_at, kitchen_id, status').eq('id', params.ticketId).maybeSingle(),
+          { silent: true }
+        )
+        if (!data) return
+        const createdAtMs = data.created_at ? new Date(String(data.created_at)).getTime() : sentAtMs
+        const updatedAtMs = data.updated_at ? new Date(String(data.updated_at)).getTime() : NaN
+        const acked = data.created_at && data.updated_at && String(data.created_at) !== String(data.updated_at)
+        const transferMs = Number.isFinite(updatedAtMs) ? Math.max(0, updatedAtMs - createdAtMs) : null
+        if (acked) {
+          try { console.log('[PDV->KDS] Confirmação de recebimento', { orderId: params.orderId, ticketId: params.ticketId, kitchenId: data.kitchen_id ?? params.kitchenId, status: data.status, transferMs }) } catch {}
+        } else {
+          try { console.warn('[PDV->KDS] Sem confirmação de recebimento (ainda)', { orderId: params.orderId, ticketId: params.ticketId, kitchenId: data.kitchen_id ?? params.kitchenId, status: data.status }) } catch {}
+        }
+      } catch {}
+    }, 1500)
   } catch {}
 }
 
@@ -81,23 +107,21 @@ export async function createOrder(payload?: {
       const rand = () => Math.max(1000, Math.floor(Math.random() * 9999))
       const pin = rand()
       const password = rand()
-      const { error } = await supabase
-        .from('orders')
-        .insert({
-          id,
-          unit_id: validUnitId,
-          status: 'NEW',
-          total_cents: 0,
-          discount_percent: 0,
-          discount_cents: 0,
-          observations: payload?.notes ?? null,
-          created_at: payload?.openedAt ?? now,
-          updated_at: now,
-          pin,
-          password,
-          version: 1,
-          pending_sync: false,
-        })
+      const { error } = await supabaseSync.insert('orders', {
+        id,
+        unit_id: validUnitId,
+        status: 'NEW',
+        total_cents: 0,
+        discount_percent: 0,
+        discount_cents: 0,
+        observations: payload?.notes ?? null,
+        created_at: payload?.openedAt ?? now,
+        updated_at: now,
+        pin,
+        password,
+        version: 1,
+        pending_sync: false,
+      })
       if (error) throw error
       persisted = true
     } catch (err) {
@@ -147,67 +171,100 @@ export async function addItem(params: {
 
   if (supabase) {
     try {
+      const transferStart = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()
       let productName: string | null = null
       let categoryId: string | null = null
       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
       
       if (params.productId && uuidRegex.test(params.productId)) {
-        const { data: p } = await supabase
-          .from('products')
-          .select('name, category_id')
-          .eq('id', params.productId)
-          .maybeSingle()
+        const { data: p } = await supabaseSync.select('products', (q) =>
+          q.select('name, category_id').eq('id', params.productId).maybeSingle(),
+          { silent: true }
+        )
         productName = p?.name ?? null
         categoryId = p?.category_id ?? null
       }
       
-      const { error: errItem } = await supabase
-        .from('order_items')
-        .insert({
-          id,
-          order_id: params.orderId,
-          product_id: (params.productId && uuidRegex.test(params.productId)) ? params.productId : null,
-          product_name: productName ?? 'Item',
-          quantity: params.qty,
-          unit_price_cents: params.unitPriceCents,
-          total_cents: subtotal,
-          observations: params.notes ?? null,
-          created_at: now,
-          updated_at: now,
-          version: 1,
-          pending_sync: false,
-        })
+      const { error: errItem } = await supabaseSync.insert('order_items', {
+        id,
+        order_id: params.orderId,
+        product_id: (params.productId && uuidRegex.test(params.productId)) ? params.productId : null,
+        product_name: productName ?? 'Item',
+        quantity: params.qty,
+        unit_price_cents: params.unitPriceCents,
+        total_cents: subtotal,
+        observations: params.notes ?? null,
+        created_at: now,
+        updated_at: now,
+        version: 1,
+        pending_sync: false,
+      })
       if (errItem) throw errItem
       
-      const { data: ordRow, error: ordSelErr } = await supabase
-        .from('orders')
-        .select('total_cents')
-        .eq('id', params.orderId)
-        .maybeSingle()
+      const { data: ordRow, error: ordSelErr } = await supabaseSync.select('orders', (q) =>
+        q.select('total_cents').eq('id', params.orderId).maybeSingle(),
+        { silent: true }
+      )
       if (!ordSelErr) {
         const current = Number(ordRow?.total_cents ?? 0)
-        await supabase
-          .from('orders')
-          .update({ total_cents: current + subtotal, updated_at: now })
-          .eq('id', params.orderId)
+        await supabaseSync.update('orders', 
+          { total_cents: current + subtotal, updated_at: now },
+          { id: params.orderId }
+        )
       }
 
       // Roteamento por cozinha
       let kitchenIds: string[] = []
       if (categoryId) {
-        const { data: cats } = await supabase
-          .from('category_kitchens')
-          .select('kitchen_id')
-          .eq('category_id', categoryId)
+        const { data: cats } = await supabaseSync.select('category_kitchens', (q) =>
+          q.select('kitchen_id').eq('category_id', categoryId),
+          { silent: true }
+        )
         kitchenIds = (cats || []).map((r: any) => String(r.kitchen_id)).filter(Boolean)
       }
-      const baseTicket = { order_id: params.orderId, status: 'NEW', updated_at: now, version: 1, pending_sync: false }
+      const baseTicket = { order_id: params.orderId, status: 'NEW', updated_at: now, version: 1, pending_sync: false } as any
+      const inserted: { ticketId: UUID; kitchenId: string | null }[] = []
+
       if (kitchenIds.length > 0) {
-        const rows = kitchenIds.map((kid) => ({ id: uuid(), ...baseTicket, kitchen_id: kid }))
-        await supabase.from('kds_tickets').insert(rows)
+        const { data: existing } = await supabaseSync.select('kds_tickets', (q) =>
+          q.select('id,kitchen_id').eq('order_id', params.orderId).in('kitchen_id', kitchenIds),
+          { silent: true }
+        )
+        const existingSet = new Set((existing || []).map((r: any) => String(r.kitchen_id)))
+        const missing = kitchenIds.filter((kid) => !existingSet.has(String(kid)))
+        if (missing.length > 0) {
+          const rows = missing.map((kid) => {
+            const ticketId = uuid()
+            inserted.push({ ticketId, kitchenId: kid })
+            return { id: ticketId, ...baseTicket, kitchen_id: kid }
+          })
+          await supabaseSync.insert('kds_tickets', rows)
+        }
       } else {
-        await supabase.from('kds_tickets').insert({ id: uuid(), ...baseTicket, kitchen_id: null })
+        const { data: existingNull } = await supabaseSync.select('kds_tickets', (q) =>
+          q.select('id').eq('order_id', params.orderId).is('kitchen_id', null).limit(1),
+          { silent: true }
+        )
+        if ((existingNull || []).length === 0) {
+          const ticketId = uuid()
+          inserted.push({ ticketId, kitchenId: null })
+          await supabaseSync.insert('kds_tickets', { id: ticketId, ...baseTicket, kitchen_id: null })
+        }
       }
+
+      try {
+        const end = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()
+        const ms = Math.max(0, end - (transferStart as any))
+        if (inserted.length > 0) {
+          console.log('[PDV->KDS] Tickets criados', { orderId: params.orderId, count: inserted.length, transferMs: Math.round(ms) })
+        }
+      } catch {}
+
+      try {
+        for (const it of inserted) {
+          scheduleTicketReceiptCheck({ orderId: params.orderId, ticketId: it.ticketId, kitchenId: it.kitchenId, sentAtIso: now })
+        }
+      } catch {}
       persisted = true
     } catch (err) {
       console.warn('[ordersService] Falha ao adicionar item no Supabase, tentando local:', err)
@@ -288,18 +345,19 @@ export async function removeItem(itemId: UUID) {
 export async function closeOrder(orderId: UUID) {
   const now = new Date().toISOString()
   if (supabase) {
-    const { data: existing, error: selErr } = await supabase
-      .from('orders')
-      .select('completed_at')
-      .eq('id', orderId)
-      .maybeSingle()
-    if (selErr) throw selErr
-    const completedAt = (existing as any)?.completed_at ?? now
-    const { error } = await supabase
-      .from('orders')
-      .update({ status: 'DELIVERED', completed_at: completedAt, updated_at: now })
-      .eq('id', orderId)
-    if (error) throw error
+    try {
+      const { data: existing } = await supabaseSync.select('orders', (q) =>
+        q.select('completed_at').eq('id', orderId).maybeSingle(),
+        { silent: true }
+      )
+      const completedAt = existing?.completed_at ?? now
+      await supabaseSync.update('orders', 
+        { status: 'DELIVERED', completed_at: completedAt, updated_at: now },
+        { id: orderId }
+      )
+    } catch (err) {
+      console.error('[ordersService] Erro ao fechar pedido no Supabase:', err)
+    }
   } else {
     await query('UPDATE orders SET status = ?, closed_at = COALESCE(closed_at, ?), updated_at = ?, pending_sync = 1 WHERE id = ?', [
       'closed',
@@ -315,11 +373,14 @@ export async function closeOrder(orderId: UUID) {
 export async function cancelOrder(orderId: UUID) {
   const now = new Date().toISOString()
   if (supabase) {
-    const { error } = await supabase
-      .from('orders')
-      .update({ status: 'CANCELLED', updated_at: now })
-      .eq('id', orderId)
-    if (error) throw error
+    try {
+      await supabaseSync.update('orders', 
+        { status: 'CANCELLED', updated_at: now },
+        { id: orderId }
+      )
+    } catch (err) {
+      console.error('[ordersService] Erro ao cancelar pedido no Supabase:', err)
+    }
   } else {
     await query('UPDATE orders SET status = ?, closed_at = COALESCE(closed_at, ?), updated_at = ?, pending_sync = 1 WHERE id = ?', [
       'cancelled',
@@ -364,6 +425,18 @@ export async function clearLocalOrders() {
   } catch {}
 }
 
+export async function listAllLocalOrders() {
+  try {
+    const api = (window as any)?.api?.db?.query
+    if (typeof api === 'function') {
+      const res = await query('SELECT * FROM orders')
+      return res?.rows ?? []
+    }
+    const raw = localStorage.getItem('orders')
+    return raw ? JSON.parse(raw) : []
+  } catch { return [] }
+}
+
 export async function listOrders(limit = 100) {
   try {
     const unitId = await getCurrentUnitId()
@@ -377,9 +450,11 @@ export async function listOrders(limit = 100) {
       return res?.rows ?? []
     }
     if (supabase) {
-      let q = supabase.from('orders').select('*').order('updated_at', { ascending: false }).limit(limit)
-      if (unitId) q = q.eq('unit_id', unitId)
-      const { data, error } = await q
+      const { data, error } = await supabaseSync.select('orders', (q) => {
+        let res = q.select('*').order('updated_at', { ascending: false }).limit(limit)
+        if (unitId) res = res.eq('unit_id', unitId)
+        return res
+      }, { silent: true })
       if (error) throw error
       return data || []
     }

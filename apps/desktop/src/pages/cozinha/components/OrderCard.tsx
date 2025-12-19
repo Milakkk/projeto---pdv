@@ -49,6 +49,12 @@ const getAllChecklistItems = (observations: string | undefined): { label: string
   return [...required, ...optional];
 };
 
+const formatOrderPin = (pin: string) => {
+  const raw = String(pin ?? '').trim()
+  if (!raw) return '#-'
+  return `#${raw.replace(/^#+/, '')}`
+}
+
 function OrderCardComponent({ 
   order, 
   operators, 
@@ -351,7 +357,7 @@ function OrderCardComponent({
         >
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center space-x-3 min-w-0">
-              <span className="text-xs font-medium text-gray-600">#{order.pin}</span>
+              <span className="text-xs font-medium text-gray-600">{formatOrderPin(order.pin)}</span>
               <span className="bg-blue-500 text-white text-lg font-bold px-3 py-1 rounded-lg flex-shrink-0">
                 {order.password}
               </span>
@@ -745,7 +751,7 @@ function OrderCardComponent({
       >
         <div className="space-y-4">
           <p className="text-sm text-gray-600">
-            Tem certeza que deseja cancelar o pedido #{order.pin}?
+            Tem certeza que deseja cancelar o pedido {formatOrderPin(order.pin)}?
           </p>
           
           <Input
