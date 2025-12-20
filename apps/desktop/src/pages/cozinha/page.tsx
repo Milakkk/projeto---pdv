@@ -1364,8 +1364,6 @@ export default function CozinhaPage() {
     });
   };
 
-  const { isOnline } = useOffline();
-
   const productionOrders = useMemo(() => {
     return orders.filter(order => ['NEW', 'PREPARING'].includes(order.status));
   }, [orders]);
