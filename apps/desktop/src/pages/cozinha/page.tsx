@@ -390,7 +390,24 @@ export default function CozinhaPage() {
               if (!ordId) continue
 
               const times = await kdsService.getPhaseTimes(ordId)
+              
+              // Fetch order details (opened_at, etc)
+              let orderData: any = null;
               const api = (window as any)?.api
+              
+              if (api?.db) {
+                const res = await api.db.query('SELECT * FROM orders WHERE id = ?', [ordId]);
+                orderData = res?.rows?.[0];
+              } else if (isOnline) {
+                 try {
+                   const { supabase } = await import('../../utils/supabase');
+                   if (supabase) {
+                     const { data } = await supabase.from('orders').select('*').eq('id', ordId).maybeSingle();
+                     orderData = data;
+                   }
+                 } catch {}
+              }
+
               const resItems = api?.db ? await api.db.query(
                 'SELECT oi.*, p.name as product_name, p.category_id as category_id FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ?',
                 [ordId]
@@ -455,12 +472,12 @@ export default function CozinhaPage() {
                   items: mergedItems,
                   total: 0,
                   status: statusMap[String(t.status)] || 'NEW',
-                  createdAt: times?.newStart ? new Date(times.newStart) : new Date(),
+                  createdAt: times?.newStart ? new Date(times.newStart) : (orderData?.opened_at ? new Date(orderData.opened_at) : (t.created_at ? new Date(t.created_at) : new Date())),
                   readyAt: times?.readyAt ? new Date(times.readyAt) : undefined,
                   deliveredAt: times?.deliveredAt ? new Date(times.deliveredAt) : undefined,
                   slaMinutes: 30,
                   createdBy: 'Sistema',
-                  updatedAt: times?.preparingStart ? new Date(times.preparingStart) : undefined,
+                  updatedAt: times?.preparingStart ? new Date(times.preparingStart) : (orderData?.updated_at ? new Date(orderData.updated_at) : undefined),
                 } as unknown as Order)
               } catch {
                 // Fallback sem unit states
@@ -474,7 +491,7 @@ export default function CozinhaPage() {
                 }
                 const times = t.phase_times || t.phaseTimes || {}
                 // Fallback para createdAt se não tiver newStart
-                const createdAt = times?.newStart ? new Date(times.newStart) : (t.created_at ? new Date(t.created_at) : new Date())
+                const createdAt = times?.newStart ? new Date(times.newStart) : (orderData?.opened_at ? new Date(orderData.opened_at) : (t.created_at ? new Date(t.created_at) : new Date()))
                 out.push({
                   id: ordId,
                   ticketId: String(t.id),
@@ -488,7 +505,7 @@ export default function CozinhaPage() {
                   deliveredAt: times?.deliveredAt ? new Date(times.deliveredAt) : undefined,
                   slaMinutes: 30,
                   createdBy: 'Sistema',
-                  updatedAt: times?.preparingStart ? new Date(times.preparingStart) : undefined,
+                  updatedAt: times?.preparingStart ? new Date(times.preparingStart) : (orderData?.updated_at ? new Date(orderData.updated_at) : undefined),
                 } as unknown as Order)
               }
             }
@@ -1058,44 +1075,35 @@ export default function CozinhaPage() {
                 console.error('[Cozinha] Erro ao atualizar Supabase:', error);
                 // Fallback para kdsService se falhar (pode ser ticket não encontrado ou outra tabela)
               } else {
-                // Persistir timestamps de fase
+                // Persistir timestamps de fase via kdsService (que trata SQLite, Supabase e LocalStorage)
                 try {
                   const nowIso = new Date().toISOString();
-                  const patch: any = { order_id: orderId };
-                  if (status === 'NEW') patch.new_start = nowIso;
-                  if (status === 'PREPARING') patch.preparing_start = nowIso;
-                  if (status === 'READY') patch.ready_at = nowIso;
-                  if (status === 'DELIVERED') patch.delivered_at = nowIso;
+                  const patch: any = { };
+                  if (status === 'NEW') patch.newStart = nowIso;
+                  if (status === 'PREPARING') patch.preparingStart = nowIso;
+                  if (status === 'READY') patch.readyAt = nowIso;
+                  if (status === 'DELIVERED') patch.deliveredAt = nowIso;
                   
-                  // Fix: Use SELECT -> UPDATE/INSERT instead of UPSERT to avoid 400 Bad Request if unique constraint is missing
-                  const { data: existingPhases } = await supabase
-                    .from('kds_phase_times')
-                    .select('id')
-                    .eq('order_id', orderId)
-                    .limit(1);
-                    
-                  if (existingPhases && existingPhases.length > 0) {
-                    await supabase.from('kds_phase_times').update(patch).eq('order_id', orderId);
-                  } else {
-                    const { error: insertErr } = await supabase.from('kds_phase_times').insert(patch);
-                    // Fallback for race condition or if row appeared
-                    if (insertErr) {
-                       await supabase.from('kds_phase_times').update(patch).eq('order_id', orderId);
-                    }
-                  }
-                } catch {}
-                
-                // Também atualiza orders para garantir consistência
-                await supabase
-                  .from('orders')
-                  .update({ status: status, updated_at: new Date().toISOString() })
-                  .eq('id', orderId);
+                  await kdsService.setPhaseTime(orderId, patch);
+                  
+                  // Atualizar tabela de orders também (incluindo status e timestamps relevantes)
+                  const orderUpdate: any = { status: status, updated_at: nowIso };
+                  // Opcional: Se quiser salvar timestamps na tabela orders também (embora kds_phase_times seja a fonte da verdade para métricas)
+                  // if (status === 'READY') orderUpdate.ready_at = nowIso; 
+                  
+                  await supabase
+                    .from('orders')
+                    .update(orderUpdate)
+                    .eq('id', orderId);
 
-                try {
-                  await kdsService.setTicketStatus(String(tId), mapToKds(status));
-                } catch {}
+                  try {
+                    await kdsService.setTicketStatus(String(tId), mapToKds(status));
+                  } catch {}
 
-                return;
+                  return;
+                } catch (e) {
+                  console.error('[Cozinha] Erro ao persistir fase:', e);
+                }
               }
             }
         }
