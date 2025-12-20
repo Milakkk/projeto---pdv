@@ -84,6 +84,10 @@ function OrderTimeStatus({ order }: { order: Order }) {
     // Início do preparo deve ser estável (não depende de entrega)
     const preparingStartTime = (() => {
       if (order.status === 'NEW') return createdAt;
+      
+      // Se tivermos o timestamp explícito de início de preparo, usamos ele (prioridade máxima)
+      if (order.preparingStartedAt) return new Date(order.preparingStartedAt).getTime();
+
       // Caso legado: pedido entregue sem deliveredAt e updatedAt > readyAt indica updatedAt como tempo de entrega
       if (isFinalStatus && !order.deliveredAt && order.updatedAt && order.readyAt) {
         const upd = new Date(order.updatedAt).getTime();

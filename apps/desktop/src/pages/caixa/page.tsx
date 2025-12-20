@@ -765,7 +765,8 @@ export default function CaixaPage() {
                   createdBy: existing?.createdBy ?? 'Sistema',
                   amountPaid: paid > 0 ? paid : existing?.amountPaid,
                   changeAmount: existing?.changeAmount,
-                  updatedAt: phaseTimes?.preparingStart ? new Date(phaseTimes.preparingStart) : (r.updated_at ? new Date(r.updated_at) : existing?.updatedAt),
+                  updatedAt: r.updated_at ? new Date(r.updated_at) : existing?.updatedAt,
+                  preparingStartedAt: phaseTimes?.preparingStart ? new Date(phaseTimes.preparingStart) : existing?.preparingStartedAt,
                   operationalSessionId: r.operational_session_id ? String(r.operational_session_id) : existing?.operationalSessionId,
                 } as any
                 out.push(ord)

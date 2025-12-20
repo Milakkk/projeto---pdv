@@ -86,6 +86,7 @@ export interface Order {
   amountPaid?: number;
   changeAmount?: number;
   updatedAt?: Date; // Adicionado para rastrear atualizações
+  preparingStartedAt?: Date; // NOVO: Tempo de início do preparo (separado de updatedAt)
   readyAt?: Date; // NOVO: Adicionado para rastrear quando o pedido ficou pronto
   deliveredAt?: Date; // NOVO: Adicionado para rastrear quando o pedido foi entregue
   cancelReason?: string; // Adicionado para motivo de cancelamento
