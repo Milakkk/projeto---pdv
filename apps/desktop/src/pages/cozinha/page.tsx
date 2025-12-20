@@ -441,10 +441,10 @@ export default function CozinhaPage() {
                 const pin = t.pin
                 const password = t.password
                 const statusMap: Record<string, Order['status']> = {
-                  'queued': 'NEW',
-                  'prep': 'PREPARING',
-                  'ready': 'READY',
-                  'done': 'DELIVERED',
+                  'queued': 'NEW', 'NEW': 'NEW',
+                  'prep': 'PREPARING', 'PREPARING': 'PREPARING',
+                  'ready': 'READY', 'READY': 'READY',
+                  'done': 'DELIVERED', 'DELIVERED': 'DELIVERED',
                 }
 
                 out.push({
@@ -467,10 +467,10 @@ export default function CozinhaPage() {
                 const pin = t.pin
                 const password = t.password
                 const statusMap: Record<string, Order['status']> = {
-                  'queued': 'NEW',
-                  'prep': 'PREPARING',
-                  'ready': 'READY',
-                  'done': 'DELIVERED',
+                  'queued': 'NEW', 'NEW': 'NEW',
+                  'prep': 'PREPARING', 'PREPARING': 'PREPARING',
+                  'ready': 'READY', 'READY': 'READY',
+                  'done': 'DELIVERED', 'DELIVERED': 'DELIVERED',
                 }
                 const times = t.phase_times || t.phaseTimes || {}
                 // Fallback para createdAt se não tiver newStart
