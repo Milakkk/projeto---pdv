@@ -173,12 +173,11 @@ function OrderCardComponent({
   };
 
   const getStatusAction = (status: Order['status']) => {
-    switch (status) {
-      case 'NEW': return 'Iniciar Preparo';
-      case 'PREPARING': return 'Pronto'; 
-      case 'READY': return 'Entregue';
-      default: return null;
-    }
+    const s = String(status).toUpperCase();
+    if (s === 'NEW' || s === 'QUEUED') return 'Iniciar Preparo';
+    if (s === 'PREPARING' || s === 'PREP') return 'Pronto';
+    if (s === 'READY') return 'Entregue';
+    return null;
   };
   
   const getActionVariant = (status: Order['status']): 'info' | 'primary' | 'success' => {

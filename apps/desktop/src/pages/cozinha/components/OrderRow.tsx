@@ -143,12 +143,11 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
   };
 
   const getStatusAction = (status: Order['status']) => {
-    switch (status) {
-      case 'NEW': return 'Iniciar Preparo';
-      case 'PREPARING': return 'Marcar como Pronto'; 
-      case 'READY': return 'Entregue';
-      default: return null;
-    }
+    const s = String(status).toUpperCase();
+    if (s === 'NEW' || s === 'QUEUED') return 'Iniciar Preparo';
+    if (s === 'PREPARING' || s === 'PREP') return 'Marcar como Pronto';
+    if (s === 'READY') return 'Entregue';
+    return null;
   };
   
   // Adicionado: Função para obter o texto da ação de status anterior
