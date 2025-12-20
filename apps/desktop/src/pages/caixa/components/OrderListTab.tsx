@@ -94,7 +94,7 @@ function OrderTimeStatus({ order }: { order: Order }) {
         const ready = new Date(order.readyAt).getTime();
         if (upd > ready) return createdAt; // evita distorcer tempo de espera/preparo
       }
-      return new Date(order.updatedAt || order.createdAt).getTime();
+      return new Date(order.createdAt).getTime();
     })();
       
     // 3. Determinar o Tempo Final de Produção (Fim da fase PREPARING / Início da fase READY)
