@@ -147,7 +147,7 @@ export async function getPhaseTimes(orderId: string): Promise<any> {
   } catch { return {} }
 }
 
-async function setPhaseTime(orderId: string, patch: any) {
+export async function setPhaseTime(orderId: string, patch: any) {
   const now = new Date().toISOString()
   
   // 1. Try SQLite (Local DB)

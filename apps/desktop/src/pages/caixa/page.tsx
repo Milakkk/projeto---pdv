@@ -666,7 +666,7 @@ export default function CaixaPage() {
               paymentMethod: breakdown ? 'MÚLTIPLO' : (method || 'Não informado'),
               paymentBreakdown: breakdown,
               status,
-              createdAt: (r.opened_at || r.created_at) ? new Date(r.opened_at || r.created_at) : (existing?.createdAt || new Date()),
+              createdAt: times.newStart ? new Date(times.newStart) : ((r.opened_at || r.created_at) ? new Date(r.opened_at || r.created_at) : (existing?.createdAt || new Date())),
                 updatedAt: times.preparingStart ? new Date(times.preparingStart) : (r.updated_at ? new Date(r.updated_at) : (existing?.updatedAt ?? new Date())),
                 readyAt: times.readyAt ? new Date(times.readyAt) : existing?.readyAt,
                 deliveredAt: (r.closed_at || r.completed_at) ? new Date(r.closed_at || r.completed_at) : (times.deliveredAt ? new Date(times.deliveredAt) : existing?.deliveredAt),
@@ -758,7 +758,7 @@ export default function CaixaPage() {
                   customerWhatsApp: existing?.customerWhatsApp,
                   paymentMethod: method,
                   status,
-                  createdAt: r.opened_at ? new Date(r.opened_at) : (existing?.createdAt || new Date()),
+                  createdAt: phaseTimes?.newStart ? new Date(phaseTimes.newStart) : (r.opened_at ? new Date(r.opened_at) : (existing?.createdAt || new Date())),
                   readyAt: phaseTimes?.readyAt ? new Date(phaseTimes.readyAt) : existing?.readyAt,
                   deliveredAt: phaseTimes?.deliveredAt ? new Date(phaseTimes.deliveredAt) : (r.closed_at ? new Date(r.closed_at) : existing?.deliveredAt),
                   slaMinutes: existing?.slaMinutes ?? 30,
@@ -1964,6 +1964,11 @@ export default function CaixaPage() {
                         try {
                           const tId = (checklistOrder as any)?.ticketId || checklistOrder.id
                           await kdsService.setTicketStatus(String(tId), 'done')
+                        } catch {}
+
+                        // Persistir tempo de entrega na tabela de fases para relatórios
+                        try {
+                          await kdsService.setPhaseTime(checklistOrder.id, { deliveredAt: new Date().toISOString() })
                         } catch {}
                       })()
                       showSuccess(`Pedido #${checklistOrder.pin} marcado como entregue.`);

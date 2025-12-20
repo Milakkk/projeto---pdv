@@ -76,38 +76,48 @@ const resolveSlaForItem = (params: { productId?: any; categoryId?: any; slaByPro
 }
 
 // Função para calcular o tempo de entrega e status
-const calculateDeliveryMetrics = (order: Order) => {
+const calculateDeliveryMetrics = (order: Order & { phaseTimes?: any }) => {
   const createdAt = new Date(order.createdAt).getTime();
   const isFinalStatus = order.status === 'DELIVERED' || order.status === 'CANCELLED';
   const now = Date.now();
 
   // 1. Tempo Final (Entrega ou Cancelamento)
   let finalTime = now;
-  if (order.status === 'DELIVERED') {
+  if (order.phaseTimes?.deliveredAt) {
+    finalTime = new Date(order.phaseTimes.deliveredAt).getTime();
+  } else if (order.status === 'DELIVERED') {
     finalTime = new Date(order.deliveredAt || order.updatedAt || order.createdAt).getTime();
   } else if (order.status === 'CANCELLED') {
     finalTime = new Date(order.updatedAt || order.createdAt).getTime();
   }
 
   // 2. Tempo de Início do Preparo (Fim da fase NEW)
-  // Se o pedido está em status final, usamos o updatedAt fixo. Caso contrário, usamos o updatedAt se existir, ou createdAt.
   const preparingStartTime = (() => {
+    if (order.phaseTimes?.preparingStart) return new Date(order.phaseTimes.preparingStart).getTime()
     if (order.status === 'NEW') return createdAt
+    // Fallback apenas se não tiver phaseTimes
     return new Date(order.updatedAt || order.createdAt).getTime()
   })();
 
   // 3. Tempo Final de Produção (Fim da fase PREPARING / Início da fase READY)
   let productionEndTime: number;
   
-  if (order.readyAt) {
-      productionEndTime = new Date(order.readyAt).getTime();
+  if (order.phaseTimes?.readyAt) {
+    productionEndTime = new Date(order.phaseTimes.readyAt).getTime();
+  } else if (order.readyAt) {
+    productionEndTime = new Date(order.readyAt).getTime();
   } else if (order.status === 'READY' && order.updatedAt) {
-      productionEndTime = new Date(order.updatedAt).getTime();
+    productionEndTime = new Date(order.updatedAt).getTime();
   } else if (isFinalStatus) {
-      productionEndTime = preparingStartTime;
+    productionEndTime = preparingStartTime; // Se pulou direto para final
+    // Tenta usar deliveredAt se existir para fechar o tempo de preparo caso readyAt falte
+    if (order.phaseTimes?.deliveredAt && preparingStartTime < new Date(order.phaseTimes.deliveredAt).getTime()) {
+       // Se tem deliveredAt mas não readyAt, assumimos que productionEndTime é deliveredAt (preparo até entrega)
+       // Mas isso zeraria o tempo de entrega. Vamos manter preparingStartTime se não tiver readyAt.
+    }
   } else {
-      // Se está NEW ou PREPARING, o fim da produção é o tempo atual (para cálculo em tempo real)
-      productionEndTime = now;
+    // Se está NEW ou PREPARING, o fim da produção é o tempo atual (para cálculo em tempo real)
+    productionEndTime = now;
   }
   
   // --- CÁLCULOS ---
@@ -301,6 +311,7 @@ export default function RelatoriosPage() {
             deliveredAt: deliveredAtRaw ? new Date(deliveredAtRaw) : undefined,
             slaMinutes,
             createdBy: '',
+            phaseTimes,
           } as any;
           out.push(ord);
         }
@@ -384,6 +395,7 @@ export default function RelatoriosPage() {
             deliveredAt: deliveredAtRaw ? new Date(deliveredAtRaw) : undefined,
             slaMinutes,
             createdBy: '',
+            phaseTimes,
           } as any;
           out.push(ord);
         }

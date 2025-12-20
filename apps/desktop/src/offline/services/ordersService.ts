@@ -1,5 +1,6 @@
 import { supabase } from '../../utils/supabase'
 import { supabaseSync } from '../../utils/supabaseSync'
+import { setPhaseTime } from './kdsService'
 
 const query = async (sql: string, params?: any[]) => {
   const fn = (window as any)?.api?.db?.query
@@ -22,44 +23,6 @@ const uuid = () =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`
-
-async function setDeliveredPhaseTime(orderId: UUID, deliveredAtIso: string) {
-  const now = new Date().toISOString()
-
-  try {
-    await query(
-      'INSERT INTO kds_phase_times (order_id, new_start, preparing_start, ready_at, delivered_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(order_id) DO UPDATE SET delivered_at=COALESCE(delivered_at, excluded.delivered_at), updated_at=excluded.updated_at',
-      [orderId, null, null, null, deliveredAtIso, now],
-    )
-    return
-  } catch {}
-
-  if (supabase) {
-    try {
-      const { data: existing } = await supabaseSync.select('kds_phase_times', (q) =>
-        q.select('id, delivered_at').eq('order_id', orderId).maybeSingle(),
-        { silent: true }
-      )
-
-      const payload: any = { order_id: orderId, updated_at: now }
-      if (!existing?.delivered_at) payload.delivered_at = deliveredAtIso
-      if (existing?.id) {
-        await supabaseSync.update('kds_phase_times', payload, { id: existing.id })
-      } else {
-        await supabaseSync.insert('kds_phase_times', { ...payload, delivered_at: deliveredAtIso })
-      }
-      return
-    } catch {}
-  }
-
-  try {
-    const raw = localStorage.getItem('kdsPhaseTimes')
-    const obj = raw ? JSON.parse(raw) : {}
-    const cur = obj[String(orderId)] || {}
-    obj[String(orderId)] = { ...cur, deliveredAt: cur.deliveredAt ?? deliveredAtIso, updatedAt: now }
-    localStorage.setItem('kdsPhaseTimes', JSON.stringify(obj))
-  } catch {}
-}
 
 async function scheduleTicketReceiptCheck(params: { orderId: UUID; ticketId: UUID; sentAtIso: string; kitchenId: string | null }) {
   if (!supabase) return
@@ -123,6 +86,8 @@ export async function createOrder(payload?: {
         pending_sync: false,
       })
       if (error) throw error
+      // Initialize phase time for Supabase orders
+      setPhaseTime(id, { newStart: payload?.openedAt ?? now }).catch(console.error)
       persisted = true
     } catch (err) {
       console.warn('[ordersService] Falha ao criar pedido no Supabase, tentando local:', err)
@@ -147,11 +112,15 @@ export async function createOrder(payload?: {
           1,
         ],
       )
+      // Persist phase time (new_start)
+      setPhaseTime(id, { newStart: payload?.openedAt ?? now }).catch(console.error)
     } catch {
       const raw = localStorage.getItem('orders')
       const arr = raw ? JSON.parse(raw) : []
       arr.push({ id, status: 'open', total_cents: 0, opened_at: payload?.openedAt ?? now, device_id: payload?.deviceId ?? null, unit_id: unitId ?? null, operational_session_id: payload?.operationalSessionId ?? null, notes: payload?.notes ?? null, updated_at: now, version: 1, pending_sync: 1 })
       localStorage.setItem('orders', JSON.stringify(arr))
+      // Persist phase time for localStorage fallback
+      setPhaseTime(id, { newStart: payload?.openedAt ?? now }).catch(console.error)
     }
   }
   return id
@@ -367,7 +336,7 @@ export async function closeOrder(orderId: UUID) {
     ])
   }
 
-  await setDeliveredPhaseTime(orderId, now)
+  await setPhaseTime(orderId, { deliveredAt: now })
 }
 
 export async function cancelOrder(orderId: UUID) {
