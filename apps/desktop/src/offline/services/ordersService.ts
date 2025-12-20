@@ -147,6 +147,8 @@ export async function createOrder(payload?: {
           1,
         ],
       )
+      // Persist phase time (new_start)
+      setInitialPhaseTime(id, payload?.openedAt ?? now).catch(console.error)
     } catch {
       const raw = localStorage.getItem('orders')
       const arr = raw ? JSON.parse(raw) : []
