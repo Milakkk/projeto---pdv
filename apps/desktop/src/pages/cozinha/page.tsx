@@ -865,6 +865,15 @@ export default function CozinhaPage() {
         for (const t of tk as any[]) {
           const oid = String(t.order_id ?? t.orderId ?? '')
           const times = timesByOrder[oid] || {}
+          
+          // Fallback para tempos enriquecidos pelo kdsService (offline/local mode) ou propriedades do ticket
+          const fallbackTimes = {
+             newStart: t.createdAt || t.created_at,
+             preparingStart: t.updatedAt || t.updated_at,
+             readyAt: t.readyAt || t.ready_at,
+             deliveredAt: t.deliveredAt || t.delivered_at
+          }
+          
           let items: any[] = (itemsByOrder[oid] && itemsByOrder[oid].length > 0) ? itemsByOrder[oid] : (Array.isArray(t.items) ? t.items : [])
           const unitMap: Record<string, any> = unitMapByOrder[oid] || {}
 
@@ -922,14 +931,16 @@ export default function CozinhaPage() {
               ? new Date(t.createdAt)
               : (times.newStart
                 ? new Date(times.newStart)
-                : (ordersMap[oid]?.opened_at
-                  ? new Date(ordersMap[oid].opened_at)
-                  : (ordersMap[oid]?.created_at
-                    ? new Date(ordersMap[oid].created_at)
-                    : (t.created_at ? new Date(t.created_at) : new Date())))),
-            updatedAt: t.updatedAt ? new Date(t.updatedAt) : (times.preparingStart ? new Date(times.preparingStart) : (t.updated_at ? new Date(t.updated_at) : undefined)),
-            readyAt: t.readyAt ? new Date(t.readyAt) : (times.readyAt ? new Date(times.readyAt) : undefined),
-            deliveredAt: t.deliveredAt ? new Date(t.deliveredAt) : (times.deliveredAt ? new Date(times.deliveredAt) : undefined),
+                : (fallbackTimes.newStart
+                  ? new Date(fallbackTimes.newStart)
+                  : (ordersMap[oid]?.opened_at
+                    ? new Date(ordersMap[oid].opened_at)
+                    : (ordersMap[oid]?.created_at
+                      ? new Date(ordersMap[oid].created_at)
+                      : (t.created_at ? new Date(t.created_at) : new Date()))))),
+            updatedAt: times.preparingStart ? new Date(times.preparingStart) : (fallbackTimes.preparingStart ? new Date(fallbackTimes.preparingStart) : (t.updated_at ? new Date(t.updated_at) : (t.updatedAt ? new Date(t.updatedAt) : undefined))),
+            readyAt: times.readyAt ? new Date(times.readyAt) : (fallbackTimes.readyAt ? new Date(fallbackTimes.readyAt) : (t.readyAt ? new Date(t.readyAt) : undefined)),
+            deliveredAt: times.deliveredAt ? new Date(times.deliveredAt) : (fallbackTimes.deliveredAt ? new Date(fallbackTimes.deliveredAt) : (t.deliveredAt ? new Date(t.deliveredAt) : undefined)),
             items,
             slaMinutes,
             total: 0,
@@ -1034,13 +1045,7 @@ export default function CozinhaPage() {
       return;
     }
 
-    // Optimistic Update: Atualiza UI imediatamente
-    setOrders(prev => prev.map(o => {
-      if (o.id === orderId) {
-        return { ...o, status: status, updatedAt: new Date() };
-      }
-      return o;
-    }));
+
 
     pendingStatusRef.current[String(orderId)] = { status, until: Date.now() + 8000 }
 

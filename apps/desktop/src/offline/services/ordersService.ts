@@ -482,6 +482,23 @@ export async function listOrdersDetailed(limit = 100): Promise<Array<{ order: an
         }
       }
 
+      // [FIX] Fallback to LocalStorage for phase times if missing in SQLite
+      try {
+        const localRaw = localStorage.getItem('kdsPhaseTimes')
+        const localObj = localRaw ? JSON.parse(localRaw) : {}
+        for (const oid of ids) {
+          if (!timesByOrder[oid] && localObj[oid]) {
+            const t = localObj[oid]
+            timesByOrder[oid] = {
+              newStart: t.newStart ?? t.new_start,
+              preparingStart: t.preparingStart ?? t.preparing_start,
+              readyAt: t.readyAt ?? t.ready_at,
+              deliveredAt: t.deliveredAt ?? t.delivered_at,
+            }
+          }
+        }
+      } catch {}
+
       const unitStatesByOrder: Record<string, any> = {}
       for (const u of (unitStatesRes?.rows ?? [])) {
         const oid = String((u as any).order_id ?? (u as any).orderId ?? '')
