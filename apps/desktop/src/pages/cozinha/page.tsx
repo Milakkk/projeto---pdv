@@ -1091,8 +1091,8 @@ export default function CozinhaPage() {
                 try {
                   const nowIso = new Date().toISOString();
                   const patch: any = { };
-                  if (status === 'NEW' || status === 'QUEUED') patch.newStart = nowIso;
-                  if (status === 'PREPARING') patch.preparingStart = nowIso;
+          if (status === 'NEW') patch.newStart = nowIso;
+          if (status === 'PREPARING') patch.preparingStart = nowIso;
                   if (status === 'READY') patch.readyAt = nowIso;
                   if (status === 'DELIVERED') patch.deliveredAt = nowIso;
                   
