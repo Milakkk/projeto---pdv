@@ -285,8 +285,8 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
   const handleAssignOperatorUnified = (e: React.MouseEvent, itemId: string, unitId: string, operatorName: string) => {
     e.stopPropagation(); // MANTIDO AQUI PARA BLOQUEAR O TOGGLE DA LINHA
     
-    // Bloquear mudança de operador se o status for diferente de NEW ou QUEUED
-    if (order.status !== 'NEW' && order.status !== 'QUEUED') return;
+    // Bloquear mudança de operador se o status for diferente de NEW
+    if (order.status !== 'NEW') return;
     onAssignOperator(order.id, itemId, unitId, operatorName);
   };
 
@@ -321,7 +321,7 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
   const isCurrentlyOverdue = order.status === 'READY' || order.status === 'DELIVERED' ? wasLate : isOverdue;
   
   // Atraso só é relevante se o timer estiver ativo (NEW ou PREPARING)
-  const isOverdueForHighlight = isCurrentlyOverdue && (order.status === 'NEW' || order.status === 'QUEUED' || order.status === 'PREPARING');
+  const isOverdueForHighlight = isCurrentlyOverdue && (order.status === 'NEW' || order.status === 'PREPARING');
   const bgColor = isOverdueForHighlight ? 'bg-red-50' : (currentStatusInfo?.bgColor || 'bg-white');
   
   // O botão de item pronto é visível se o pedido estiver em PREPARING

@@ -21,8 +21,8 @@ interface OrderBoardProps {
 
 const statusColumns = [
   { status: 'NEW' as const, title: 'Novos', color: 'bg-blue-50 border-blue-200' },
-  { status: 'QUEUED' as const, title: 'Na Fila', color: 'bg-indigo-50 border-indigo-200' },
   { status: 'PREPARING' as const, title: 'Preparando', color: 'bg-yellow-50 border-yellow-200' },
+  { status: 'READY' as const, title: 'Pronto', color: 'bg-green-50 border-green-200' },
 ];
 
 const formatDuration = (seconds: number) => {

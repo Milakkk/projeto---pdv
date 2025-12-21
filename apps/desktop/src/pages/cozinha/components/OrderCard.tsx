@@ -322,11 +322,11 @@ function OrderCardComponent({
   const isCurrentlyOverdue = order.status === 'READY' || order.status === 'DELIVERED' ? wasLate : isOverdue;
 
   const nextStatusAction = getStatusAction(order.status);
-  const isActiveOrder = ['NEW', 'QUEUED', 'PREPARING', 'READY'].includes(order.status);
+  const isActiveOrder = ['NEW', 'PREPARING', 'READY'].includes(order.status);
   const showPreviousButton = getPreviousStatus(order.status) && order.status !== 'PREPARING' && order.status !== 'READY';
   const isPreparingStatus = order.status === 'PREPARING';
   const showUnitReadyButton = isPreparingStatus;
-  const isOperatorAssignmentDisabled = !['NEW', 'QUEUED'].includes(order.status); 
+  const isOperatorAssignmentDisabled = !['NEW'].includes(order.status); 
   const isChecklistDisabled = !isPreparingStatus;
   const hasObservations = kitchenItems.some(item => item.observations);
   const isOrderReadyForNextStepStatus = isOrderReadyForNextStep;
@@ -334,7 +334,7 @@ function OrderCardComponent({
   return (
     <>
       <div className={`bg-white rounded-lg border-2 p-4 shadow-sm transition-all ${
-        isCurrentlyOverdue && ['NEW', 'QUEUED', 'PREPARING'].includes(order.status)
+        isCurrentlyOverdue && ['NEW', 'PREPARING'].includes(order.status)
           ? 'border-red-500 bg-red-50 shadow-lg ring-2 ring-red-200 animate-pulse' 
           : 'border-gray-200'
       }`}>
@@ -394,7 +394,7 @@ function OrderCardComponent({
                 </button>
               )}
             </div>
-            {['NEW', 'QUEUED', 'PREPARING', 'READY'].includes(order.status) && (
+            {['NEW', 'PREPARING', 'READY'].includes(order.status) && (
               <span className={`text-white text-xs font-bold px-2.5 py-1 rounded-full flex-shrink-0 ${
                 isCurrentlyOverdue ? 'bg-red-600' : 'bg-green-600'
               }`}>
@@ -464,7 +464,7 @@ function OrderCardComponent({
                       <span className="text-sm">{item.menuItem.name}</span>
                       <span className="text-xs text-amber-100 ml-2">({item.quantity} {item.quantity === 1 ? 'unid.' : 'unid.'})</span>
                       {/* Ícone de entrega direta por item removido conforme solicitação */}
-                      {['NEW', 'QUEUED'].includes(order.status) ? (
+                      {['NEW'].includes(order.status) ? (
                         assignedUnits === totalUnits ? (
                           <i className="ri-user-check-line text-white ml-3 text-base" title="Todas as unidades atribuídas"></i>
                         ) : (
@@ -703,7 +703,7 @@ function OrderCardComponent({
                     variant={getActionVariant(order.status)}
                     disabled={(order.status === 'PREPARING' && !isOrderReadyForNextStepStatus)} 
                   >
-                    {['NEW', 'QUEUED'].includes(order.status) ? (<><i className="ri-play-line mr-2"></i>Iniciar Preparo</>) : order.status === 'PREPARING' ? (<><i className="ri-check-line mr-2"></i>Pronto</>) : (<><i className="ri-truck-line mr-2"></i>Entregue</>)}
+                    {['NEW'].includes(order.status) ? (<><i className="ri-play-line mr-2"></i>Iniciar Preparo</>) : order.status === 'PREPARING' ? (<><i className="ri-check-line mr-2"></i>Pronto</>) : (<><i className="ri-truck-line mr-2"></i>Entregue</>)}
                   </Button>
                 )}
                 {showPreviousButton && (
