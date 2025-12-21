@@ -861,10 +861,16 @@ export default function CozinhaPage() {
           } catch {}
         }
 
+        const localPhaseTimes = (() => {
+          try {
+            return JSON.parse(localStorage.getItem('kdsPhaseTimes') || '{}')
+          } catch { return {} }
+        })();
+
         const mappedOrders: Order[] = [];
         for (const t of tk as any[]) {
           const oid = String(t.order_id ?? t.orderId ?? '')
-          const times = timesByOrder[oid] || {}
+          const times = timesByOrder[oid] || localPhaseTimes[oid] || {}
           
           // Fallback para tempos enriquecidos pelo kdsService (offline/local mode) ou propriedades do ticket
           const fallbackTimes = {
