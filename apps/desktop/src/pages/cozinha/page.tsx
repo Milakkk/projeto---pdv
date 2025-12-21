@@ -244,7 +244,7 @@ export default function CozinhaPage() {
               if (tickets.length) {
                 const mapToOrderStatus = (s: string) => {
                   const normalized = String(s).toUpperCase();
-                  if (normalized === 'QUEUED' || normalized === 'NEW') return 'NEW';
+                  if (normalized === 'NEW') return 'NEW';
                   if (normalized === 'PREP' || normalized === 'PREPARING') return 'PREPARING';
                   if (normalized === 'READY') return 'READY';
                   if (normalized === 'DONE' || normalized === 'DELIVERED') return 'DELIVERED';
@@ -692,7 +692,7 @@ export default function CozinhaPage() {
     let mounted = true;
     const mapStatus = (s: string): Order['status'] => {
       const normalized = String(s).toUpperCase();
-      if (normalized === 'QUEUED' || normalized === 'NEW') return 'NEW';
+      if (normalized === 'NEW') return 'NEW';
       if (normalized === 'PREP' || normalized === 'PREPARING') return 'PREPARING';
       if (normalized === 'READY') return 'READY';
       if (normalized === 'DONE' || normalized === 'DELIVERED') return 'DELIVERED';
@@ -718,7 +718,7 @@ export default function CozinhaPage() {
           let q = supabase!
             .from('kds_tickets')
             .select('id, order_id, status, created_at, updated_at, kitchen_id')
-            .in('status', ['NEW', 'QUEUED', 'PREPARING', 'READY', 'DELIVERED'])
+            .in('status', ['NEW', 'PREPARING', 'READY', 'DELIVERED'])
           if (kitchenFilter) q = q.eq('kitchen_id', kitchenFilter)
           const { data, error } = await q
           if (error) useSupabase = false
@@ -932,7 +932,7 @@ export default function CozinhaPage() {
             id: String(t.order_id ?? t.orderId ?? ''),
             pin: String(t.pin ?? t.orderPin ?? details.pin ?? ''),
             password: String(t.password ?? details.password ?? ''),
-            status: mapStatus(String(t.status ?? 'queued')),
+            status: mapStatus(String(t.status ?? 'NEW')),
             createdAt: t.createdAt
               ? new Date(t.createdAt)
               : (times.newStart
@@ -1061,7 +1061,6 @@ export default function CozinhaPage() {
         // Correção CRÍTICA: NEW → queued, PREPARING → prep, READY → ready, DELIVERED → done
         const mapToKds = (s: Order['status']) => {
           if (s === 'NEW') return 'queued';
-          if (s === 'QUEUED') return 'queued';
           if (s === 'PREPARING') return 'prep';
           if (s === 'READY') return 'ready';
           if (s === 'DELIVERED') return 'done';
@@ -1302,7 +1301,7 @@ export default function CozinhaPage() {
           }
 
           let finalUpdatedAt = order.updatedAt;
-          if (newOrderStatus === 'PREPARING' && (order.status === 'NEW' || order.status === 'QUEUED')) {
+          if (newOrderStatus === 'PREPARING' && (order.status === 'NEW')) {
             finalUpdatedAt = now;
           }
 
@@ -1310,7 +1309,7 @@ export default function CozinhaPage() {
             ...order,
             items: updatedItems,
             status: newOrderStatus,
-            updatedAt: (order.status === 'NEW' || order.status === 'QUEUED') && newOrderStatus === 'PREPARING' ? finalUpdatedAt : order.updatedAt,
+            updatedAt: order.status === 'NEW' && newOrderStatus === 'PREPARING' ? finalUpdatedAt : order.updatedAt,
             readyAt: readyAt
           };
         }

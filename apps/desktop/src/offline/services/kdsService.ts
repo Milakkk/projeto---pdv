@@ -653,7 +653,7 @@ export async function setTicketStatus(id: UUID, status: 'queued' | 'prep' | 'rea
 export async function listTicketStatusRows(kitchenId?: string | null) {
   const supabaseToLocal = (s: any): 'queued' | 'prep' | 'ready' | 'done' | null => {
     const up = String(s ?? '').toUpperCase()
-    if (up === 'NEW' || up === 'QUEUED') return 'queued'
+    if (up === 'NEW') return 'queued'
     if (up === 'PREPARING' || up === 'PREP') return 'prep'
     if (up === 'READY') return 'ready'
     if (up === 'DELIVERED' || up === 'DONE') return 'done'

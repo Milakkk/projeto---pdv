@@ -199,7 +199,7 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
     if (!nextStatus) return;
 
     // Validação de atribuição de operador para NEW -> PREPARING (RELAXADA: Apenas alerta se não houver operadores)
-    if ((order.status === 'NEW' || order.status === 'QUEUED') && nextStatus === 'PREPARING') {
+    if ((order.status === 'NEW') && nextStatus === 'PREPARING') {
       console.log('Iniciando preparo (sem validação estrita de operadores)');
     }
     

@@ -334,7 +334,7 @@ function OrderCardComponent({
   return (
     <>
       <div className={`bg-white rounded-lg border-2 p-4 shadow-sm transition-all ${
-        isCurrentlyOverdue && ['NEW', 'PREPARING'].includes(order.status)
+       isCurrentlyOverdue && ['NEW', 'PREPARING'].includes(order.status)
           ? 'border-red-500 bg-red-50 shadow-lg ring-2 ring-red-200 animate-pulse' 
           : 'border-gray-200'
       }`}>
@@ -701,9 +701,24 @@ function OrderCardComponent({
                     className="flex-1 min-w-[48%] text-base"
                     size="md"
                     variant={getActionVariant(order.status)}
-                    disabled={(order.status === 'PREPARING' && !isOrderReadyForNextStepStatus)} 
+                    disabled={order.status === 'PREPARING' && !isOrderReadyForNextStepStatus}
                   >
-                    {['NEW'].includes(order.status) ? (<><i className="ri-play-line mr-2"></i>Iniciar Preparo</>) : order.status === 'PREPARING' ? (<><i className="ri-check-line mr-2"></i>Pronto</>) : (<><i className="ri-truck-line mr-2"></i>Entregue</>)}
+                    {order.status === 'NEW' ? (
+                      <>
+                        <i className="ri-play-line mr-2"></i>
+                        Iniciar Preparo
+                      </>
+                    ) : order.status === 'PREPARING' ? (
+                      <>
+                        <i className="ri-check-line mr-2"></i>
+                        Pronto
+                      </>
+                    ) : (
+                      <>
+                        <i className="ri-truck-line mr-2"></i>
+                        Entregue
+                      </>
+                    )}
                   </Button>
                 )}
                 {showPreviousButton && (
