@@ -1058,13 +1058,13 @@ export default function CozinhaPage() {
     // Atualiza status via serviço KDS PRIMEIRO, aguarda confirmação, depois atualiza UI
     (async () => {
       try {
-        // Correção CRÍTICA: NEW → queued, PREPARING → prep, READY → ready, DELIVERED → done
+        // Correção CRÍTICA: NEW → new, PREPARING → prep, READY → ready, DELIVERED → done
         const mapToKds = (s: Order['status']) => {
-          if (s === 'NEW') return 'queued';
+          if (s === 'NEW') return 'new';
           if (s === 'PREPARING') return 'prep';
           if (s === 'READY') return 'ready';
           if (s === 'DELIVERED') return 'done';
-          return 'queued';
+          return 'new';
         };
         const ord = orders.find(o => o.id === orderId)
         const tId = (ord as any)?.ticketId || orderId
