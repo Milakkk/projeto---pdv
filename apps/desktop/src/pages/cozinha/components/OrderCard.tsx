@@ -223,19 +223,7 @@ function OrderCardComponent({
     if (!nextStatus) return;
 
     if (order.status === 'NEW' && nextStatus === 'PREPARING') {
-      if (operators.length === 0) {
-        setAlertModalMessage('Não há operadores cadastrados. Adicione um operador para iniciar o preparo.');
-        setShowAssignOperatorAlert(true);
-        return;
-      }
-      const allAssigned = kitchenItems.every(item => 
-        (item.productionUnits || []).every(unit => !!unit.operatorName)
-      );
-      if (!allAssigned) {
-        setAlertModalMessage('É necessário atribuir um operador a todas as unidades antes de iniciar o preparo.');
-        setShowAssignOperatorAlert(true);
-        return;
-      }
+      // Operator assignment is now optional
     }
     if (order.status === 'PREPARING' && nextStatus === 'READY') {
       if (!isOrderReadyForNextStep) {
@@ -713,7 +701,7 @@ function OrderCardComponent({
                     className="flex-1 min-w-[48%] text-base"
                     size="md"
                     variant={getActionVariant(order.status)}
-                    disabled={(order.status === 'NEW' && (operators.length === 0 || !allUnitsAssignedStatus)) || (order.status === 'PREPARING' && !isOrderReadyForNextStepStatus)} 
+                    disabled={(order.status === 'PREPARING' && !isOrderReadyForNextStepStatus)} 
                   >
                     {order.status === 'NEW' ? (<><i className="ri-play-line mr-2"></i>Iniciar Preparo</>) : order.status === 'PREPARING' ? (<><i className="ri-check-line mr-2"></i>Pronto</>) : (<><i className="ri-truck-line mr-2"></i>Entregue</>)}
                   </Button>
