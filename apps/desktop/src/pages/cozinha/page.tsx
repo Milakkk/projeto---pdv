@@ -707,6 +707,7 @@ export default function CozinhaPage() {
       if (!mounted) return;
       const startTime = performance.now();
       try {
+        let gotTickets = false;
         const kitchenFilter = selectedKitchenId || undefined
         const { supabase } = await import('../../utils/supabase')
         const canQuerySupabase =
@@ -723,6 +724,7 @@ export default function CozinhaPage() {
           const { data, error } = await q
           if (error) useSupabase = false
           tk = Array.isArray(data) ? data : []
+          gotTickets = true
 
           try {
             const nowIso = new Date().toISOString()
@@ -755,6 +757,7 @@ export default function CozinhaPage() {
             kdsService.listTicketsByStatus('done', kitchenFilter),
           ])
           tk = ([] as any[]).concat(tkQueued || [], tkPrep || [], tkReady || [], tkDone || [])
+          gotTickets = true
         }
         if (!mounted || !Array.isArray(tk)) return;
 
@@ -831,12 +834,13 @@ export default function CozinhaPage() {
           try {
             const { data, error } = await supabase
               .from('order_items')
-              .select('id, order_id, quantity, unit_price_cents, product_id, product_name')
+              .select('id, order_id, quantity, unit_price_cents, product_id, product_name, product:products(category_id)')
               .in('order_id', orderIds)
             if (!error) {
               for (const it of (data || []) as any[]) {
                 const oid = String(it.order_id)
                 if (!itemsByOrder[oid]) itemsByOrder[oid] = []
+                const categoryId = String(it?.product?.category_id ?? '')
                 itemsByOrder[oid].push({
                   id: String(it.id),
                   quantity: Number(it.quantity ?? 1),
@@ -846,7 +850,7 @@ export default function CozinhaPage() {
                     name: String(it.product_name ?? 'Item'),
                     unitDeliveryCount: 1,
                     sla: 15,
-                    categoryId: '',
+                    categoryId,
                   },
                   productionUnits: Array.from({ length: Math.max(1, Number(it.quantity ?? 1)) }, (_, idx) => ({
                     unitId: `${String(it.id)}-${idx + 1}`,
@@ -968,9 +972,31 @@ export default function CozinhaPage() {
         }
         const final = Object.values(byId)
         startTransition(() => {
-          setOrders(prev => mergeOrdersList(prev, final))
+          setOrders(prev => {
+            if (!gotTickets) return prev
+            const next = mergeOrdersList(prev, final)
+            try {
+              if (final.length > 0) {
+                localStorage.setItem('kdsOrdersSnapshot', JSON.stringify(final))
+                localStorage.setItem('kdsOrdersSnapshotAt', new Date().toISOString())
+              }
+            } catch {}
+            return next
+          })
         });
       } catch (error) {
+        console.error('[Cozinha] Erro ao carregar tickets/pedidos:', error)
+        try {
+          const raw = localStorage.getItem('kdsOrdersSnapshot')
+          if (raw && mounted) {
+            const snap = JSON.parse(raw)
+            if (Array.isArray(snap) && snap.length > 0) {
+              startTransition(() => {
+                setOrders(prev => (prev.length > 0 ? prev : snap))
+              })
+            }
+          }
+        } catch {}
       }
     };
     fetchTickets();

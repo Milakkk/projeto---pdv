@@ -63,7 +63,7 @@ export default function OrderBoard({
   };
   
   // Filtra todos os pedidos, incluindo os prontos, para os modais
-  const productionOrders = orders.filter(order => ['NEW', 'PREPARING'].includes(order.status));
+  const productionOrders = orders.filter(order => ['NEW', 'PREPARING', 'READY'].includes(order.status));
   const readyOrders = orders.filter(order => order.status === 'READY');
   const canceledOrders = orders.filter(order => order.status === 'CANCELLED');
   const deliveredOrders = orders.filter(order => order.status === 'DELIVERED');

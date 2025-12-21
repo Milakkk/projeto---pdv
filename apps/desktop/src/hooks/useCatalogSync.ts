@@ -29,6 +29,24 @@ export function useCatalogSync() {
         if (catError) throw catError;
 
         if (categoriesData) {
+          let kitchenIdsByCategory: Record<string, string[]> = {};
+          try {
+            const { data: assoc, error: assocError } = await supabase
+              .from('category_kitchens')
+              .select('category_id, kitchen_id');
+            if (!assocError && Array.isArray(assoc)) {
+              for (const r of assoc as any[]) {
+                const cid = r?.category_id ? String(r.category_id) : '';
+                const kid = r?.kitchen_id ? String(r.kitchen_id) : '';
+                if (!cid || !kid) continue;
+                if (!kitchenIdsByCategory[cid]) kitchenIdsByCategory[cid] = [];
+                kitchenIdsByCategory[cid].push(kid);
+              }
+            }
+          } catch (e) {
+            console.error('[CatalogSync] Erro ao carregar category_kitchens:', e);
+          }
+
           const mappedCategories: Category[] = (categoriesData || []).map((c: any) => ({
             id: c.id,
             name: c.name,
@@ -36,7 +54,7 @@ export function useCatalogSync() {
             order: c.display_order || 0,
             active: c.is_active !== false,
             integrationCode: c.integration_code,
-            kitchenIds: [],
+            kitchenIds: kitchenIdsByCategory[String(c.id)] || [],
           }));
           
           setCategories(() => {
