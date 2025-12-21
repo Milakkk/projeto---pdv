@@ -79,7 +79,7 @@ export interface Order {
   total: number;
   customerWhatsApp?: string;
   paymentMethod: string;
-  status: 'NEW' | 'PREPARING' | 'READY' | 'DELIVERED' | 'CANCELLED';
+  status: 'NEW' | 'QUEUED' | 'PREPARING' | 'READY' | 'DELIVERED' | 'CANCELLED';
   createdAt: Date;
   slaMinutes: number;
   createdBy: string;

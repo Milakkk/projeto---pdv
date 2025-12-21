@@ -718,7 +718,7 @@ export default function CozinhaPage() {
           let q = supabase!
             .from('kds_tickets')
             .select('id, order_id, status, created_at, updated_at, kitchen_id')
-            .in('status', ['NEW', 'PREPARING', 'READY', 'DELIVERED'])
+            .in('status', ['NEW', 'QUEUED', 'PREPARING', 'READY', 'DELIVERED'])
           if (kitchenFilter) q = q.eq('kitchen_id', kitchenFilter)
           const { data, error } = await q
           if (error) useSupabase = false
@@ -1061,6 +1061,7 @@ export default function CozinhaPage() {
         // Correção CRÍTICA: NEW → queued, PREPARING → prep, READY → ready, DELIVERED → done
         const mapToKds = (s: Order['status']) => {
           if (s === 'NEW') return 'queued';
+          if (s === 'QUEUED') return 'queued';
           if (s === 'PREPARING') return 'prep';
           if (s === 'READY') return 'ready';
           if (s === 'DELIVERED') return 'done';
@@ -1090,7 +1091,7 @@ export default function CozinhaPage() {
                 try {
                   const nowIso = new Date().toISOString();
                   const patch: any = { };
-                  if (status === 'NEW') patch.newStart = nowIso;
+                  if (status === 'NEW' || status === 'QUEUED') patch.newStart = nowIso;
                   if (status === 'PREPARING') patch.preparingStart = nowIso;
                   if (status === 'READY') patch.readyAt = nowIso;
                   if (status === 'DELIVERED') patch.deliveredAt = nowIso;
@@ -1132,7 +1133,7 @@ export default function CozinhaPage() {
           let readyAt = order.readyAt;
           let updatedAt = order.updatedAt;
 
-          if (status === 'PREPARING' && order.status === 'NEW') {
+          if (status === 'PREPARING' && (order.status === 'NEW' || order.status === 'QUEUED')) {
             const updatedItems = (order.items || []).map(item => ({
               ...item,
               productionUnits: (item.productionUnits || []).map(unit => ({
@@ -1301,7 +1302,7 @@ export default function CozinhaPage() {
           }
 
           let finalUpdatedAt = order.updatedAt;
-          if (newOrderStatus === 'PREPARING' && order.status === 'NEW') {
+          if (newOrderStatus === 'PREPARING' && (order.status === 'NEW' || order.status === 'QUEUED')) {
             finalUpdatedAt = now;
           }
 
@@ -1309,7 +1310,7 @@ export default function CozinhaPage() {
             ...order,
             items: updatedItems,
             status: newOrderStatus,
-            updatedAt: order.status === 'NEW' && newOrderStatus === 'PREPARING' ? finalUpdatedAt : order.updatedAt,
+            updatedAt: (order.status === 'NEW' || order.status === 'QUEUED') && newOrderStatus === 'PREPARING' ? finalUpdatedAt : order.updatedAt,
             readyAt: readyAt
           };
         }

@@ -58,6 +58,7 @@ const getAllChecklistItems = (observations: string | undefined): { label: string
 
 const statusInfo = {
   NEW: { text: 'Novo', color: 'bg-blue-100 text-blue-800', bgColor: 'bg-blue-50' },
+  QUEUED: { text: 'Na Fila', color: 'bg-indigo-100 text-indigo-800', bgColor: 'bg-indigo-50' },
   PREPARING: { text: 'Preparando', color: 'bg-yellow-100 text-yellow-800', bgColor: 'bg-yellow-50' },
   READY: { text: 'Pronto', color: 'bg-green-100 text-green-800', bgColor: 'bg-green-50' },
   DELIVERED: { text: 'Entregue', color: 'bg-gray-100 text-gray-800', bgColor: 'bg-gray-50' },
@@ -85,7 +86,7 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
   const [directDeliveryChecks, setDirectDeliveryChecks] = useState<Record<string, boolean>>({});
   
   // O timer deve estar ativo apenas em NEW e PREPARING.
-  const isTimerActive = order.status === 'NEW' || order.status === 'PREPARING';
+  const isTimerActive = order.status === 'NEW' || order.status === 'QUEUED' || order.status === 'PREPARING';
   const { timeElapsed, isOverdue, formatTime } = useTimer(order.createdAt, order.slaMinutes, isTimerActive);
 
   // NOVO: Itens que passam pela cozinha (ignora entrega direta)
@@ -126,6 +127,7 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
   const getNextStatus = (currentStatus: Order['status']): Order['status'] | null => {
     switch (currentStatus) {
       case 'NEW': return 'PREPARING';
+      case 'QUEUED': return 'PREPARING';
       case 'PREPARING': return 'READY'; 
       case 'READY': return 'DELIVERED';
       default: return null;
@@ -163,6 +165,7 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
   const getActionVariant = (status: Order['status']): 'info' | 'primary' | 'success' => {
     switch (status) {
       case 'NEW': return 'info'; 
+      case 'QUEUED': return 'info';
       case 'PREPARING': return 'success'; 
       case 'READY': return 'success'; 
       default: return 'primary';
@@ -199,7 +202,7 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
     if (!nextStatus) return;
 
     // Validação de atribuição de operador para NEW -> PREPARING (RELAXADA: Apenas alerta se não houver operadores)
-    if (order.status === 'NEW' && nextStatus === 'PREPARING') {
+    if ((order.status === 'NEW' || order.status === 'QUEUED') && nextStatus === 'PREPARING') {
       console.log('Iniciando preparo (sem validação estrita de operadores)');
     }
     
@@ -285,8 +288,8 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
   const handleAssignOperatorUnified = (e: React.MouseEvent, itemId: string, unitId: string, operatorName: string) => {
     e.stopPropagation(); // MANTIDO AQUI PARA BLOQUEAR O TOGGLE DA LINHA
     
-    // Bloquear mudança de operador se o status for diferente de NEW
-    if (order.status !== 'NEW') return;
+    // Bloquear mudança de operador se o status for diferente de NEW ou QUEUED
+    if (order.status !== 'NEW' && order.status !== 'QUEUED') return;
     onAssignOperator(order.id, itemId, unitId, operatorName);
   };
 
@@ -321,15 +324,15 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
   const isCurrentlyOverdue = order.status === 'READY' || order.status === 'DELIVERED' ? wasLate : isOverdue;
   
   // Atraso só é relevante se o timer estiver ativo (NEW ou PREPARING)
-  const isOverdueForHighlight = isCurrentlyOverdue && (order.status === 'NEW' || order.status === 'PREPARING');
+  const isOverdueForHighlight = isCurrentlyOverdue && (order.status === 'NEW' || order.status === 'QUEUED' || order.status === 'PREPARING');
   const bgColor = isOverdueForHighlight ? 'bg-red-50' : (currentStatusInfo?.bgColor || 'bg-white');
   
   // O botão de item pronto é visível se o pedido estiver em PREPARING
   const showUnitReadyButton = order.status === 'PREPARING';
   const isPreparingStatus = order.status === 'PREPARING';
   
-  // Atribuição de operador só é permitida em NEW
-  const isOperatorAssignmentDisabled = order.status !== 'NEW'; 
+  // Atribuição de operador só é permitida em NEW ou QUEUED
+  const isOperatorAssignmentDisabled = order.status !== 'NEW' && order.status !== 'QUEUED'; 
   
   const isChecklistDisabled = !isPreparingStatus;
   
@@ -337,7 +340,7 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
   const allUnitsReadyStatus = useMemo(() => allUnitsReady, [allUnitsReady]);
   
   // Determine if the order is in an active state where actions are possible
-  const isActiveOrder = order.status === 'NEW' || order.status === 'PREPARING' || order.status === 'READY';
+  const isActiveOrder = order.status === 'NEW' || order.status === 'QUEUED' || order.status === 'PREPARING' || order.status === 'READY';
   const showPreviousButton = order.status === 'READY'; // Apenas READY pode voltar para PREPARING
 
   const nextStatusAction = getStatusAction(order.status);
@@ -432,7 +435,7 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
               {timeToDisplay}
             </span>
             {/* Exibir status de atraso/prazo para todos os status ativos */}
-            {(order.status === 'NEW' || order.status === 'PREPARING' || order.status === 'READY') && (
+            {(order.status === 'NEW' || order.status === 'QUEUED' || order.status === 'PREPARING' || order.status === 'READY') && (
               <span className={`text-white text-xs font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${
                 isOverdueForHighlight ? 'bg-red-500' : 'bg-green-500'
               } whitespace-nowrap`}>
