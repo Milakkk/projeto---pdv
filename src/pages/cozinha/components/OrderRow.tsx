@@ -279,8 +279,8 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
   const handleAssignOperatorUnified = (e: React.MouseEvent, itemId: string, unitId: string, operatorName: string) => {
     e.stopPropagation(); // MANTIDO AQUI PARA BLOQUEAR O TOGGLE DA LINHA
     
-    // Bloquear mudança de operador se o status for diferente de NEW ou PREPARING
-    if (order.status !== 'NEW' && order.status !== 'PREPARING') return;
+    // Bloquear mudança de operador se o status for diferente de NEW
+    if (order.status !== 'NEW') return;
     onAssignOperator(order.id, itemId, unitId, operatorName);
   };
 
@@ -322,8 +322,8 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
   const showUnitReadyButton = order.status === 'PREPARING';
   const isPreparingStatus = order.status === 'PREPARING';
   
-  // Atribuição de operador é permitida em NEW e PREPARING
-  const isOperatorAssignmentDisabled = order.status !== 'NEW' && order.status !== 'PREPARING'; 
+  // Atribuição de operador só é permitida em NEW
+  const isOperatorAssignmentDisabled = order.status !== 'NEW'; 
   
   const isChecklistDisabled = !isPreparingStatus;
   

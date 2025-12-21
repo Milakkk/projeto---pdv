@@ -217,20 +217,8 @@ function OrderCardComponent({
     const nextStatus = getNextStatus(order.status);
     if (!nextStatus) return;
 
-    if (order.status === 'NEW' && nextStatus === 'PREPARING') {
-      if (operators.length === 0) {
-        setAlertModalMessage('Não há operadores cadastrados. Adicione um operador para iniciar o preparo.');
-        setShowAssignOperatorAlert(true);
-        return;
-      }
-      const allAssigned = order.items.every(item => 
-        (item.productionUnits || []).every(unit => !!unit.operatorName)
-      );
-      if (!allAssigned) {
-        setAlertModalMessage('É necessário atribuir um operador a todas as unidades antes de iniciar o preparo.');
-        setShowAssignOperatorAlert(true);
-        return;
-      }
+    if ((order.status === 'NEW') && nextStatus === 'PREPARING') {
+      // Operator assignment is now optional
     }
     if (order.status === 'PREPARING' && nextStatus === 'READY') {
       if (!isOrderReadyForNextStep) {
