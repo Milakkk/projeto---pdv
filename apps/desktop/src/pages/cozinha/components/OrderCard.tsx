@@ -72,7 +72,7 @@ function OrderCardComponent({
   const [showAssignOperatorAlert, setShowAssignOperatorAlert] = useState(false);
   const [alertModalMessage, setAlertModalMessage] = useState('');
   
-  const [isCollapsed, setIsCollapsed] = useState(() => ['NEW', 'QUEUED', 'READY'].includes(order.status)); 
+  const [isCollapsed, setIsCollapsed] = useState(() => ['NEW', 'READY'].includes(order.status)); 
   const expandedItemsRef = useRef<Record<string, boolean>>({});
   const [forceUpdate, setForceUpdate] = useState(false);
   // Botão para alternar exibição de itens de entrega direta
@@ -106,7 +106,7 @@ function OrderCardComponent({
     setForceUpdate(prev => !prev); // Força a re-renderização
   };
   
-  const isTimerActive = order.status === 'NEW' || order.status === 'QUEUED' || order.status === 'PREPARING';
+  const isTimerActive = order.status === 'NEW' || order.status === 'PREPARING';
   const { timeElapsed, isOverdue, formatTime } = useTimer(order.createdAt, order.slaMinutes, isTimerActive);
 
   const categoryMap = useMemo(() => {
@@ -144,7 +144,7 @@ function OrderCardComponent({
   }, [kitchenItems]);
 
   useEffect(() => {
-    if (operators.length === 1 && ['NEW', 'QUEUED'].includes(order.status)) {
+    if (operators.length === 1 && ['NEW'].includes(order.status)) {
       const needsAssignment = kitchenItems.some(item => 
         (item.productionUnits || []).some(unit => !unit.operatorName)
       );
@@ -156,8 +156,7 @@ function OrderCardComponent({
   
   const getNextStatus = (currentStatus: Order['status']): Order['status'] | null => {
     switch (currentStatus) {
-      case 'NEW':
-      case 'QUEUED': return 'PREPARING';
+      case 'NEW': return 'PREPARING';
       case 'PREPARING': return 'READY'; 
       case 'READY': return 'DELIVERED';
       default: return null;
@@ -175,7 +174,7 @@ function OrderCardComponent({
 
   const getStatusAction = (status: Order['status']) => {
     const s = String(status).toUpperCase();
-    if (s === 'NEW' || s === 'QUEUED') return 'Iniciar Preparo';
+    if (s === 'NEW') return 'Iniciar Preparo';
     if (s === 'PREPARING' || s === 'PREP') return 'Pronto';
     if (s === 'READY') return 'Entregue';
     return null;
@@ -183,8 +182,7 @@ function OrderCardComponent({
   
   const getActionVariant = (status: Order['status']): 'info' | 'primary' | 'success' => {
     switch (status) {
-      case 'NEW':
-      case 'QUEUED': return 'info'; 
+      case 'NEW': return 'info'; 
       case 'PREPARING': return 'success'; 
       case 'READY': return 'success'; 
       default: return 'primary';
@@ -224,7 +222,7 @@ function OrderCardComponent({
     const nextStatus = getNextStatus(order.status);
     if (!nextStatus) return;
 
-    if ((order.status === 'NEW' || order.status === 'QUEUED') && nextStatus === 'PREPARING') {
+    if ((order.status === 'NEW') && nextStatus === 'PREPARING') {
       // Operator assignment is now optional
     }
     if (order.status === 'PREPARING' && nextStatus === 'READY') {
@@ -455,7 +453,7 @@ function OrderCardComponent({
                 <div key={item.id} className={`border-l-4 pl-3 p-2 rounded-r-lg transition-colors border-amber-400`}>
                   <div 
                     className={`font-medium flex items-center justify-between cursor-pointer p-2 rounded-lg border transition-colors text-white ${
-                      ['NEW', 'QUEUED'].includes(order.status)
+                      ['NEW'].includes(order.status)
                         ? (assignedUnits === totalUnits ? 'bg-blue-500 hover:bg-blue-600 border-blue-500' : 'bg-gray-500 hover:bg-gray-600 border-gray-500')
                         : (isItemReady ? 'bg-green-500 hover:bg-green-600 border-green-500' : 'bg-amber-500 hover:bg-amber-600 border-amber-500')
                     }`}
@@ -606,11 +604,11 @@ function OrderCardComponent({
                                           key={op.id}
                                           type="button"
                                           onClick={(e) => {
-                                            e.stopPropagation();
-                                            if (!['NEW', 'QUEUED'].includes(order.status)) return;
-                                            const newOperatorName = unitOperator === op.name ? '' : op.name;
-                                            onAssignOperator(order.id, item.id, unit.unitId, newOperatorName);
-                                          }}
+                                          e.stopPropagation();
+                                          if (!['NEW'].includes(order.status)) return;
+                                          const newOperatorName = unitOperator === op.name ? '' : op.name;
+                                          onAssignOperator(order.id, item.id, unit.unitId, newOperatorName);
+                                        }}
                                           className={`px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap pointer-events-auto ${
                                             unitOperator === op.name
                                               ? 'bg-amber-300 !text-amber-900 !font-semibold hover:!bg-amber-400'

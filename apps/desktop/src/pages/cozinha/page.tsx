@@ -1133,7 +1133,7 @@ export default function CozinhaPage() {
           let readyAt = order.readyAt;
           let updatedAt = order.updatedAt;
 
-          if (status === 'PREPARING' && (order.status === 'NEW' || order.status === 'QUEUED')) {
+          if (status === 'PREPARING' && (order.status === 'NEW')) {
             const updatedItems = (order.items || []).map(item => ({
               ...item,
               productionUnits: (item.productionUnits || []).map(unit => ({
