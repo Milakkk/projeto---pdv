@@ -93,6 +93,7 @@ export const categories = sqliteTable(
       onUpdate: "cascade",
     }),
     defaultStation: text("default_station"),
+    displayOrder: integer("display_order").default(0),
     updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
     version: integer("version").notNull().default(1),
     pendingSync: integer("pending_sync", { mode: "boolean" })

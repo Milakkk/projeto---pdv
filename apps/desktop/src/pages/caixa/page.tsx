@@ -352,11 +352,11 @@ export default function CaixaPage() {
           productsService.listProducts(),
         ]);
 
-        const mappedCategories: Category[] = (dbCategories || []).map((c: any, idx: number) => ({
+        const mappedCategories: Category[] = (dbCategories || []).map((c: any) => ({
           id: c.id,
           name: c.name,
           icon: '',
-          order: idx,
+          order: c.displayOrder ?? c.display_order ?? 0,
           active: true,
         }));
 
@@ -1311,11 +1311,27 @@ export default function CaixaPage() {
       targetCategory.order = tempOrder;
 
       // Atualizar o estado global de categorias
-      setCategories(newCategories.map(cat => {
+      const updatedCategories = newCategories.map(cat => {
         if (cat.id === currentCategory.id) return currentCategory;
         if (cat.id === targetCategory.id) return targetCategory;
         return cat;
-      }));
+      });
+
+      setCategories(updatedCategories);
+
+      // Persistir as mudanças de ordem no banco
+      const persistOrders = async () => {
+        try {
+          await Promise.all([
+            productsService.updateCategoryOrder(currentCategory.id, currentCategory.order),
+            productsService.updateCategoryOrder(targetCategory.id, targetCategory.order)
+          ]);
+          console.log('[PDV] Ordem das categorias persistida com sucesso');
+        } catch (error) {
+          console.error('[PDV] Erro ao persistir ordem das categorias:', error);
+        }
+      };
+      persistOrders();
     }
   };
 

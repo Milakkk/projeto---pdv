@@ -98,6 +98,11 @@ CREATE INDEX IF NOT EXISTS idx_orders_operational_session_id ON public.orders(op
 -- WHERE table_name = 'kds_phase_times' 
 -- ORDER BY ordinal_position;
 
+-- ========== CATEGORIES ==========
+
+-- 1. Adicionar coluna display_order para persistência da ordem
+ALTER TABLE public.categories ADD COLUMN IF NOT EXISTS display_order INTEGER DEFAULT 0;
+
 -- ============================================
 -- FIM DO SCRIPT
 -- ============================================

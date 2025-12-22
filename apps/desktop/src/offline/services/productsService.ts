@@ -54,10 +54,10 @@ export async function listProducts() {
       for (const p of mapped) {
         const normalizedName = String(p.name || '').trim().toLowerCase()
         // Key strategy: If SKU exists, use it. Otherwise use Name + Category.
-        const key = p.sku && String(p.sku).trim().length > 0 
-          ? `sku:${String(p.sku).trim().toLowerCase()}` 
+        const key = p.sku && String(p.sku).trim().length > 0
+          ? `sku:${String(p.sku).trim().toLowerCase()}`
           : `name:${normalizedName}|cat:${p.categoryId}`
-        
+
         if (!uniqueMap.has(key)) {
           uniqueMap.set(key, p)
         }
@@ -108,7 +108,7 @@ export async function listCategories() {
     const unitId = (await getCurrentUnitId())
     const api = (window as any)?.api?.db?.query
     if (typeof api === 'function') {
-      const sql = unitId ? 'SELECT * FROM categories WHERE unit_id = ? OR unit_id IS NULL' : 'SELECT * FROM categories'
+      const sql = unitId ? 'SELECT * FROM categories WHERE unit_id = ? OR unit_id IS NULL ORDER BY display_order, name' : 'SELECT * FROM categories ORDER BY display_order, name'
       let res = await query(sql, unitId ? [unitId] : [])
       const rows = res?.rows ?? []
       if (unitId && rows.length === 0) {
@@ -127,11 +127,11 @@ export async function listCategories() {
           map.set(key, preferCurrent ? c : prev)
         }
       }
-      return Array.from(map.values())
+      return Array.from(map.values()).sort((a, b) => (a.display_order ?? 0) - (b.display_order ?? 0))
     }
     const { supabase } = await import('../../utils/supabase')
     if (supabase) {
-      const { data, error } = await supabase.from('categories').select('id, name, unit_id, updated_at')
+      const { data, error } = await supabase.from('categories').select('id, name, unit_id, display_order, updated_at').order('display_order', { ascending: true })
       if (error) throw error
       const list = data || []
       const map = new Map<string, any>()
@@ -146,7 +146,9 @@ export async function listCategories() {
           map.set(key, preferCurrent ? c : prev)
         }
       }
-      return Array.from(map.values()).map(c => ({ id: (c as any).id, name: (c as any).name }))
+      return Array.from(map.values())
+        .map(c => ({ id: (c as any).id, name: (c as any).name, displayOrder: (c as any).display_order ?? 0 }))
+        .sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0))
     }
     const raw = localStorage.getItem('categories')
     const arr = raw ? JSON.parse(raw) : []
@@ -219,8 +221,8 @@ export async function upsertProduct(params: {
         sku: params.sku ?? null,
         name: params.name,
         // Validate category_id is a UUID before sending to Supabase
-        category_id: (params.categoryId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(params.categoryId)) 
-          ? params.categoryId 
+        category_id: (params.categoryId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(params.categoryId))
+          ? params.categoryId
           : null,
         unit_id: unitId ?? null,
         price_cents: Math.max(0, Number(params.priceCents ?? 0)),
@@ -292,7 +294,7 @@ export async function setProductActive(id: UUID, isActive: boolean) {
   await query('UPDATE products SET is_active = ?, updated_at = ?, pending_sync = 1 WHERE id = ?', [isActive ? 1 : 0, now, id])
 }
 
-export async function upsertCategory(params: { id?: UUID; name: string }) {
+export async function upsertCategory(params: { id?: UUID; name: string; displayOrder?: number }) {
   // Sempre gera um UUID válido para Supabase (não usa IDs antigos como "cat_xxx")
   // Valida se o ID fornecido é um UUID válido
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -320,8 +322,8 @@ export async function upsertCategory(params: { id?: UUID; name: string }) {
         return targetId
       }
       await query(
-        'INSERT INTO categories (id, name, unit_id, default_station, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, unit_id=excluded.unit_id, default_station=excluded.default_station, updated_at=excluded.updated_at, version=excluded.version, pending_sync=excluded.pending_sync',
-        [id, params.name, unitId ?? null, null, now, 1, 1],
+        'INSERT INTO categories (id, name, unit_id, default_station, display_order, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, unit_id=excluded.unit_id, default_station=excluded.default_station, display_order=excluded.display_order, updated_at=excluded.updated_at, version=excluded.version, pending_sync=excluded.pending_sync',
+        [id, params.name, unitId ?? null, null, params.displayOrder ?? 0, now, 1, 1],
       )
       return id
     } else {
@@ -376,6 +378,7 @@ export async function upsertCategory(params: { id?: UUID; name: string }) {
         name: params.name,
         unit_id: unitId ?? null,
         default_station: null,
+        display_order: params.displayOrder ?? 0,
         updated_at: now,
         version: 1,
         pending_sync: false,
@@ -486,9 +489,10 @@ export async function upsertCategory(params: { id?: UUID; name: string }) {
         const existing = arr.find((c: any) => c.id === id)
         if (existing) {
           existing.name = params.name
+          existing.display_order = params.displayOrder ?? 0
           existing.updated_at = now
         } else {
-          arr.push({ id, name: params.name, updated_at: now })
+          arr.push({ id, name: params.name, display_order: params.displayOrder ?? 0, updated_at: now })
         }
         localStorage.setItem('categories', JSON.stringify(arr))
         console.warn('[productsService] Categoria salva no localStorage como fallback')
@@ -497,6 +501,32 @@ export async function upsertCategory(params: { id?: UUID; name: string }) {
     }
     throw err
   }
+}
+
+export async function updateCategoryOrder(categoryId: string, order: number) {
+  const now = new Date().toISOString()
+  const isElectron = typeof (window as any)?.api?.db?.query === 'function'
+
+  if (isElectron) {
+    await query('UPDATE categories SET display_order = ?, updated_at = ?, pending_sync = 1 WHERE id = ?', [order, now, categoryId])
+  } else {
+    const { supabase } = await import('../../utils/supabase')
+    if (supabase) {
+      await supabase.from('categories').update({ display_order: order, updated_at: now }).eq('id', categoryId)
+    }
+  }
+
+  // Fallback / Cache local
+  try {
+    const raw = localStorage.getItem('categories')
+    const arr = raw ? JSON.parse(raw) : []
+    const idx = arr.findIndex((c: any) => c.id === categoryId)
+    if (idx >= 0) {
+      arr[idx].display_order = order
+      arr[idx].updated_at = now
+      localStorage.setItem('categories', JSON.stringify(arr))
+    }
+  } catch { }
 }
 
 export async function deleteCategories(ids: string[]) {
