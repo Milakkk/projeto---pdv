@@ -774,7 +774,7 @@ export default function CozinhaPage() {
             // Fix: remove 'opened_at' if it doesn't exist on orders table
             const { data } = await supabase
               .from('orders')
-              .select('id, created_at')
+              .select('id, created_at, pin, password')
               .in('id', orderIds);
             if (data) {
               ordersMap = data.reduce((acc: any, o: any) => ({ ...acc, [o.id]: o }), {});

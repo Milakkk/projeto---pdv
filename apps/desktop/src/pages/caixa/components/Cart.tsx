@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import type { OrderItem, Order, SavedCart, KitchenOperator, ProductionUnit, OperationalSession, Category, RequiredModifierGroup } from '../../../types';
+import type { OrderItem, Order, SavedCart, KitchenOperator, ProductionUnit, OperationalSession, Category } from '../../../types';
 import Button from '../../../components/base/Button';
 import Input from '../../../components/base/Input';
 import Modal from '../../../components/base/Modal';
@@ -9,9 +9,10 @@ import OrderConfirmationModal from './OrderConfirmationModal';
 import ConfirmationModal from '../../../components/base/ConfirmationModal'; // Importando o novo modal
 import { DEFAULT_PAYMENT_SHORTCUTS, DEFAULT_GLOBAL_OBSERVATIONS } from '../../../utils/constants';
 import type { CashMovement as CashMovementType } from './CashMovement';
-import { useAuth } from '../../../context/AuthContext'; // IMPORTAÇÃO CORRIGIDA
+import { useAuth } from '../../../context/AuthContext';
+import { showSuccess } from '../../../utils/toast';
 // Serviços offline: pedidos e caixa
-import { createOrder, addItem, addPayment, closeOrder, setOrderDetails } from '../../../offline/services/ordersService'
+import { createOrder, addItem, addPayment, closeOrder } from '../../../offline/services/ordersService'
 import { enqueueTicket } from '@/offline/services/kdsService'
 import { addMovement, getCurrentSession } from '@/offline/services/cashService'
 
@@ -60,29 +61,29 @@ const getPaymentIcon = (method: string): string => {
 // Função auxiliar para separar opções obrigatórias e observações opcionais
 // RECEBE globalObservations como argumento
 const parseObservations = (observationsString: string | undefined, item: OrderItem, globalObservations: string[]) => {
-    if (!observationsString) {
-        return { required: [], optional: [], custom: '' };
-    }
-    
-    const allParts = observationsString.split(', ').map(p => p.trim()).filter(p => p.length > 0);
-    
-    // Modificadores Obrigatórios: [OBRIGATÓRIO] Nome do Grupo: Opção Selecionada
-    const required = allParts
-        .filter(p => p.startsWith('[OBRIGATÓRIO]'))
-        .map(p => p.replace('[OBRIGATÓRIO]', '').trim());
-        
-    const optionalAndCustom = allParts.filter(p => !p.startsWith('[OBRIGATÓRIO]'));
-    
-    // Lista de todas as observações opcionais disponíveis (item + global)
-    const availableOptional = [...(item.menuItem.observations || []), ...globalObservations];
-    
-    // Filtra as observações opcionais que correspondem às opções disponíveis
-    const optional = optionalAndCustom.filter(p => availableOptional.includes(p));
-    
-    // O que sobrar é customizado
-    const custom = optionalAndCustom.filter(p => !availableOptional.includes(p)).join(', ');
-    
-    return { required, optional, custom };
+  if (!observationsString) {
+    return { required: [], optional: [], custom: '' };
+  }
+
+  const allParts = observationsString.split(', ').map(p => p.trim()).filter(p => p.length > 0);
+
+  // Modificadores Obrigatórios: [OBRIGATÓRIO] Nome do Grupo: Opção Selecionada
+  const required = allParts
+    .filter(p => p.startsWith('[OBRIGATÓRIO]'))
+    .map(p => p.replace('[OBRIGATÓRIO]', '').trim());
+
+  const optionalAndCustom = allParts.filter(p => !p.startsWith('[OBRIGATÓRIO]'));
+
+  // Lista de todas as observações opcionais disponíveis (item + global)
+  const availableOptional = [...(item.menuItem.observations || []), ...globalObservations];
+
+  // Filtra as observações opcionais que correspondem às opções disponíveis
+  const optional = optionalAndCustom.filter(p => availableOptional.includes(p));
+
+  // O que sobrar é customizado
+  const custom = optionalAndCustom.filter(p => !availableOptional.includes(p)).join(', ');
+
+  return { required, optional, custom };
 };
 
 
@@ -95,61 +96,61 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
   const [showConfirmationModal, setShowConfirmationModal] = useState(false);
   const [showDeleteCartModal, setShowDeleteCartModal] = useState(false); // Novo estado
   const [cartToDelete, setCartToDelete] = useState<SavedCart | null>(null); // Carrinho a ser excluído
-  const [confirmedOrderData, setConfirmedOrderData] = useState<OrderConfirmationModalProps['orderData']>(null);
-  
+  const [confirmedOrderData, setConfirmedOrderData] = useState<any>(null);
+
   const [cartName, setCartName] = useState('');
   const [savedCarts, setSavedCarts] = useLocalStorage<SavedCart[]>('savedCarts', []);
   const [editingItem, setEditingItem] = useState<OrderItem | null>(null);
-  
+
   // Estados para Edição de Observações
   const [selectedRequiredModifiers, setSelectedRequiredModifiers] = useState<Record<string, string>>({}); // NOVO
   const [selectedOptionalObservations, setSelectedOptionalObservations] = useState<string[]>([]); // RENOMEADO
   const [customObservation, setCustomObservation] = useState('');
-  
+
   const [globalObservations] = useLocalStorage<string[]>('globalObservations', DEFAULT_GLOBAL_OBSERVATIONS);
   const [selectedCartToReplace, setSelectedCartToReplace] = useState<string | null>(null);
   const [customerWhatsApp, setCustomerWhatsApp] = useState('');
   const [selectedPayment, setSelectedPayment] = useState('');
   const [orderCounter, setOrderCounter] = useLocalStorage<number>('orderCounter', 1);
   const [orderPassword, setOrderPassword] = useState('');
- // Sessão de caixa ativa via serviço offline (com carregamento otimista)
- const [cashSession, setCashSession] = useState<ActiveCashSession | null>(null);
- const [cashLoaded, setCashLoaded] = useState(false);
- useEffect(() => {
-   let cancelled = false;
-   (async () => {
-     try {
-       const session = await getCurrentSession();
-       if (!cancelled) {
-       if (session) {
-         // apps/desktop cashService retorna campos snake_case
-         setCashSession({
-           id: String(session.id),
-           operatorName: String(session.opened_by || 'Operador'),
-           openingTime: session.opened_at ? new Date(session.opened_at) : new Date(),
-           initialAmount: Math.max(0, (session.opening_amount_cents || 0) / 100),
-         });
-       } else {
-           setCashSession(null);
-         }
-       }
-     } catch (error) {
-       console.error('Erro ao obter sessão de caixa atual:', error);
-       if (!cancelled) setCashSession(null);
-     } finally {
-       if (!cancelled) setCashLoaded(true);
-     }
-   })();
-   return () => { cancelled = true; };
- }, []);
-  const [config] = useLocalStorage<any>('appConfig', { 
-    checkoutShortcut: 'F', 
+  // Sessão de caixa ativa via serviço offline (com carregamento otimista)
+  const [cashSession, setCashSession] = useState<ActiveCashSession | null>(null);
+  const [cashLoaded, setCashLoaded] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const session = await getCurrentSession();
+        if (!cancelled) {
+          if (session) {
+            // apps/desktop cashService retorna campos snake_case
+            setCashSession({
+              id: String(session.id),
+              operatorName: String(session.opened_by || 'Operador'),
+              openingTime: session.opened_at ? new Date(session.opened_at) : new Date(),
+              initialAmount: Math.max(0, (session.opening_amount_cents || 0) / 100),
+            });
+          } else {
+            setCashSession(null);
+          }
+        }
+      } catch (error) {
+        console.error('Erro ao obter sessão de caixa atual:', error);
+        if (!cancelled) setCashSession(null);
+      } finally {
+        if (!cancelled) setCashLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  const [config] = useLocalStorage<any>('appConfig', {
+    checkoutShortcut: 'F',
     passwordFormat: 'numeric' // Valor padrão para evitar erro se a config ainda não foi salva
-  }); 
+  });
   const [paymentShortcuts] = useLocalStorage<Record<string, string>>('paymentShortcuts', DEFAULT_PAYMENT_SHORTCUTS);
   const [categories] = useLocalStorage<Category[]>('categories', mockCategories); // CORREÇÃO: Usando mockCategories como fallback
   const [kitchenOperators] = useLocalStorage<KitchenOperator[]>('kitchenOperators', []); // Carregar operadores
-  
+
   // CORREÇÃO P3: Carregar formas de pagamento do localStorage
   const [paymentMethods] = useLocalStorage<string[]>('paymentMethods', mockPaymentMethods);
 
@@ -164,7 +165,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
   const [showChangeCalculation, setShowChangeCalculation] = useState(false);
 
   // Estados para pagamento múltiplo
-  const [paymentBreakdown, setPaymentBreakdown] = useState<{[key: string]: number}>({});
+  const [paymentBreakdown, setPaymentBreakdown] = useState<{ [key: string]: number }>({});
   const [remainingAmount, setRemainingAmount] = useState(0);
   const [isMultiplePayment, setIsMultiplePayment] = useState(false);
 
@@ -178,8 +179,8 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
       if (showLoadModal) { setShowLoadModal(false); return }
       if (showSaveModal) { setShowSaveModal(false); return }
     }
-    ;(window as any)?.api?.onEscape?.(handler)
-    return () => {}
+      ; (window as any)?.api?.onEscape?.(handler)
+    return () => { }
   }, [showConfirmationModal, showCheckout, showEditObservations, showDeleteCartModal, showLoadModal, showSaveModal])
 
   const subtotal = items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
@@ -193,7 +194,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
 
   // Verificar se é pagamento em dinheiro
   const isCashPayment = selectedPayment.toLowerCase().includes('dinheiro');
-  const hasCashInBreakdown = Object.keys(paymentBreakdown).some(method => 
+  const hasCashInBreakdown = Object.keys(paymentBreakdown).some(method =>
     method.toLowerCase().includes('dinheiro')
   );
 
@@ -211,7 +212,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
 
     setOrderPassword(value);
   };
-  
+
   // Calcular valor restante quando breakdown mudar (Memoizado)
   const calculateRemainingAmount = useCallback(() => {
     const totalPaid = Object.values(paymentBreakdown).reduce((sum, amount) => sum + amount, 0);
@@ -224,17 +225,17 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
     const dev = (import.meta as any)?.env?.DEV
     if (dev) console.log('=== DEBUG hasItemsWithMissingRequiredOptions ===')
     if (dev) console.log('Total de itens:', items.length)
-    
+
     const result = items.some(item => {
       const requiredGroups = item.menuItem.requiredModifierGroups || [];
       if (dev) console.log(`Item: ${item.menuItem.name}, Grupos obrigatórios:`, requiredGroups.length)
-      
+
       if (requiredGroups.length === 0) return false;
-      
+
       // Parse das observações atuais do item para verificar quais opções obrigatórias estão selecionadas
       const { required: selectedRequiredOptions } = parseObservations(item.observations, item, globalObservations);
       if (dev) console.log(`Observações selecionadas:`, selectedRequiredOptions)
-      
+
       // Verificar se todos os grupos obrigatórios têm uma opção selecionada
       const missingOption = requiredGroups.some(group => {
         // Verificar se alguma opção deste grupo está nas observações selecionadas
@@ -243,42 +244,45 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
         if (dev) console.log(`Grupo: ${group.name}, tem opção selecionada: ${hasSelectedOption}`)
         return !hasSelectedOption;
       });
-      
+
       if (dev) console.log(`Item ${item.menuItem.name} está faltando opção:`, missingOption)
       return missingOption;
     });
-    
+
     if (dev) console.log('Resultado final (tem itens faltando opções):', result)
     return result;
   }, [items, globalObservations]);
 
   // Função auxiliar para determinar se o botão de confirmação deve ser desabilitado
   const isConfirmDisabled = useCallback(() => {
-    // 0. Se for pagamento com dinheiro (único ou misto), bloqueia até sessão de caixa carregar/estar aberta
+    // 0. Bloquear se não houver sessão operacional aberta
+    if (!operationalSession || operationalSession.status !== 'OPEN') return true;
+
+    // 0.1. Se for pagamento com dinheiro (único ou misto), bloqueia até sessão de caixa carregar/estar aberta
     const isCartCashOpen = cashLoaded ? !!cashSession : true; // otimista até carregar
     if ((isCashPayment || hasCashInBreakdown) && !isCartCashOpen) return true;
 
     // 1. Senha obrigatória
     if (!orderPassword.trim()) return true;
-    
+
     // 2. Verificar se há itens com opções obrigatórias não selecionadas
     const hasMissingOptions = hasItemsWithMissingRequiredOptions();
     const dev = (import.meta as any)?.env?.DEV
     if (dev) console.log('=== DEBUG isConfirmDisabled ===')
     if (dev) console.log('hasItemsWithMissingRequiredOptions:', hasMissingOptions)
     if (hasMissingOptions) return true;
-    
+
     if (isMultiplePayment) {
       // 3. Pagamento Misto: Deve estar totalmente pago (tolerância de 1 centavo)
       const remaining = calculateRemainingAmount();
-      if (remaining > 0.01) return true; 
-      
+      if (remaining > 0.01) return true;
+
       // 4. Pagamento Misto: Se houver dinheiro, verificar se o valor pago cobre o valor em dinheiro
       if (hasCashInBreakdown) {
         const cashAmount = Object.entries(paymentBreakdown)
           .filter(([method]) => method.toLowerCase().includes('dinheiro'))
           .reduce((sum, [, amount]) => sum + amount, 0);
-        
+
         // O campo amountPaid não pode estar vazio E o valor pago deve ser suficiente (com tolerância)
         if (!amountPaid.trim() || paidAmount < cashAmount - 0.001) {
           return true;
@@ -288,7 +292,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
     } else {
       // 5. Pagamento Único: Forma de pagamento deve ser selecionada
       if (!selectedPayment) return true;
-      
+
       // 6. Pagamento Único: Se for dinheiro, o valor deve ser suficiente
       if (isCashPayment) {
         // O campo amountPaid não pode estar vazio E o valor pago deve ser suficiente (com tolerância)
@@ -324,15 +328,15 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
       if (showCheckout) {
         // Atalhos de pagamento
         const paymentMethod = Object.keys(paymentShortcuts).find(method => paymentShortcuts[method] === shortcutKey);
-        
+
         // Só aciona atalhos de pagamento se o campo de senha NÃO estiver focado
         if (paymentMethod && !isMultiplePayment && !isPasswordInputFocused) {
           event.preventDefault();
           setSelectedPayment(paymentMethod);
-          
+
           const isCash = paymentMethod.toLowerCase().includes('dinheiro');
           setShowChangeCalculation(isCash);
-          
+
           if (!isCash) {
             setAmountPaid('');
           } else {
@@ -344,14 +348,14 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
         // Atalho de confirmação (configurável)
         if (shortcutKey === checkoutShortcut && !event.shiftKey && !event.ctrlKey) {
           event.preventDefault();
-          
+
           // CORREÇÃO: Usar a função de validação centralizada
           if (!isConfirmDisabled()) {
             handleCheckout();
           }
         }
       }
-      
+
       // Atalho para abrir checkout (configurável)
       if (!showCheckout && items.length > 0 && shortcutKey === checkoutShortcut && !event.shiftKey && !event.ctrlKey) {
         // Só abre se não estiver em um campo de input/textarea
@@ -365,7 +369,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
     // Dependências simplificadas para evitar re-execuções desnecessárias e bugs de estado
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showCheckout, items.length, isMultiplePayment, selectedPayment, orderPassword, config.checkoutShortcut, paymentShortcuts, isConfirmDisabled]); 
+  }, [showCheckout, items.length, isMultiplePayment, selectedPayment, orderPassword, config.checkoutShortcut, paymentShortcuts, isConfirmDisabled]);
 
   // Função para gerar o número do pedido no formato # + mês + últimos 2 dígitos do ano + sequencial (4 dígitos)
   const generateOrderPin = () => {
@@ -379,7 +383,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
   // Atualizar valor restante quando breakdown mudar
   const updatePaymentBreakdown = (method: string, amount: number) => {
     const newBreakdown = { ...paymentBreakdown };
-    
+
     // Se o valor for 0 ou NaN, mantemos a chave, mas definimos o valor como 0
     if (isNaN(amount) || amount <= 0) {
       newBreakdown[method] = 0;
@@ -387,9 +391,9 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
       // Arredondar para 2 casas decimais ao salvar
       newBreakdown[method] = parseFloat(amount.toFixed(2));
     }
-    
+
     setPaymentBreakdown(newBreakdown);
-    
+
     // Recalcular remainingAmount usando a função memoizada
     const totalPaid = Object.values(newBreakdown).reduce((sum, amount) => sum + amount, 0);
     setRemainingAmount(Math.max(0, total - totalPaid));
@@ -407,7 +411,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
     // Verificar se já existe essa forma de pagamento
     const existingMethods = Object.keys(paymentBreakdown);
     let methodKey = method;
-    
+
     // Se já existe, adicionar numeração
     if (existingMethods.includes(method)) {
       let counter = 2;
@@ -416,11 +420,11 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
       }
       methodKey = `${method} (${counter})`;
     }
-    
+
     // Adicionar com valor inicial igual ao valor restante (limitado ao total)
     const initialValue = Math.min(calculateRemainingAmount(), total);
     updatePaymentBreakdown(methodKey, initialValue);
-    
+
     // Se for dinheiro, focar no campo de valor pago
     if (method.toLowerCase().includes('dinheiro')) {
       setShowChangeCalculation(true);
@@ -461,7 +465,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
         alert(`Ainda falta R$ ${(calculateRemainingAmount()).toFixed(2)} para completar o pagamento`);
         return;
       }
-      
+
       // Validação de dinheiro (único ou misto)
       if ((isCashPayment && !isMultiplePayment) || (isMultiplePayment && hasCashInBreakdown)) {
         let cashRequired = currentTotal;
@@ -470,13 +474,13 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
             .filter(([method]) => method.toLowerCase().includes('dinheiro'))
             .reduce((sum, [, amount]) => sum + amount, 0);
         }
-        
+
         if (currentPaidAmount < cashRequired - 0.001) { // Usando tolerância
           alert(`Digite o valor pago pelo cliente (deve ser maior ou igual a R$ ${cashRequired.toFixed(2)})`);
           return;
         }
       }
-      return; 
+      return;
     }
 
     // --- Se a validação passou, prosseguimos com a criação do pedido ---
@@ -503,18 +507,18 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
       };
 
       // Se houver dinheiro no breakdown, calcular troco e valor de movimento
-      const cashPayments = Object.entries(paymentBreakdown).filter(([method]) => 
+      const cashPayments = Object.entries(paymentBreakdown).filter(([method]) =>
         method.toLowerCase().includes('dinheiro')
       );
-      
+
       if (cashPayments.length > 0) {
         const cashAllocated = cashPayments.reduce((sum, [, amount]) => sum + amount, 0);
         finalChangeAmount = currentPaidAmount - cashAllocated;
-        
+
         // O valor que entra no caixa é o valor alocado em dinheiro (cashAllocated)
         // Para fins de apuração, o valor que entra no caixa é o valor alocado para a venda.
-        cashAmountForMovement = cashAllocated; 
-        
+        cashAmountForMovement = cashAllocated;
+
         paymentData.amountPaid = currentPaidAmount;
         paymentData.changeAmount = finalChangeAmount;
       }
@@ -525,7 +529,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
         amountPaid: isCashPayment ? currentPaidAmount : undefined,
         changeAmount: finalChangeAmount
       };
-      
+
       // Se for pagamento único em dinheiro, o valor que entra no caixa é o total do pedido
       if (isCashPayment) {
         cashAmountForMovement = currentTotal;
@@ -572,11 +576,19 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
 
     // Persistência offline no SQLite via serviços
     let movementPersisted = false;
-    let lastTicketId: string | undefined;
+    let orderId: string | undefined;
     try {
-      const orderId = await createOrder({ openedAt: now.toISOString(), operationalSessionId: operationalSession?.id || null, notes: `CREATED_BY=${user?.name || 'Caixa'}` })
-      try { await setOrderDetails(orderId, { pin: orderPin, password: orderPassword.trim() }) } catch {}
+      orderId = await createOrder({
+        openedAt: now.toISOString(),
+        operationalSessionId: operationalSession?.id || null,
+        notes: `CREATED_BY=${user?.name || 'Caixa'}`,
+        pin: orderPin,
+        password: orderPassword.trim()
+      })
+      // try { await setOrderDetails(orderId, { pin: orderPin, password: orderPassword.trim() }) } catch {} 
+      // Comentado pois createOrder já trata pin/password agora
       // Itens
+      if (!orderId) throw new Error('Falha ao criar ID do pedido');
       for (const it of itemsForOrder) {
         const productId = (it.menuItem as any)?.id ? String((it.menuItem as any).id) : null
         await addItem({
@@ -602,12 +614,11 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
           if (!supabase) {
             const ticketId = await enqueueTicket({ orderId });
             ticketEnqueued = true;
-            lastTicketId = ticketId;
-            try { onSaveOrders(prev => prev.map(o => o.id===newOrder.id ? ({ ...o, ticketId } as any) : o)) } catch {}
+            try { onSaveOrders(prev => prev.map(o => o.id === newOrder.id ? ({ ...o, ticketId } as any) : o)) } catch { }
           }
-        } catch {}
+        } catch { }
       } else {
-        try { await closeOrder(orderId) } catch {}
+        try { await closeOrder(orderId) } catch { }
       }
 
       // Movimento de caixa (apenas dinheiro)
@@ -623,10 +634,10 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
     } catch (e) {
       // Não quebra a UI: continua com estado otimista
       console.warn('Falha ao persistir no SQLite, mantendo UI otimista:', e)
-      
+
     }
 
-    
+
 
     try {
       const unitId = (typeof localStorage !== 'undefined' && localStorage.getItem('unitId')) || 'default'
@@ -634,8 +645,8 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
       const secret = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || ''
       if (!secret) return
       const url = hubUrl.replace(/\/$/, '') + '/push'
-      const headers: Record<string,string> = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${secret}` }
-      const events: any[] = [{ table: 'orders', row: { ...newOrder, id: (typeof orderId!=='undefined' ? orderId : newOrder.id) }, unit_id: unitId }]
+      const headers: Record<string, string> = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${secret}` }
+      const events: any[] = [{ table: 'orders', row: { ...newOrder, id: orderId || newOrder.id }, unit_id: unitId }]
       if (cashSession && cashAmountForMovement > 0) {
         events.push({
           table: 'cashMovements',
@@ -645,14 +656,14 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
             amount: cashAmountForMovement,
             description: `Venda - Pedido ${orderPin} (${newOrder.paymentMethod})`,
             timestamp: new Date().toISOString(),
-            orderId: (typeof orderId!=='undefined' ? orderId : newOrder.id),
+            orderId: orderId || newOrder.id,
             sessionId: cashSession.id,
           },
           unit_id: unitId,
         })
       }
       await fetch(url, { method: 'POST', headers, body: JSON.stringify({ events }) })
-    } catch {}
+    } catch { }
 
     // Registrar movimento de caixa para pagamentos em dinheiro
     if (cashSession && cashAmountForMovement > 0) {
@@ -686,14 +697,14 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
       if (hasKitchenItems && !ticketEnqueued) {
         try {
           const { supabase } = await import('../../../utils/supabase')
-          if (!supabase) { enqueueTicket({ orderId: newOrder.id }).catch(()=>{}) }
-        } catch {}
-      } else if (!hasKitchenItems) { closeOrder(newOrder.id).catch(()=>{}) }
-    } catch {}
+          if (!supabase) { enqueueTicket({ orderId: newOrder.id }).catch(() => { }) }
+        } catch { }
+      } else if (!hasKitchenItems) { closeOrder(newOrder.id).catch(() => { }) }
+    } catch { }
 
     // Simular som de novo pedido
     const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8diJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7blmGgU7k9n1unEiBC13yO/eizEIHWq+8+OWT');
-    audio.play().catch(() => {});
+    audio.play().catch(() => { });
   }, [items, isConfirmDisabled, orderPassword, isMultiplePayment, calculateRemainingAmount, isCashPayment, hasCashInBreakdown, paymentBreakdown, amountPaid, total, generateOrderPin, onSaveOrders, setOrderCounter, cashSession, onSetCashMovements, customerWhatsApp, selectedPayment, operationalSession, user]); // Adicionando user como dependência
 
   // Função para lidar com ENTER no campo de senha
@@ -702,7 +713,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
       e.preventDefault();
       // Tira o foco do campo de senha
       passwordInputRef.current?.blur();
-      
+
       // Se for pagamento em dinheiro, foca no campo de valor pago
       if (isCashPayment || hasCashInBreakdown) {
         amountPaidInputRef.current?.focus();
@@ -718,13 +729,13 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
       amountPaidInputRef.current?.blur();
     }
   };
-  
+
   // NOVO: Função para lidar com a mudança de valor pago
   const handleAmountPaidChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     // Apenas atualiza o estado com o valor, permitindo que seja vazio
     setAmountPaid(value);
-    
+
     // Mantemos showChangeCalculation como true se o pagamento em dinheiro estiver ativo
     if (isCashPayment || hasCashInBreakdown) {
       setShowChangeCalculation(true);
@@ -741,31 +752,31 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
 
   const openEditObservations = (item: OrderItem) => {
     setEditingItem(item);
-    
+
     // 1. Parse existing observations back to selected and custom
     const { required, optional, custom } = parseObservations(item.observations, item, globalObservations);
-    
+
     // 2. Mapear as opções obrigatórias de volta para o formato Record<groupId, selectedOption>
     const initialModifiers: Record<string, string> = {};
     const requiredGroups = item.menuItem.requiredModifierGroups || [];
-    
+
     required.forEach(modString => {
-        // Esperamos o formato: "Nome do Grupo: Opção Selecionada"
-        const parts = modString.split(':').map(p => p.trim());
-        if (parts.length === 2) {
-            const groupName = parts[0];
-            const selectedOption = parts[1];
-            
-            const group = requiredGroups.find(g => g.name === groupName);
-            if (group) {
-                initialModifiers[group.id] = selectedOption;
-            }
+      // Esperamos o formato: "Nome do Grupo: Opção Selecionada"
+      const parts = modString.split(':').map(p => p.trim());
+      if (parts.length === 2) {
+        const groupName = parts[0];
+        const selectedOption = parts[1];
+
+        const group = requiredGroups.find(g => g.name === groupName);
+        if (group) {
+          initialModifiers[group.id] = selectedOption;
         }
+      }
     });
-    
+
     // 3. Inicializar estados com os valores salvos
     setSelectedRequiredModifiers(initialModifiers);
-    setSelectedOptionalObservations(optional); 
+    setSelectedOptionalObservations(optional);
     setCustomObservation(custom);
     setShowEditObservations(true);
   };
@@ -774,7 +785,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
     const itemObservations = item.menuItem.observations || [];
     return [...new Set([...globalObservations, ...itemObservations])];
   };
-  
+
   const getAllAvailableRequiredGroups = (item: OrderItem) => {
     return item.menuItem.requiredModifierGroups || [];
   };
@@ -785,7 +796,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
       [groupId]: prev[groupId] === option ? '' : option // Seleção única
     }));
   };
-  
+
   const toggleOptionalObservation = (observation: string) => {
     setSelectedOptionalObservations(prev =>
       prev.includes(observation)
@@ -796,26 +807,26 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
 
   const handleSaveObservations = () => {
     if (editingItem) {
-      
+
       const requiredGroups = getAllAvailableRequiredGroups(editingItem);
-      
+
       // Validação: Todos os grupos obrigatórios devem ter uma opção selecionada
       const allRequiredSelected = requiredGroups.every(group => !!selectedRequiredModifiers[group.id]);
-      
+
       if (requiredGroups.length > 0 && !allRequiredSelected) {
-          alert('Selecione uma opção para todos os campos obrigatórios.');
-          return;
+        alert('Selecione uma opção para todos os campos obrigatórios.');
+        return;
       }
-      
+
       // 1. Concatena Modificadores Obrigatórios (prefixados com [OBRIGATÓRIO] e o nome do grupo)
       const requiredPrefix = requiredGroups.map(group => {
-          const selectedOption = selectedRequiredModifiers[group.id];
-          return selectedOption ? `[OBRIGATÓRIO] ${group.name}: ${selectedOption}` : '';
+        const selectedOption = selectedRequiredModifiers[group.id];
+        return selectedOption ? `[OBRIGATÓRIO] ${group.name}: ${selectedOption}` : '';
       }).filter(p => p.length > 0).join(', ');
-          
+
       // 2. Concatena Observações Opcionais
       const optionalText = selectedOptionalObservations.join(', ');
-      
+
       // 3. Concatena Observação Personalizada
       const customText = customObservation.trim();
 
@@ -854,7 +865,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
       }
       return item;
     });
-    
+
     // CORREÇÃO: Atualizar o estado do carrinho
     // Nota: O Cart.tsx não tem acesso direto ao setCartItems, ele deve chamar o prop onLoadCart
     onLoadCart(itemsWithUnits);
@@ -882,7 +893,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
 
     // Verificar se já existe um carrinho com este nome
     const existingCart = savedCarts.find(cart => cart.name.toLowerCase() === cartName.toLowerCase());
-    
+
     if (existingCart && !selectedCartToReplace) {
       if (confirm(`Já existe um carrinho com o nome "${cartName}". Deseja substituí-lo?`)) {
         setSelectedCartToReplace(existingCart.id);
@@ -902,7 +913,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
 
     if (selectedCartToReplace) {
       // Substituir carrinho existente
-      setSavedCarts(prev => prev.map(cart => 
+      setSavedCarts(prev => prev.map(cart =>
         cart.id === selectedCartToReplace ? newSavedCart : cart
       ));
       // Não mostrar alerta de confirmação
@@ -938,7 +949,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
 
   return (
     <div className="flex w-64 xl:w-80 bg-white border-l border-gray-200 flex-col xl:h-[calc(100vh-120px)] xl:max-h-[calc(100vh-120px)]">
-      
+
       {/* Cabeçalho do Carrinho - altura uniforme e ações alinhadas */}
       <div className="h-16 px-4 border-b border-gray-200 flex items-center flex-shrink-0">
         <div className="flex items-center justify-between w-full">
@@ -988,19 +999,19 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
           <div className="p-3 lg:p-4 space-y-3">
             {items.map((item) => {
               const { required } = parseObservations(item.observations, item, globalObservations);
-              
+
               // Verificar se este item tem opções obrigatórias não selecionadas
               const hasMissingRequiredOptions = (() => {
                 const requiredGroups = item.menuItem.requiredModifierGroups || [];
                 if (requiredGroups.length === 0) return false;
-                
+
                 return requiredGroups.some(group => {
                   // O formato após o parse é: "Nome do Grupo: Opção Selecionada" (sem [OBRIGATÓRIO])
                   const hasSelectedOption = required.some(obs => obs.startsWith(`${group.name}:`));
                   return !hasSelectedOption;
                 });
               })();
-              
+
               return (
                 <div key={item.id} className={`rounded-lg p-3 ${hasMissingRequiredOptions ? 'bg-amber-50 border border-amber-200' : 'bg-gray-50'}`}>
                   <div className="flex items-start justify-between mb-2">
@@ -1009,12 +1020,12 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
                         {getCategoryName(item.id)}
                       </p>
                       <div className="flex items-center">
-              <h4 className="font-medium text-gray-900 text-sm truncate flex items-center">
-                {item.menuItem.name}
-                {item.menuItem.code && (
-                  <span className="ml-2 text-blue-600 text-xs font-semibold">#{item.menuItem.code}</span>
-                )}
-              </h4>
+                        <h4 className="font-medium text-gray-900 text-sm truncate flex items-center">
+                          {item.menuItem.name}
+                          {item.menuItem.code && (
+                            <span className="ml-2 text-blue-600 text-xs font-semibold">#{item.menuItem.code}</span>
+                          )}
+                        </h4>
                         {hasMissingRequiredOptions && (
                           <i className="ri-error-warning-line text-amber-600 ml-2" title="Opções obrigatórias não selecionadas"></i>
                         )}
@@ -1028,7 +1039,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
                       <i className="ri-close-line"></i>
                     </button>
                   </div>
-                  
+
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-2">
                       <button
@@ -1045,7 +1056,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
                         <i className="ri-add-line text-xs"></i>
                       </button>
                     </div>
-                    
+
                     <div className="flex items-center space-x-2">
                       <button
                         onClick={() => openEditObservations(item)}
@@ -1059,7 +1070,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
                       </span>
                     </div>
                   </div>
-                  
+
                   {item.observations && (
                     <div className="mt-2 text-xs text-gray-600 bg-white rounded p-2">
                       {required.length > 0 && (
@@ -1097,7 +1108,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
               <Input
                 type="number"
                 value={globalDiscountPercentage.toString()}
-                onChange={(e)=> setGlobalDiscountPercentage(Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)))}
+                onChange={(e) => setGlobalDiscountPercentage(Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)))}
                 className="w-24"
                 step="1"
                 min="0"
@@ -1106,9 +1117,9 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
               <span className="text-sm">%</span>
             </div>
           </div>
-          
-          <Button 
-            className="w-full" 
+
+          <Button
+            className="w-full"
             size="lg"
             onClick={() => setShowCheckout(true)}
             disabled={hasItemsWithMissingRequiredOptions()}
@@ -1185,10 +1196,10 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
               required
             />
             <p className="text-xs text-gray-500 mt-2 text-center">
-              Senha obrigatória para identificação do pedido. Formato: 
+              Senha obrigatória para identificação do pedido. Formato:
               <span className="font-medium ml-1">
-                {config.passwordFormat === 'numeric' ? 'Numérico' : 
-                 config.passwordFormat === 'alphabetic' ? 'Alfabético' : 'Alfanumérico'}
+                {config.passwordFormat === 'numeric' ? 'Numérico' :
+                  config.passwordFormat === 'alphabetic' ? 'Alfabético' : 'Alfanumérico'}
               </span>
               (Pressione ENTER para continuar)
             </p>
@@ -1223,11 +1234,10 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
                   resetMultiplePayment();
                   setSelectedPayment('');
                 }}
-                className={`flex-1 p-3 rounded-lg border-2 transition-colors cursor-pointer ${
-                  !isMultiplePayment
-                    ? 'border-amber-500 bg-amber-50 text-amber-700'
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
+                className={`flex-1 p-3 rounded-lg border-2 transition-colors cursor-pointer ${!isMultiplePayment
+                  ? 'border-amber-500 bg-amber-50 text-amber-700'
+                  : 'border-gray-200 hover:border-gray-300'
+                  }`}
               >
                 <div className="flex items-center justify-center space-x-2">
                   <i className="ri-money-dollar-circle-line text-lg"></i>
@@ -1240,11 +1250,10 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
                   setSelectedPayment('');
                   setRemainingAmount(total);
                 }}
-                className={`flex-1 p-3 rounded-lg border-2 transition-colors cursor-pointer ${
-                  isMultiplePayment
-                    ? 'border-amber-500 bg-amber-50 text-amber-700'
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
+                className={`flex-1 p-3 rounded-lg border-2 transition-colors cursor-pointer ${isMultiplePayment
+                  ? 'border-amber-500 bg-amber-50 text-amber-700'
+                  : 'border-gray-200 hover:border-gray-300'
+                  }`}
               >
                 <div className="flex items-center justify-center space-x-2">
                   <i className="ri-exchange-line text-lg"></i>
@@ -1275,11 +1284,10 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
                         setTimeout(() => amountPaidInputRef.current?.focus(), 0);
                       }
                     }}
-                    className={`p-3 rounded-lg border-2 transition-colors cursor-pointer ${
-                      selectedPayment === method
-                        ? 'border-amber-500 bg-amber-50 text-amber-700'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
+                    className={`p-3 rounded-lg border-2 transition-colors cursor-pointer ${selectedPayment === method
+                      ? 'border-amber-500 bg-amber-50 text-amber-700'
+                      : 'border-gray-200 hover:border-gray-300'
+                      }`}
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-2">
@@ -1306,13 +1314,13 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
                   <i className="ri-exchange-line mr-2"></i>
                   Pagamento Misto
                 </h4>
-                
+
                 <div className="space-y-3">
                   <div className="flex justify-between items-center">
                     <span className="text-sm text-blue-700">Total do pedido:</span>
                     <span className="font-medium text-blue-800">R$ {total.toFixed(2)}</span>
                   </div>
-                  
+
                   {Object.keys(paymentBreakdown).length > 0 && (
                     <div className="space-y-2">
                       <span className="text-sm font-medium text-blue-700">Formas selecionadas:</span>
@@ -1325,7 +1333,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
                           <div className="flex items-center space-x-2">
                             <Input
                               type="number"
-                              value={amount === 0 ? '' : amount.toString()} 
+                              value={amount === 0 ? '' : amount.toString()}
                               onChange={(e) => {
                                 const value = e.target.value;
                                 // Se o valor for vazio, passa 0 para o breakdown, mas não remove a chave
@@ -1353,7 +1361,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
                       ))}
                     </div>
                   )}
-                  
+
                   <div className="border-t border-blue-200 pt-3 flex justify-between items-center">
                     <span className="font-medium text-blue-800">Valor restante:</span>
                     <span className={`text-lg font-bold ${remainingAmount > 0.01 ? 'text-red-600' : 'text-green-600'}`}>
@@ -1377,7 +1385,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
                       >
                         <div className="flex items-center justify-center space-x-2">
                           <i className={`${getPaymentIcon(method)} text-lg`}></i>
-                          <span className="font-medium">{method}</span> 
+                          <span className="font-medium">{method}</span>
                         </div>
                       </button>
                     ))}
@@ -1397,7 +1405,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
                 <i className="ri-money-dollar-circle-line mr-2"></i>
                 Pagamento em Dinheiro
               </h4>
-              
+
               <div className="space-y-3">
                 <div>
                   <label className="block text-sm font-medium text-green-700 mb-2">
@@ -1416,7 +1424,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
                       placeholder="0,00"
                       className="w-full pl-10"
                       step="0.01"
-                      min="0" 
+                      min="0"
                     />
                   </div>
                 </div>
@@ -1431,7 +1439,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
                           .filter(([method]) => method.toLowerCase().includes('dinheiro'))
                           .reduce((sum, [, amount]) => sum + amount, 0);
                         const troco = paidAmount - cashPayments;
-                        
+
                         return (
                           <>
                             <div className="flex justify-between items-center mb-2">
@@ -1454,7 +1462,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
                                   <i className="ri-error-warning-line mr-2"></i>
                                   <span className="text-sm">
                                     Valor insuficiente. Faltam R$ {Math.abs(troco).toFixed(2)}
-                                  
+
                                   </span>
                                 </div>
                               </div>
@@ -1509,9 +1517,9 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
                 </div>
               </div>
             )}
-            
+
             {/* Botão de teste temporário removido */}
-            
+
             <div className="flex space-x-3">
               <Button
                 variant="secondary"
@@ -1585,11 +1593,10 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
                 {savedCarts.map((savedCart) => (
                   <div
                     key={savedCart.id}
-                    className={`border rounded-lg p-3 cursor-pointer transition-colors ${
-                      selectedCartToReplace === savedCart.id
-                        ? 'border-amber-300 bg-amber-50'
-                        : 'border-gray-200 hover:bg-gray-50'
-                    }`}
+                    className={`border rounded-lg p-3 cursor-pointer transition-colors ${selectedCartToReplace === savedCart.id
+                      ? 'border-amber-300 bg-amber-50'
+                      : 'border-gray-200 hover:bg-gray-50'
+                      }`}
                     onClick={() => selectCartToReplace(savedCart)}
                   >
                     <div className="flex items-center justify-between mb-1">
@@ -1613,7 +1620,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
               </p>
             </div>
           )}
-          
+
           <div className="flex space-x-3">
             <Button
               variant="secondary"
@@ -1665,13 +1672,13 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
                       <i className="ri-delete-bin-line"></i>
                     </button>
                   </div>
-                  
+
                   <div className="text-sm text-gray-600 mb-3">
                     <p>Data: {new Date(savedCart.createdAt).toLocaleDateString('pt-BR')}</p>
                     <p>Itens: {savedCart.items.reduce((sum, item) => sum + item.quantity, 0)}</p>
                     <p>Total: R$ {savedCart.items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0).toFixed(2)}</p>
                   </div>
-                  
+
                   <div className="space-y-1 mb-3">
                     {savedCart.items.slice(0, 3).map((item, index) => (
                       <div key={index} className="text-xs text-gray-500">
@@ -1684,7 +1691,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
                       </div>
                     )}
                   </div>
-                  
+
                   <Button
                     onClick={() => loadCart(savedCart)}
                     size="sm"
@@ -1696,7 +1703,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
               ))}
             </div>
           )}
-          
+
           <div className="flex justify-end pt-4 border-top border-gray-200">
             <Button
               variant="secondary"
@@ -1716,7 +1723,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
         size="lg"
       >
         <div className="space-y-6">
-          
+
           {/* Opções Obrigatórias */}
           {editingItem && getAllAvailableRequiredGroups(editingItem).length > 0 && (
             <div className="p-4 border border-red-300 rounded-lg bg-red-50 space-y-4">
@@ -1724,33 +1731,32 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
                 <i className="ri-alert-line mr-2"></i>
                 Opções Obrigatórias (Selecione 1 por grupo): *
               </h4>
-              
+
               {getAllAvailableRequiredGroups(editingItem).map((group) => (
                 <div key={group.id} className="border border-red-200 rounded-lg p-3">
-                    <h5 className="font-medium text-red-700 mb-2">{group.name}:</h5>
-                    <div className="grid grid-cols-2 gap-2">
-                        {group.options.map((option) => (
-                            <button
-                                key={option}
-                                onClick={() => toggleRequiredModifier(group.id, option)}
-                                className={`p-3 text-sm rounded-lg border-2 transition-colors cursor-pointer whitespace-nowrap ${
-                                    selectedRequiredModifiers[group.id] === option
-                                        ? 'bg-red-100 border-red-500 text-red-800 font-medium'
-                                        : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-100'
-                                }`}
-                            >
-                                {option}
-                            </button>
-                        ))}
-                    </div>
-                    {!selectedRequiredModifiers[group.id] && (
-                        <p className="text-xs text-red-600 mt-2">Seleção obrigatória.</p>
-                    )}
+                  <h5 className="font-medium text-red-700 mb-2">{group.name}:</h5>
+                  <div className="grid grid-cols-2 gap-2">
+                    {group.options.map((option) => (
+                      <button
+                        key={option}
+                        onClick={() => toggleRequiredModifier(group.id, option)}
+                        className={`p-3 text-sm rounded-lg border-2 transition-colors cursor-pointer whitespace-nowrap ${selectedRequiredModifiers[group.id] === option
+                          ? 'bg-red-100 border-red-500 text-red-800 font-medium'
+                          : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-100'
+                          }`}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+                  {!selectedRequiredModifiers[group.id] && (
+                    <p className="text-xs text-red-600 mt-2">Seleção obrigatória.</p>
+                  )}
                 </div>
               ))}
             </div>
           )}
-          
+
           {/* Observações Opcionais */}
           {editingItem && getAllAvailableObservations(editingItem).length > 0 && (
             <div className="p-4 border border-amber-300 rounded-lg bg-amber-50">
@@ -1760,11 +1766,10 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
                   <button
                     key={observation}
                     onClick={() => toggleOptionalObservation(observation)}
-                    className={`p-2 text-sm rounded-lg border transition-colors cursor-pointer whitespace-nowrap ${
-                      selectedOptionalObservations.includes(observation)
-                        ? 'bg-amber-100 border-amber-500 text-amber-800'
-                        : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-100'
-                    }`}
+                    className={`p-2 text-sm rounded-lg border transition-colors cursor-pointer whitespace-nowrap ${selectedOptionalObservations.includes(observation)
+                      ? 'bg-amber-100 border-amber-500 text-amber-800'
+                      : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-100'
+                      }`}
                   >
                     {observation}
                   </button>
@@ -1802,7 +1807,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
             <Button
               onClick={handleSaveObservations}
               className="flex-1"
-              disabled={editingItem && getAllAvailableRequiredGroups(editingItem).length > 0 && getAllAvailableRequiredGroups(editingItem).some(group => !selectedRequiredModifiers[group.id])}
+              disabled={!!(editingItem && getAllAvailableRequiredGroups(editingItem).length > 0 && getAllAvailableRequiredGroups(editingItem).some(group => !selectedRequiredModifiers[group.id]))}
             >
               <i className="ri-check-line mr-2"></i>
               Salvar
@@ -1810,7 +1815,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
           </div>
         </div>
       </Modal>
-      
+
       {/* Modal de Confirmação de Exclusão de Carrinho */}
       <ConfirmationModal
         isOpen={showDeleteCartModal}
@@ -1819,7 +1824,7 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
         title="Excluir Carrinho Salvo"
         message={
           <>
-            Tem certeza que deseja excluir permanentemente o carrinho salvo: 
+            Tem certeza que deseja excluir permanentemente o carrinho salvo:
             <span className="font-bold text-red-700 block mt-1">"{cartToDelete?.name}"</span>?
             Esta ação não pode ser desfeita.
           </>

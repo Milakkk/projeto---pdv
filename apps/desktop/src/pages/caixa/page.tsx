@@ -8,7 +8,7 @@ import type { CashOpeningData } from './components/CashOpening';
 import type { CashMovement as CashMovementType } from './components/CashMovement';
 import type { CashClosingData } from './components/CashClosing';
 import OrderTrackerModal from './components/OrderTrackerModal';
-import Icon from '../../ui/Icon';
+// import Icon from '../../ui/Icon'; (removido por não ser usado)
 import AlertModal from '../../components/base/AlertModal';
 import Modal from '../../components/base/Modal';
 import ConfirmationModal from '../../components/base/ConfirmationModal';
@@ -77,12 +77,12 @@ export default function CaixaPage() {
   const [cartItems, setCartItems] = useState<OrderItem[]>([]);
   const [quickSearchCode, setQuickSearchCode] = useState('');
   const [selectedItemIndex, setSelectedItemIndex] = useState(0);
-  
+
   // Filtro de Cozinha
   const [kitchens, setKitchens] = useState<Kitchen[]>([]);
   const [selectedKitchenId, setSelectedKitchenId] = useLocalStorage<string | null>('pdv_selected_kitchen_id', null);
-  const [categoryIdsByKitchen, setCategoryIdsByKitchen] = useState<Record<string,string[]>>({})
-  
+  const [categoryIdsByKitchen, setCategoryIdsByKitchen] = useState<Record<string, string[]>>({})
+
   // Seleção de Estação
   const [showStationModal, setShowStationModal] = useState(false);
   const [stations, setStations] = useState<any[]>([]);
@@ -96,15 +96,15 @@ export default function CaixaPage() {
           const list = await stationsService.listStations(unitId);
           setStations(list || []);
         }
-      } catch {}
+      } catch { }
     })()
   }, []);
-  
+
   // Estados de Sessão e Caixa
   const [operationalSession, setOperationalSession] = useLocalStorage<OperationalSession | null>('currentOperationalSession', null);
   const [operationalSessionsHistory, setOperationalSessionsHistory] = useLocalStorage<OperationalSession[]>('operationalSessionsHistory', []);
   const [sessionCounter, setSessionCounter] = useLocalStorage<number>('sessionCounter', 1);
-  
+
   const [showCashOpening, setShowCashOpening] = useState(false);
   const [showCashMovement, setShowCashMovement] = useState(false);
   const [showCashClosing, setShowCashClosing] = useState(false);
@@ -130,7 +130,7 @@ export default function CaixaPage() {
     initialAmount: Math.max(0, (row.opening_amount_cents ?? 0) / 100),
     openingTime: row.opened_at ? new Date(row.opened_at) : new Date(),
     notes: '',
-    cashBreakdown: {},
+    cashBreakdown: {} as any,
     closingTime: row.closed_at ? new Date(row.closed_at) : undefined,
     finalAmount: row.closing_amount_cents != null ? (row.closing_amount_cents / 100) : undefined,
     expectedAmount: undefined,
@@ -194,12 +194,12 @@ export default function CaixaPage() {
           .order('display_order', { ascending: true })
           .order('name', { ascending: true })
         if (error) { console.error('Supabase kitchens error', error); return }
-        setKitchens((data || []).map((k:any)=>({ id:k.id, name:k.name })))
+        setKitchens((data || []).map((k: any) => ({ id: k.id, name: k.name })))
         const { data: assoc } = await supabase
           .from('category_kitchens')
           .select('category_id,kitchen_id')
-        const map: Record<string,string[]> = {}
-        for (const r of (assoc||[])) {
+        const map: Record<string, string[]> = {}
+        for (const r of (assoc || [])) {
           const kid = String(r.kitchen_id)
           const cid = String(r.category_id)
           map[kid] = map[kid] || []
@@ -221,17 +221,17 @@ export default function CaixaPage() {
         const { supabase } = await import('../../utils/supabase')
         if (!supabase) return
         const { data: anyAssoc } = await supabase.from('category_kitchens').select('id').limit(1)
-        if ((anyAssoc||[]).length > 0) {
+        if ((anyAssoc || []).length > 0) {
           if (import.meta.env.DEV) console.log('[Caixa] Já existem associações categoria-cozinha, pulando bootstrap')
           return
         }
         const { data: ks } = await supabase.from('kitchens').select('id,name').eq('is_active', true)
-        if (!Array.isArray(ks) || ks.length===0) return
-        const mexican = ks.find(k=> String(k.name).toLowerCase()==='mexicano') || ks[0]
+        if (!Array.isArray(ks) || ks.length === 0) return
+        const mexican = ks.find(k => String(k.name).toLowerCase() === 'mexicano') || ks[0]
         const kid = mexican?.id
         if (!kid) return
         const { data: cats } = await supabase.from('categories').select('id')
-        if (!Array.isArray(cats) || cats.length===0) return
+        if (!Array.isArray(cats) || cats.length === 0) return
         const rows = cats.map(c => ({ category_id: c.id, kitchen_id: kid, updated_at: new Date().toISOString() }))
         if (import.meta.env.DEV) console.log('[Caixa] Criando associações automáticas para cozinha Mexicano:', { cozinhaId: kid, categorias: cats.length })
         const { error } = await supabase.from('category_kitchens').insert(rows)
@@ -245,11 +245,11 @@ export default function CaixaPage() {
       }
     })()
   }, [kitchens])
-  
+
   // Acessando orders e savedCarts
   const [orders, setOrders] = useState<Order[]>([]);
   const [, setSavedCarts] = useLocalStorage<SavedCart[]>('savedCarts', []);
-  
+
   // Estados para Modais
   const [showAlertModal, setShowAlertModal] = useState(false);
   const [alertMessage, setAlertMessage] = useState({ title: '', message: '', variant: 'error' as 'error' | 'info' | 'success' });
@@ -282,7 +282,7 @@ export default function CaixaPage() {
     let byDb = activeItems.filter(item => item.categoryId === selectedCategory)
     const allowed = selectedKitchenId ? (categoryIdsByKitchen[selectedKitchenId] || []) : null
     if (allowed) {
-      byDb = byDb.filter((it)=> allowed.includes(String(it.categoryId)))
+      byDb = byDb.filter((it) => allowed.includes(String(it.categoryId)))
     }
     if (byDb.length > 0) return byDb
     const lsItems = (menuItemsLS || []).filter(it => it.active)
@@ -296,22 +296,22 @@ export default function CaixaPage() {
     if (!operationalSession || operationalSession.status !== 'OPEN') return [] as Order[];
     return orders.filter(o => (o.operationalSessionId === operationalSession.id) || !o.operationalSessionId);
   }, [orders, operationalSession]);
-  
+
   // Pedidos ativos (NEW, PREPARING, READY) exclusivos da sessão atual
   const activeOrders = useMemo(() => {
     const filtered = sessionOrders.filter(o => ['NEW', 'PREPARING', 'READY'].includes(o.status));
     return filtered;
   }, [sessionOrders]);
-  
+
   // Pedidos prontos da sessão atual
   const readyOrders = useMemo(() => {
     return sessionOrders.filter(o => o.status === 'READY');
   }, [sessionOrders]);
-  
+
   // Pedidos prontos não vistos (Contagem simples)
   const unseenReadyOrdersCount = readyOrders.length;
 
-  
+
 
   // --- Lógica de Estado do Caixa ---
   // Se ainda não carregamos do banco, consideramos o caixa como aberto (estado otimista)
@@ -339,7 +339,7 @@ export default function CaixaPage() {
   // Carregar catálogo de categorias e itens do banco offline
   useEffect(() => {
     // Provisionamento: garantir perfil de dispositivo (POS)
-    ;(async () => {
+    ; (async () => {
       try { await ensureDeviceProfile({ role: 'pos' }) } catch (e) { /* noop */ }
     })()
     let mounted = true;
@@ -417,7 +417,7 @@ export default function CaixaPage() {
     if (!selectedKitchenId) return
     const allowed = categoryIdsByKitchen[selectedKitchenId] || []
     if (!allowed.length) return
-    const active = categories.filter(cat => (cat.active ?? true)).sort((a,b)=>a.order-b.order)
+    const active = categories.filter(cat => (cat.active ?? true)).sort((a, b) => a.order - b.order)
     const firstAllowed = active.find(cat => allowed.includes(String(cat.id)))
     if (firstAllowed && selectedCategory && !allowed.includes(String(selectedCategory))) {
       setSelectedCategory(firstAllowed.id)
@@ -451,7 +451,7 @@ export default function CaixaPage() {
     // Atualizar a referência
     previousOrdersRef.current = orders;
   }, [orders]);
-  
+
   // Efeito para atalhos de teclado: Space (foco na busca) e ESC (deselecionar categoria)
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -489,26 +489,26 @@ export default function CaixaPage() {
 
       if (event.key === 'ArrowUp') {
         event.preventDefault()
-        const activeCategories = categories.filter(c=> (c.active ?? true)).sort((a,b)=>a.order-b.order)
-        const idx = activeCategories.findIndex(c=>c.id===selectedCategory)
-        if (idx>0) setSelectedCategory(activeCategories[idx-1].id)
+        const activeCategories = categories.filter(c => (c.active ?? true)).sort((a, b) => a.order - b.order)
+        const idx = activeCategories.findIndex(c => c.id === selectedCategory)
+        if (idx > 0) setSelectedCategory(activeCategories[idx - 1].id)
         return
       }
       if (event.key === 'ArrowDown') {
         event.preventDefault()
-        const activeCategories = categories.filter(c=> (c.active ?? true)).sort((a,b)=>a.order-b.order)
-        const idx = activeCategories.findIndex(c=>c.id===selectedCategory)
-        if (idx>=0 && idx<activeCategories.length-1) setSelectedCategory(activeCategories[idx+1].id)
+        const activeCategories = categories.filter(c => (c.active ?? true)).sort((a, b) => a.order - b.order)
+        const idx = activeCategories.findIndex(c => c.id === selectedCategory)
+        if (idx >= 0 && idx < activeCategories.length - 1) setSelectedCategory(activeCategories[idx + 1].id)
         return
       }
       if (event.key === 'ArrowRight') {
         event.preventDefault()
-        if (filteredMenuItems.length) setSelectedItemIndex(i=> Math.min(filteredMenuItems.length-1, i+1))
+        if (filteredMenuItems.length) setSelectedItemIndex(i => Math.min(filteredMenuItems.length - 1, i + 1))
         return
       }
       if (event.key === 'ArrowLeft') {
         event.preventDefault()
-        if (filteredMenuItems.length) setSelectedItemIndex(i=> Math.max(0, i-1))
+        if (filteredMenuItems.length) setSelectedItemIndex(i => Math.max(0, i - 1))
         return
       }
       if (event.key === '+' || (event.key === '=' && event.shiftKey) || event.code === 'NumpadAdd') {
@@ -527,8 +527,8 @@ export default function CaixaPage() {
         event.preventDefault()
         const item = filteredMenuItems[selectedItemIndex]
         if (item) {
-          const required = (item.requiredModifierGroups||[]).filter(g=>g.active)
-          if (required.length>0) {
+          const required = (item.requiredModifierGroups || []).filter(g => g.active)
+          if (required.length > 0) {
             setSelectedItemForOptions(item)
             setSelectedRequiredModifiers({})
             setSelectedOptionalObservations([])
@@ -547,7 +547,7 @@ export default function CaixaPage() {
   }, [activeTab, categories, selectedCategory, filteredMenuItems, selectedItemIndex]);
 
   useEffect(() => {
-    try { if (activeTab === 'pdv') navScopeRef.current?.focus() } catch {}
+    try { if (activeTab === 'pdv') navScopeRef.current?.focus() } catch { }
   }, [activeTab])
 
   useEffect(() => {
@@ -577,7 +577,7 @@ export default function CaixaPage() {
           if (queuedIds.has(oid)) return o.status === 'NEW' ? o : o
           return o
         }))
-      } catch {}
+      } catch { }
     };
     syncStatuses();
     const timer = setInterval(() => {
@@ -626,7 +626,7 @@ export default function CaixaPage() {
               const qty = Number(it.qty ?? it.quantity ?? 1)
               const itemId = String(it.id)
               const units = Array.from({ length: Math.max(1, qty) }, (_, idx) => {
-                const unitId = `${itemId}-${idx+1}`
+                const unitId = `${itemId}-${idx + 1}`
                 const u = unitStates[`${itemId}:${unitId}`] || {}
                 return {
                   unitId,
@@ -667,9 +667,9 @@ export default function CaixaPage() {
               paymentBreakdown: breakdown,
               status,
               createdAt: times.newStart ? new Date(times.newStart) : ((r.opened_at || r.created_at) ? new Date(r.opened_at || r.created_at) : (existing?.createdAt || new Date())),
-                updatedAt: times.preparingStart ? new Date(times.preparingStart) : (r.updated_at ? new Date(r.updated_at) : (existing?.updatedAt ?? new Date())),
-                readyAt: times.readyAt ? new Date(times.readyAt) : existing?.readyAt,
-                deliveredAt: (r.closed_at || r.completed_at) ? new Date(r.closed_at || r.completed_at) : (times.deliveredAt ? new Date(times.deliveredAt) : existing?.deliveredAt),
+              updatedAt: times.preparingStart ? new Date(times.preparingStart) : (r.updated_at ? new Date(r.updated_at) : (existing?.updatedAt ?? new Date())),
+              readyAt: times.readyAt ? new Date(times.readyAt) : existing?.readyAt,
+              deliveredAt: (r.closed_at || r.completed_at) ? new Date(r.closed_at || r.completed_at) : (times.deliveredAt ? new Date(times.deliveredAt) : existing?.deliveredAt),
               slaMinutes: existing?.slaMinutes ?? 0,
               createdBy: existing?.createdBy ?? '',
               operationalSessionId: existing?.operationalSessionId ?? parsedSessionId,
@@ -677,7 +677,7 @@ export default function CaixaPage() {
           }
           return Object.values(map);
         });
-      } catch {}
+      } catch { }
     };
     pullOrders();
     const timer = setInterval(pullOrders, 3000);
@@ -691,9 +691,9 @@ export default function CaixaPage() {
 
     const unsubscribe = api.db.onChange((event: any) => {
       if (!event || !event.table) return
-      
+
       const { table, operation } = event
-      
+
       // Tabelas que afetam os pedidos
       const relevantTables = ['orders', 'order_items', 'payments', 'kds_phase_times', 'kds_tickets', 'orders_details', 'kds_unit_states']
       if (!relevantTables.includes(table)) return
@@ -798,175 +798,200 @@ export default function CaixaPage() {
     let ws: WebSocket | null = null
     let reconnectTimer: any = null
 
-    ;(async () => {
-      try {
-        const dp = await getDeviceProfile()
-        const unitId = dp?.unitId || 'default'
-        const deviceId = dp?.deviceId || crypto.randomUUID()
-
+      ; (async () => {
         try {
-          const { supabase } = await import('../../utils/supabase')
-          if (supabase && mounted) {
-            const loadStatuses = async () => {
-              const rows = await kdsService.listTicketStatusRows()
-              const queuedIds = new Set<string>()
-              const prepIds = new Set<string>()
-              const readyIds = new Set<string>()
-              const doneIds = new Set<string>()
-              for (const r of (Array.isArray(rows) ? rows : []) as any[]) {
-                const oid = String(r?.orderId ?? '')
-                const st = String(r?.status ?? '')
-                if (!oid) continue
-                if (st === 'queued') queuedIds.add(oid)
-                if (st === 'prep') prepIds.add(oid)
-                if (st === 'ready') readyIds.add(oid)
-                if (st === 'done') doneIds.add(oid)
+          const dp = await getDeviceProfile()
+          const unitId = dp?.unitId || 'default'
+          const deviceId = dp?.deviceId || crypto.randomUUID()
+
+          try {
+            const { supabase } = await import('../../utils/supabase')
+            if (supabase && mounted) {
+              const loadStatuses = async () => {
+                const rows = await kdsService.listTicketStatusRows()
+                const queuedIds = new Set<string>()
+                const prepIds = new Set<string>()
+                const readyIds = new Set<string>()
+                const doneIds = new Set<string>()
+
+                const rowList = (Array.isArray(rows) ? rows : []) as any[]
+                for (const r of rowList) {
+                  const oid = String(r?.orderId ?? '')
+                  const st = String(r?.status ?? '')
+                  if (!oid) continue
+                  if (st === 'queued') queuedIds.add(oid)
+                  if (st === 'prep') prepIds.add(oid)
+                  if (st === 'ready') readyIds.add(oid)
+                  if (st === 'done') doneIds.add(oid)
+                }
+
+                // Buscar tempos de fase para cálculo de espera
+                const orderIds = Array.from(new Set(rowList.map(r => String(r.orderId)).filter(id => id)))
+                let phaseTimesMap: Record<string, any> = {}
+                if (orderIds.length > 0) {
+                  try {
+                    const { data: times } = await supabase.from('kds_phase_times').select('*').in('order_id', orderIds)
+                    if (times) {
+                      phaseTimesMap = (times as any[]).reduce((acc, t) => ({ ...acc, [String(t.order_id)]: t }), {})
+                    }
+                  } catch (e) { console.warn('[Caixa] Erro ao carregar tempos de fase:', e) }
+                }
+
+                if (!mounted) return
+                setOrders(prev => prev.map(o => {
+                  const oid = String(o.id)
+                  const pt = phaseTimesMap[oid]
+
+                  // Base com tempos de fase atualizados
+                  const base = {
+                    ...o,
+                    preparingStartedAt: pt?.preparing_start ? new Date(pt.preparing_start) : o.preparingStartedAt,
+                    readyAt: pt?.ready_at ? new Date(pt.ready_at) : o.readyAt,
+                    deliveredAt: pt?.delivered_at ? new Date(pt.delivered_at) : o.deliveredAt,
+                  }
+
+                  if (doneIds.has(oid)) return { ...base, status: 'DELIVERED', deliveredAt: base.deliveredAt ?? new Date() }
+                  if (readyIds.has(oid)) return { ...base, status: 'READY', readyAt: base.readyAt ?? new Date() }
+                  if (prepIds.has(oid)) return { ...base, status: 'PREPARING', preparingStartedAt: base.preparingStartedAt ?? new Date(), updatedAt: o.updatedAt ?? new Date() }
+                  if (queuedIds.has(oid)) return o.status === 'NEW' ? base : { ...base, status: 'NEW' }
+                  return o
+                }))
               }
-              if (!mounted) return
-              setOrders(prev => prev.map(o => {
-                const oid = String(o.id)
-                if (doneIds.has(oid)) return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date() }
-                if (readyIds.has(oid)) return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
-                if (prepIds.has(oid)) return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date() }
-                if (queuedIds.has(oid)) return o.status === 'NEW' ? o : o
-                return o
-              }))
+
+              await loadStatuses()
+
+              let debounceTimer: any = null
+              const scheduleReload = async () => {
+                if (debounceTimer) clearTimeout(debounceTimer)
+                debounceTimer = setTimeout(async () => {
+                  try { await loadStatuses() } catch { }
+                  debounceTimer = null
+                }, 50)
+              }
+
+              const ch = supabase
+                .channel('pdv_kds_status_changes')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'kds_tickets' }, scheduleReload)
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'kds_phase_times' }, scheduleReload)
+                .subscribe()
+
+              cleanupSupabase = () => {
+                if (debounceTimer) clearTimeout(debounceTimer)
+                try { ch.unsubscribe() } catch { }
+              }
             }
+          } catch { }
 
-            await loadStatuses()
+          if (!secret) return
 
-            let debounceTimer: any = null
-            const scheduleReload = async () => {
-              if (debounceTimer) clearTimeout(debounceTimer)
-              debounceTimer = setTimeout(async () => {
-                try { await loadStatuses() } catch {}
-                debounceTimer = null
-              }, 50)
-            }
-
-            const ch = supabase
-              .channel('pdv_kds_status_changes')
-              .on('postgres_changes', { event: '*', schema: 'public', table: 'kds_tickets' }, scheduleReload)
-              .on('postgres_changes', { event: '*', schema: 'public', table: 'kds_phase_times' }, scheduleReload)
-              .subscribe()
-
-            cleanupSupabase = () => {
-              if (debounceTimer) clearTimeout(debounceTimer)
-              try { ch.unsubscribe() } catch { }
-            }
-          }
-        } catch {}
-
-        if (!secret) return
-
-        const wsUrl = hubUrl.replace(/^http/, 'ws') + `/realtime?token=${encodeURIComponent(secret)}`
-        let attempt = 0
-        const connect = () => {
-          if (!mounted) return
-          attempt++
-          try { ws?.close() } catch {}
-          ws = new WebSocket(wsUrl)
-          ws.addEventListener('open', () => {
-            ws?.send(JSON.stringify({ unit_id: unitId, device_id: deviceId }))
-          })
-          ws.addEventListener('message', (ev) => {
+          const wsUrl = hubUrl.replace(/^http/, 'ws') + `/realtime?token=${encodeURIComponent(secret)}`
+          let attempt = 0
+          const connect = () => {
             if (!mounted) return
-            let events: any[] = []
-            try { const msg = JSON.parse(String((ev as MessageEvent).data)); if (msg?.type === 'events') events = msg.events || [] } catch {}
-            try { (async () => { await kdsService.applyHubEvents(events) })() } catch {}
-            const tickets = events.filter((e: any) => String(e.table) === 'kdsTickets' && (e.row || e.rows))
-            if (tickets.length) {
-              const mapToOrderStatus = (s: string) => {
-                const low = String(s || '').toLowerCase()
-                if (low === 'done' || low === 'delivered') return 'DELIVERED'
-                if (low === 'ready') return 'READY'
-                if (low === 'prep' || low === 'preparing') return 'PREPARING'
-                return 'NEW'
+            attempt++
+            try { ws?.close() } catch { }
+            ws = new WebSocket(wsUrl)
+            ws.addEventListener('open', () => {
+              ws?.send(JSON.stringify({ unit_id: unitId, device_id: deviceId }))
+            })
+            ws.addEventListener('message', (ev) => {
+              if (!mounted) return
+              let events: any[] = []
+              try { const msg = JSON.parse(String((ev as MessageEvent).data)); if (msg?.type === 'events') events = msg.events || [] } catch { }
+              try { (async () => { await kdsService.applyHubEvents(events) })() } catch { }
+              const tickets = events.filter((e: any) => String(e.table) === 'kdsTickets' && (e.row || e.rows))
+              if (tickets.length) {
+                const mapToOrderStatus = (s: string) => {
+                  const low = String(s || '').toLowerCase()
+                  if (low === 'done' || low === 'delivered') return 'DELIVERED'
+                  if (low === 'ready') return 'READY'
+                  if (low === 'prep' || low === 'preparing') return 'PREPARING'
+                  return 'NEW'
+                }
+                const byIdStatus: Record<string, string> = {}
+                for (const e of tickets) {
+                  const r = e.row || {}
+                  const oid = r.order_id ?? r.orderId ?? null
+                  if (!oid) continue
+                  const id = String(oid)
+                  const st = mapToOrderStatus(String(r.status ?? e.status ?? 'queued'))
+                  byIdStatus[id] = st
+                }
+                setOrders(prev => prev.map(o => {
+                  const oid = String(o.id)
+                  const st = byIdStatus[oid]
+                  if (!st) return o
+                  if (st === 'DELIVERED') return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date() }
+                  if (st === 'READY') return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
+                  if (st === 'PREPARING') return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date() }
+                  if (st === 'NEW') return o.status === 'NEW' ? o : o
+                  return o
+                }))
               }
-              const byIdStatus: Record<string, string> = {}
-              for (const e of tickets) {
-                const r = e.row || {}
-                const oid = r.order_id ?? r.orderId ?? null
-                if (!oid) continue
-                const id = String(oid)
-                const st = mapToOrderStatus(String(r.status ?? e.status ?? 'queued'))
-                byIdStatus[id] = st
-              }
-              setOrders(prev => prev.map(o => {
-                const oid = String(o.id)
-                const st = byIdStatus[oid]
-                if (!st) return o
-                if (st === 'DELIVERED') return { ...o, status: 'DELIVERED', deliveredAt: o.deliveredAt ?? new Date() }
-                if (st === 'READY') return { ...o, status: 'READY', readyAt: o.readyAt ?? new Date() }
-                if (st === 'PREPARING') return { ...o, status: 'PREPARING', updatedAt: o.updatedAt ?? new Date() }
-                if (st === 'NEW') return o.status === 'NEW' ? o : o
-                return o
-              }))
-            }
-            const ordEvents = events.filter((e: any) => String(e.table) === 'orders' && (e.row || e.rows))
-            if (ordEvents.length) {
-              const incoming: Record<string, any> = {}
-              for (const e of ordEvents) {
-                const r = e.row || {}
-                const id = String(r.id ?? '')
-                if (!id) continue
-                incoming[id] = r
-              }
-              setOrders(prev => {
-                const statusRank: Record<string, number> = { NEW: 0, PREPARING: 1, READY: 2, DELIVERED: 3, CANCELLED: 3 }
-                const map: Record<string, Order> = {}
-                for (const o of prev) map[String(o.id)] = o
-                for (const [id, r] of Object.entries(incoming)) {
-                  const existing = map[id]
-                  if (existing) {
-                    const incomingStatus = (r as any).status ? String((r as any).status).toUpperCase() : undefined
-                    const currentStatus = String(existing.status || 'NEW').toUpperCase()
-                    const keepStatus = incomingStatus && (statusRank[incomingStatus] ?? 0) < (statusRank[currentStatus] ?? 0)
-                    map[id] = {
-                      ...existing,
-                      ...r,
-                      status: keepStatus ? existing.status : ((r as any).status ?? existing.status),
-                      createdAt: r.createdAt ? new Date(r.createdAt) : existing.createdAt,
-                      updatedAt: r.updatedAt ? new Date(r.updatedAt) : (existing.updatedAt ?? new Date()),
-                      readyAt: r.readyAt ? new Date(r.readyAt) : existing.readyAt,
-                      deliveredAt: r.deliveredAt ? new Date(r.deliveredAt) : existing.deliveredAt,
-                    } as any
-                  } else {
-                    map[id] = {
-                      ...(r as any),
-                      createdAt: r.createdAt ? new Date(r.createdAt) : new Date(),
-                      updatedAt: r.updatedAt ? new Date(r.updatedAt) : new Date(),
-                      readyAt: r.readyAt ? new Date(r.readyAt) : undefined,
-                      deliveredAt: r.deliveredAt ? new Date(r.deliveredAt) : undefined,
+              const ordEvents = events.filter((e: any) => String(e.table) === 'orders' && (e.row || e.rows))
+              if (ordEvents.length) {
+                const incoming: Record<string, any> = {}
+                for (const e of ordEvents) {
+                  const r = e.row || {}
+                  const id = String(r.id ?? '')
+                  if (!id) continue
+                  incoming[id] = r
+                }
+                setOrders(prev => {
+                  const statusRank: Record<string, number> = { NEW: 0, PREPARING: 1, READY: 2, DELIVERED: 3, CANCELLED: 3 }
+                  const map: Record<string, Order> = {}
+                  for (const o of prev) map[String(o.id)] = o
+                  for (const [id, r] of Object.entries(incoming)) {
+                    const existing = map[id]
+                    if (existing) {
+                      const incomingStatus = (r as any).status ? String((r as any).status).toUpperCase() : undefined
+                      const currentStatus = String(existing.status || 'NEW').toUpperCase()
+                      const keepStatus = incomingStatus && (statusRank[incomingStatus] ?? 0) < (statusRank[currentStatus] ?? 0)
+                      map[id] = {
+                        ...existing,
+                        ...r,
+                        status: keepStatus ? existing.status : ((r as any).status ?? existing.status),
+                        createdAt: r.createdAt ? new Date(r.createdAt) : existing.createdAt,
+                        updatedAt: r.updatedAt ? new Date(r.updatedAt) : (existing.updatedAt ?? new Date()),
+                        readyAt: r.readyAt ? new Date(r.readyAt) : existing.readyAt,
+                        deliveredAt: r.deliveredAt ? new Date(r.deliveredAt) : existing.deliveredAt,
+                      } as any
+                    } else {
+                      map[id] = {
+                        ...(r as any),
+                        createdAt: r.createdAt ? new Date(r.createdAt) : new Date(),
+                        updatedAt: r.updatedAt ? new Date(r.updatedAt) : new Date(),
+                        readyAt: r.readyAt ? new Date(r.readyAt) : undefined,
+                        deliveredAt: r.deliveredAt ? new Date(r.deliveredAt) : undefined,
+                      }
                     }
                   }
-                }
-                return Object.values(map)
-              })
+                  return Object.values(map)
+                })
+              }
+            })
+            const scheduleReconnect = () => {
+              if (!mounted) return
+              const delay = Math.min(30000, 1000 * Math.pow(2, Math.min(5, attempt)))
+              clearTimeout(reconnectTimer)
+              reconnectTimer = setTimeout(() => connect(), delay)
             }
-          })
-          const scheduleReconnect = () => {
-            if (!mounted) return
-            const delay = Math.min(30000, 1000 * Math.pow(2, Math.min(5, attempt)))
-            clearTimeout(reconnectTimer)
-            reconnectTimer = setTimeout(() => connect(), delay)
+            ws.addEventListener('error', () => { scheduleReconnect() })
+            ws.addEventListener('close', () => { scheduleReconnect() })
           }
-          ws.addEventListener('error', () => { scheduleReconnect() })
-          ws.addEventListener('close', () => { scheduleReconnect() })
-        }
-        connect()
-      } catch {}
-    })()
+          connect()
+        } catch { }
+      })()
 
     return () => {
       mounted = false
       clearTimeout(reconnectTimer)
-      try { ws?.close() } catch {}
-      try { cleanupSupabase?.() } catch {}
+      try { ws?.close() } catch { }
+      try { cleanupSupabase?.() } catch { }
     }
   }, [setOrders])
 
-  
+
 
 
   const displayAlert = (title: string, message: string, variant: 'error' | 'info' | 'success' = 'error') => {
@@ -975,13 +1000,13 @@ export default function CaixaPage() {
   };
 
   // --- Lógica de Sessão Operacional (MOVIDA PARA CÁ) ---
-  
+
   const handleStartSession = () => {
     if (!user || !store) {
       displayAlert('Erro', 'Usuário ou loja não identificados.', 'error');
       return;
     }
-    
+
     const newSession: OperationalSession = {
       id: Date.now().toString(),
       pin: generateSessionPin(sessionCounter),
@@ -992,53 +1017,53 @@ export default function CaixaPage() {
       openingTime: new Date(),
       status: 'OPEN',
     };
-    
+
     setOperationalSession(newSession);
     setSessionCounter(prev => prev + 1);
     showSuccess(`Sessão operacional ${newSession.pin} iniciada!`);
     setShowCashOpening(true); // Abre o modal de abertura de caixa automaticamente
   };
-  
+
   const handleEndSessionConfirmation = () => {
     if (!operationalSession) return;
-    
+
     // 1. Verificar se o caixa está fechado
     // 2. Verificar pedidos ativos (NEW, PREPARING, READY)
     if (activeOrders.length > 0) {
       displayAlert(
-        'Ação Bloqueada', 
-        `Ainda existem ${activeOrders.length} pedidos em produção (Novo, Preparando ou Pronto). Marque-os como Entregue ou Cancelado antes de encerrar a sessão.`, 
+        'Ação Bloqueada',
+        `Ainda existem ${activeOrders.length} pedidos em produção (Novo, Preparando ou Pronto). Marque-os como Entregue ou Cancelado antes de encerrar a sessão.`,
         'info'
       );
       return;
     }
-    
+
     // 3. Sempre mostrar confirmação de encerramento
     setShowEndSessionConfirmation(true);
   };
-  
+
   const handleEndSession = () => {
     if (!operationalSession) return;
-    
+
     // 1. Encerrar a sessão
     const closedSession: OperationalSession = {
       ...operationalSession,
       closingTime: new Date(),
       status: 'CLOSED',
     };
-    
+
     // 2. Mover a sessão para o histórico e limpar a sessão atual
     setOperationalSessionsHistory(prev => [...prev, closedSession]);
     setOperationalSession(null);
-    
+
     // 3. Limpar pedidos ATIVOS, mantendo os DELIVERED e CANCELLED para relatórios
-    setOrders(prevOrders => prevOrders.filter(o => 
+    setOrders(prevOrders => prevOrders.filter(o =>
       o.status === 'DELIVERED' || o.status === 'CANCELLED'
     ));
-    
+
     // 4. Limpar carrinhos salvos (NOVO)
     setSavedCarts([]);
-    
+
     showSuccess(`Sessão operacional ${closedSession.pin} encerrada com sucesso! Pedidos ativos foram limpos.`);
   };
 
@@ -1114,11 +1139,11 @@ export default function CaixaPage() {
       handleRemoveItem(itemId);
       return;
     }
-    
+
     // Ajustar o array de productionUnits (somente para itens que passam pela cozinha)
     const isSkip = !!itemToUpdate.skipKitchen || !!itemToUpdate.menuItem.skipKitchen;
     let newUnits = isSkip ? [] : [...itemToUpdate.productionUnits];
-    
+
     if (!isSkip && quantity > itemToUpdate.quantity) {
       // Adicionar novas unidades (PENDING)
       const unitsToAdd = quantity - itemToUpdate.quantity;
@@ -1133,20 +1158,20 @@ export default function CaixaPage() {
     } else if (!isSkip && quantity < itemToUpdate.quantity) {
       // Remover as últimas unidades (apenas se estiverem PENDING)
       const unitsToRemove = itemToUpdate.quantity - quantity;
-      
+
       // Filtra as unidades que não estão prontas
       const pendingUnits = newUnits.filter(unit => unit.unitStatus === 'PENDING');
-      
+
       if (pendingUnits.length < unitsToRemove) {
         displayAlert('Ação Bloqueada', 'Não é possível reduzir a quantidade pois algumas unidades já estão em preparo ou prontas.', 'error');
         return;
       }
-      
+
       // Remove as últimas unidades PENDING
       newUnits = newUnits.slice(0, quantity);
     }
 
-    setCartItems(cartItems.map(item => 
+    setCartItems(cartItems.map(item =>
       item.id === itemId ? { ...item, quantity, productionUnits: newUnits, skipKitchen: isSkip } : item
     ));
   };
@@ -1160,7 +1185,7 @@ export default function CaixaPage() {
   };
 
   const handleUpdateObservations = (itemId: string, observations: string) => {
-    setCartItems(cartItems.map(item => 
+    setCartItems(cartItems.map(item =>
       item.id === itemId ? { ...item, observations: observations || undefined } : item
     ));
   };
@@ -1189,7 +1214,7 @@ export default function CaixaPage() {
       // Garantir flag e unidades vazias para itens com entrega direta
       return isSkip ? { ...item, productionUnits: [], skipKitchen: true } : { ...item, skipKitchen: false };
     });
-    
+
     // CORREÇÃO: Atualizar o estado do carrinho
     setCartItems(itemsWithUnits);
     showSuccess('Carrinho carregado com sucesso.');
@@ -1204,31 +1229,31 @@ export default function CaixaPage() {
       const p = (rows || []).find((r: any) => String(r.sku ?? '').toLowerCase() === pureCode.toLowerCase() && !!r.isActive);
       const itemFromService: MenuItem | undefined = p
         ? (() => {
-            const base: MenuItem = {
-              id: p.id,
-              name: p.name,
-              price: ((p.priceCents ?? p.price_cents ?? 0) as number) / 100,
-              sla: 15,
-              categoryId: (p.categoryId ?? p.category_id) as string,
-              observations: [],
-              requiredModifierGroups: [],
-              image: undefined,
-              active: Boolean(p.isActive ?? p.is_active ?? true),
-              code: p.sku ?? undefined,
+          const base: MenuItem = {
+            id: p.id,
+            name: p.name,
+            price: ((p.priceCents ?? p.price_cents ?? 0) as number) / 100,
+            sla: 15,
+            categoryId: (p.categoryId ?? p.category_id) as string,
+            observations: [],
+            requiredModifierGroups: [],
+            image: undefined,
+            active: Boolean(p.isActive ?? p.is_active ?? true),
+            code: p.sku ?? undefined,
+          }
+          const fromLs = (menuItemsLS || []).find(mi => mi.id === p.id || (mi.code && mi.code === p.sku))
+          return fromLs
+            ? {
+              ...base,
+              sla: typeof fromLs.sla === 'number' ? fromLs.sla : base.sla,
+              observations: Array.isArray(fromLs.observations) ? fromLs.observations : base.observations,
+              requiredModifierGroups: Array.isArray(fromLs.requiredModifierGroups) ? fromLs.requiredModifierGroups : base.requiredModifierGroups,
+              image: fromLs.image ?? base.image,
+              skipKitchen: Boolean(fromLs.skipKitchen ?? false),
+              unitDeliveryCount: Math.max(1, Number(fromLs.unitDeliveryCount ?? 1)),
             }
-            const fromLs = (menuItemsLS || []).find(mi => mi.id === p.id || (mi.code && mi.code === p.sku))
-            return fromLs
-              ? {
-                  ...base,
-                  sla: typeof fromLs.sla === 'number' ? fromLs.sla : base.sla,
-                  observations: Array.isArray(fromLs.observations) ? fromLs.observations : base.observations,
-                  requiredModifierGroups: Array.isArray(fromLs.requiredModifierGroups) ? fromLs.requiredModifierGroups : base.requiredModifierGroups,
-                  image: fromLs.image ?? base.image,
-                  skipKitchen: Boolean(fromLs.skipKitchen ?? false),
-                  unitDeliveryCount: Math.max(1, Number(fromLs.unitDeliveryCount ?? 1)),
-                }
-              : base
-          })()
+            : base
+        })()
         : undefined;
 
       const item = itemFromService ?? menuItems.find(it => it.code?.toLowerCase() === pureCode.toLowerCase() && it.active);
@@ -1254,7 +1279,7 @@ export default function CaixaPage() {
     }
     quickSearchRef.current?.blur();
   };
-  
+
   const handleSelectCode = (code: string) => {
     // Reutiliza a mesma lógica da busca rápida
     handleQuickSearch(code);
@@ -1273,17 +1298,17 @@ export default function CaixaPage() {
 
     const newCategories = [...categories];
     const currentCategory = newCategories.find(cat => cat.id === categoryId)!;
-    
+
     let targetIndex = direction === 'up' ? index - 1 : index + 1;
-    
+
     if (targetIndex >= 0 && targetIndex < activeCategories.length) {
       const targetCategory = activeCategories[targetIndex];
-      
+
       // Trocar as ordens
       const tempOrder = currentCategory.order;
       currentCategory.order = targetCategory.order;
       targetCategory.order = tempOrder;
-      
+
       // Atualizar o estado global de categorias
       setCategories(newCategories.map(cat => {
         if (cat.id === currentCategory.id) return currentCategory;
@@ -1316,7 +1341,7 @@ export default function CaixaPage() {
         initialAmount: openingData.initialAmount ?? 0,
         openingTime: new Date(),
         notes: openingData.notes ?? '',
-        cashBreakdown: openingData.cashBreakdown ?? {},
+        cashBreakdown: (openingData.cashBreakdown ?? {}) as any,
         status: 'OPEN',
         initialAmountInputMode: inputMode,
         finalAmountInputMode: 'total',
@@ -1392,7 +1417,7 @@ export default function CaixaPage() {
       showError('Falha ao fechar caixa no banco offline.');
     }
   };
-  
+
   const handleConfirmEndSession = () => {
     setShowEndSessionConfirmation(false);
     if (isCashOpen) {
@@ -1429,7 +1454,7 @@ export default function CaixaPage() {
     setChecklistMode(mode);
     setShowDirectDeliveryChecklist(true);
   };
-  
+
   // Estado para o ConfirmationModal genérico
   const [confirmationData, setConfirmationData] = useState<{
     title: string;
@@ -1440,25 +1465,25 @@ export default function CaixaPage() {
   } | null>(null);
 
   // --- Renderização ---
-  
+
   const totalCart = cartItems.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
   const totalActiveOrders = activeOrders.length;
 
   return (
     // O pai (ProtectedRoute) agora define h-screen e overflow-hidden.
     // Este componente deve usar flex-col e flex-1 para preencher o espaço restante.
-    <div className="flex flex-col h-full flex-1"> 
-      
+    <div className="flex flex-col h-full flex-1">
+
       {/* HEADER PRINCIPAL (Fixo) */}
       <div className="bg-white border-b border-gray-200 flex-shrink-0">
         <div className="px-4 lg:px-6 py-3 flex items-center justify-between">
-          
+
           {/* Lado Esquerdo: Título e Status do Caixa */}
           <div className="flex items-center space-x-4">
             <h1 className="text-xl font-bold text-gray-900">
               Caixa PDV
             </h1>
-            
+
             {isOperationalSessionOpen ? (
               <div className="flex items-center space-x-3">
                 <span className="px-3 py-1 rounded-md text-sm font-medium bg-gray-100 text-gray-800">
@@ -1474,8 +1499,8 @@ export default function CaixaPage() {
                   </span>
                 )}
                 <div className="flex items-center space-x-2 ml-2">
-                  <Button 
-                    variant="danger" 
+                  <Button
+                    variant="danger"
                     size="md"
                     onClick={handleOpenCashClosing}
                     disabled={!isCashOpen}
@@ -1485,8 +1510,8 @@ export default function CaixaPage() {
                   >
                     <i className="ri-lock-line"></i>
                   </Button>
-                  <Button 
-                    variant="danger" 
+                  <Button
+                    variant="danger"
                     size="md"
                     onClick={handleEndSessionConfirmation}
                     disabled={!operationalSession}
@@ -1496,9 +1521,9 @@ export default function CaixaPage() {
                   >
                     <i className="ri-logout-box-line"></i>
                   </Button>
-                  <Button 
-                    variant="info" 
-                    size="md" 
+                  <Button
+                    variant="info"
+                    size="md"
                     onClick={() => handleOpenCashMovement('IN')}
                     disabled={!isCashOpen}
                     aria-label="Entrada de Dinheiro"
@@ -1507,9 +1532,9 @@ export default function CaixaPage() {
                   >
                     <i className="ri-add-line"></i>
                   </Button>
-                  <Button 
-                    variant="secondary" 
-                    size="md" 
+                  <Button
+                    variant="secondary"
+                    size="md"
                     onClick={() => handleOpenCashMovement('OUT')}
                     disabled={!isCashOpen}
                     aria-label="Retirada de Dinheiro"
@@ -1519,9 +1544,9 @@ export default function CaixaPage() {
                     <i className="ri-subtract-line"></i>
                   </Button>
                   {isOperationalSessionOpen && !isCashOpen && (
-                    <Button 
-                      variant="success" 
-                      size="md" 
+                    <Button
+                      variant="success"
+                      size="md"
                       onClick={handleOpenCashOpeningWrapper}
                     >
                       Abrir Caixa
@@ -1531,8 +1556,8 @@ export default function CaixaPage() {
               </div>
             ) : (
               <div className="flex items-center space-x-3">
-                <Button 
-                  variant="success" 
+                <Button
+                  variant="success"
                   size="md"
                   onClick={handleStartSession}
                 >
@@ -1575,7 +1600,7 @@ export default function CaixaPage() {
             </Button>
 
             {/* Removido: Abrir Caixa do lado direito; permanece à esquerda com status */}
-            
+
             {/* Tabs PDV / Pedidos */}
             <div className="flex items-center space-x-2 bg-gray-100 p-1 rounded-lg">
               <Button
@@ -1609,7 +1634,7 @@ export default function CaixaPage() {
                     variant: 'danger',
                     confirmText: 'Apagar tudo',
                     onConfirm: () => {
-                      ;(async () => {
+                      ; (async () => {
                         try {
                           await ordersService.clearLocalOrders()
                           setOrders([])
@@ -1646,7 +1671,7 @@ export default function CaixaPage() {
 
       {/* Conteúdo Principal (3 Colunas no PDV) - Usa flex-1 para preencher a altura restante */}
       <div className="flex-1 flex overflow-hidden" tabIndex={0} ref={navScopeRef}>
-        
+
         {activeTab === 'pdv' && (
           <div className="flex-1 flex flex-row overflow-hidden">
             {/* Sidebar de Categorias */}
@@ -1681,13 +1706,13 @@ export default function CaixaPage() {
                     placeholder="Buscar item por código (Ex: XB001) ou use ESPAÇO"
                     className="flex-1"
                   />
-                  <Button 
+                  <Button
                     onClick={() => handleQuickSearch(quickSearchCode)}
                     disabled={!quickSearchCode.trim()}
                   >
                     <i className="ri-search-line"></i>
                   </Button>
-                  <Button 
+                  <Button
                     variant="secondary"
                     onClick={() => setShowCodeListModal(true)}
                   >
@@ -1734,7 +1759,7 @@ export default function CaixaPage() {
           </div>
         )}
       </div>
-      
+
       {/* Removido: Rodapé de Checkout em telas menores, o Carrinho passa a ser sempre visível */}
 
       {/* Modals */}
@@ -1752,7 +1777,7 @@ export default function CaixaPage() {
         cashMovements={cashMovements} // PASSANDO MOVIMENTOS PARA VALIDAÇÃO DE SALDO
         onConfirmMovement={handleConfirmMovement}
       />
-      
+
       <CashClosing
         isOpen={showCashClosing}
         onClose={() => setShowCashClosing(false)}
@@ -1878,7 +1903,7 @@ export default function CaixaPage() {
                     });
                     return { ...o, items: newItems };
                   }));
-                  ;(async () => {
+                  ; (async () => {
                     try {
                       const orderId = checklistOrder.id;
                       for (const it of checklistOrder.items || []) {
@@ -1889,45 +1914,45 @@ export default function CaixaPage() {
                           const key = `${it.id}-${i}`;
                           const isChecked = !!checklistUnitChecks[key];
                           const deliveredAt = isChecked ? (prevTimesRaw[i] ? new Date(prevTimesRaw[i]).toISOString() : now.toISOString()) : undefined;
-                          const unitId = `${it.id}-${i+1}`;
+                          const unitId = `${it.id}-${i + 1}`;
                           await kdsService.setUnitDelivered(orderId, it.id, unitId, deliveredAt as any);
                         }
                       }
-                    } catch {}
+                    } catch { }
                   })()
-                  ;(async () => {
-                    try {
-                      const envUrl = (import.meta as any)?.env?.VITE_LAN_HUB_URL
-                      const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost'
-                      const hubUrl = (envUrl || `http://${host}:4000`).replace(/\/$/, '')
-                      const secret = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || ''
-                      const dp = await getDeviceProfile()
-                      const unitId = dp?.unitId || 'default'
-                      const headers: Record<string,string> = { 'Content-Type': 'application/json' }
-                      if (secret) headers['Authorization'] = `Bearer ${secret}`
-                      const builtItems = (checklistOrder.items || []).map(it => {
-                        const totalUnits = Math.max(1, (it.quantity || 1) * Math.max(1, it.menuItem?.unitDeliveryCount || 1));
-                        const prevTimesRaw = Array.isArray((it as any).directDeliveredUnitTimes) ? (it as any).directDeliveredUnitTimes : [];
-                        const prevTimes: (Date | undefined)[] = Array.from({ length: totalUnits }, (_, idx) => {
-                          const val = prevTimesRaw[idx];
-                          return val ? new Date(val) : undefined;
-                        });
-                        const now = new Date();
-                        const newTimes: (Date | undefined)[] = [];
-                        for (let i = 0; i < totalUnits; i++) {
-                          const key = `${it.id}-${i}`;
-                          const wasDelivered = !!prevTimes[i];
-                          const isChecked = !!checklistUnitChecks[key];
-                          newTimes[i] = isChecked ? (wasDelivered ? prevTimes[i] : now) : undefined
-                        }
-                        const delivered = newTimes.filter(Boolean).length;
-                        return { ...it, directDeliveredUnitCount: delivered, directDeliveredUnitTimes: newTimes } as any
-                      })
-                      const row = { ...checklistOrder, items: builtItems }
-                      const events = [{ table: 'orders', row, unit_id: unitId }]
-                      await fetch(hubUrl + '/push', { method: 'POST', headers, body: JSON.stringify({ events }) })
-                    } catch {}
-                  })()
+                    ; (async () => {
+                      try {
+                        const envUrl = (import.meta as any)?.env?.VITE_LAN_HUB_URL
+                        const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost'
+                        const hubUrl = (envUrl || `http://${host}:4000`).replace(/\/$/, '')
+                        const secret = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || ''
+                        const dp = await getDeviceProfile()
+                        const unitId = dp?.unitId || 'default'
+                        const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+                        if (secret) headers['Authorization'] = `Bearer ${secret}`
+                        const builtItems = (checklistOrder.items || []).map(it => {
+                          const totalUnits = Math.max(1, (it.quantity || 1) * Math.max(1, it.menuItem?.unitDeliveryCount || 1));
+                          const prevTimesRaw = Array.isArray((it as any).directDeliveredUnitTimes) ? (it as any).directDeliveredUnitTimes : [];
+                          const prevTimes: (Date | undefined)[] = Array.from({ length: totalUnits }, (_, idx) => {
+                            const val = prevTimesRaw[idx];
+                            return val ? new Date(val) : undefined;
+                          });
+                          const now = new Date();
+                          const newTimes: (Date | undefined)[] = [];
+                          for (let i = 0; i < totalUnits; i++) {
+                            const key = `${it.id}-${i}`;
+                            const wasDelivered = !!prevTimes[i];
+                            const isChecked = !!checklistUnitChecks[key];
+                            newTimes[i] = isChecked ? (wasDelivered ? prevTimes[i] : now) : undefined
+                          }
+                          const delivered = newTimes.filter(Boolean).length;
+                          return { ...it, directDeliveredUnitCount: delivered, directDeliveredUnitTimes: newTimes } as any
+                        })
+                        const row = { ...checklistOrder, items: builtItems }
+                        const events = [{ table: 'orders', row, unit_id: unitId }]
+                        await fetch(hubUrl + '/push', { method: 'POST', headers, body: JSON.stringify({ events }) })
+                      } catch { }
+                    })()
 
                   // Se todos estiverem completos, marcar como entregue
                   const allItemsCompleted = (checklistOrder.items || []).every(it => {
@@ -1943,7 +1968,7 @@ export default function CaixaPage() {
                     if (allItemsCompleted) {
                       const now = new Date()
                       setOrders(orders.map(o => o.id === checklistOrder.id ? { ...o, status: 'DELIVERED', deliveredAt: now } : o));
-                      ;(async () => {
+                      ; (async () => {
                         try {
                           const envUrl = (import.meta as any)?.env?.VITE_LAN_HUB_URL
                           const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost'
@@ -1951,27 +1976,27 @@ export default function CaixaPage() {
                           const secret = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || ''
                           const dp = await getDeviceProfile()
                           const unitId = dp?.unitId || 'default'
-                          const headers: Record<string,string> = { 'Content-Type': 'application/json' }
+                          const headers: Record<string, string> = { 'Content-Type': 'application/json' }
                           if (secret) headers['Authorization'] = `Bearer ${secret}`
                           const row = { ...checklistOrder, status: 'DELIVERED', deliveredAt: now }
                           const events = [{ table: 'orders', row, unit_id: unitId }]
                           await fetch(hubUrl + '/push', { method: 'POST', headers, body: JSON.stringify({ events }) })
-                        } catch {}
+                        } catch { }
                       })()
-                      ;(async () => {
-                        try {
-                          await ordersService.closeOrder(String(checklistOrder.id) as any)
-                        } catch {}
-                        try {
-                          const tId = (checklistOrder as any)?.ticketId || checklistOrder.id
-                          await kdsService.setTicketStatus(String(tId), 'done')
-                        } catch {}
+                        ; (async () => {
+                          try {
+                            await ordersService.closeOrder(String(checklistOrder.id) as any)
+                          } catch { }
+                          try {
+                            const tId = (checklistOrder as any)?.ticketId || checklistOrder.id
+                            await kdsService.setTicketStatus(String(tId), 'done')
+                          } catch { }
 
-                        // Persistir tempo de entrega na tabela de fases para relatórios
-                        try {
-                          await kdsService.setPhaseTime(checklistOrder.id, { deliveredAt: new Date().toISOString() })
-                        } catch {}
-                      })()
+                          // Persistir tempo de entrega na tabela de fases para relatórios
+                          try {
+                            await kdsService.setPhaseTime(checklistOrder.id, { deliveredAt: new Date().toISOString() })
+                          } catch { }
+                        })()
                       showSuccess(`Pedido #${checklistOrder.pin} marcado como entregue.`);
                     } else {
                       showInfo('Entrega parcial registrada. Conclua as unidades restantes depois.');
@@ -1982,7 +2007,7 @@ export default function CaixaPage() {
                     if (!hasKitchenItems && allItemsCompleted) {
                       const now = new Date()
                       setOrders(orders.map(o => o.id === checklistOrder.id ? { ...o, status: 'DELIVERED', deliveredAt: now } : o));
-                      ;(async () => {
+                      ; (async () => {
                         try {
                           const envUrl = (import.meta as any)?.env?.VITE_LAN_HUB_URL
                           const host = typeof window !== 'undefined' ? (window.location.hostname || 'localhost') : 'localhost'
@@ -1990,22 +2015,22 @@ export default function CaixaPage() {
                           const secret = (import.meta as any)?.env?.VITE_LAN_SYNC_SECRET || ''
                           const dp = await getDeviceProfile()
                           const unitId = dp?.unitId || 'default'
-                          const headers: Record<string,string> = { 'Content-Type': 'application/json' }
+                          const headers: Record<string, string> = { 'Content-Type': 'application/json' }
                           if (secret) headers['Authorization'] = `Bearer ${secret}`
                           const row = { ...checklistOrder, status: 'DELIVERED', deliveredAt: now }
                           const events = [{ table: 'orders', row, unit_id: unitId }]
                           await fetch(hubUrl + '/push', { method: 'POST', headers, body: JSON.stringify({ events }) })
-                        } catch {}
+                        } catch { }
                       })()
-                      ;(async () => {
-                        try {
-                          await ordersService.closeOrder(String(checklistOrder.id) as any)
-                        } catch {}
-                        try {
-                          const tId = (checklistOrder as any)?.ticketId || checklistOrder.id
-                          await kdsService.setTicketStatus(String(tId), 'done')
-                        } catch {}
-                      })()
+                        ; (async () => {
+                          try {
+                            await ordersService.closeOrder(String(checklistOrder.id) as any)
+                          } catch { }
+                          try {
+                            const tId = (checklistOrder as any)?.ticketId || checklistOrder.id
+                            await kdsService.setTicketStatus(String(tId), 'done')
+                          } catch { }
+                        })()
                       showSuccess(`Pedido #${checklistOrder.pin} marcado como entregue.`);
                     } else {
                       showSuccess('Entrega direta registrada. Os itens de cozinha seguem em preparo.');
@@ -2026,7 +2051,7 @@ export default function CaixaPage() {
           </div>
         )}
       </Modal>
-      
+
       <CodeListModal
         isOpen={showCodeListModal}
         onClose={() => setShowCodeListModal(false)}
@@ -2165,7 +2190,7 @@ export default function CaixaPage() {
                 setCustomObservation('');
               }}
               className="flex-1"
-              disabled={selectedItemForOptions && (selectedItemForOptions.requiredModifierGroups || []).filter(g => g.active).some(group => !selectedRequiredModifiers[group.id])}
+              disabled={!!(selectedItemForOptions && (selectedItemForOptions.requiredModifierGroups || []).filter(g => g.active).some(group => !selectedRequiredModifiers[group.id]))}
             >
               Adicionar ao Carrinho
             </Button>
@@ -2180,7 +2205,7 @@ export default function CaixaPage() {
         message={alertMessage.message}
         variant={alertMessage.variant}
       />
-      
+
       {/* Confirmação de Fechamento de Caixa (se a sessão operacional estiver sendo encerrada) */}
       <ConfirmationModal
         isOpen={showEndSessionConfirmation}
@@ -2207,7 +2232,7 @@ export default function CaixaPage() {
         variant={isCashOpen ? 'warning' : 'danger'}
         confirmText={isCashOpen ? 'Fechar Caixa' : 'Sim, Encerrar Sessão'}
       />
-      
+
       {/* Confirmação de Entrega (Genérico) - RENDERIZADO NO FINAL PARA Z-INDEX ALTO */}
       {confirmationData && (
         <ConfirmationModal
