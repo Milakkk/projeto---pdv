@@ -136,8 +136,8 @@ export default function CozinhaPage() {
       const pin = (next.pin && String(next.pin).trim()) ? next.pin : (prev?.pin ?? '')
       const password = (next.password && String(next.password).trim()) ? next.password : (prev?.password ?? '')
 
-      const prevItems = Array.isArray(prev?.items) ? prev!.items : []
       const nextItems = Array.isArray(next.items) ? next.items : []
+      const prevItems = Array.isArray(prev?.items) ? prev!.items : []
       const baseItems = nextItems.length ? nextItems : prevItems
 
       const prevItemById: Record<string, any> = {}
@@ -153,13 +153,19 @@ export default function CozinhaPage() {
         const mergedUnits = it.productionUnits.map((u: any) => {
           const pu = prevUnitsById[String(u.unitId)]
           if (!pu) return u
-          const unitStatus = (String(pu.unitStatus).toUpperCase() === 'READY' || String(u.unitStatus).toUpperCase() === 'READY') ? 'READY' : 'PENDING'
+
+          // Se o novo explicitamente diz READY, é READY.
+          // Se o novo não diz nada (undefined), mas o anterior era READY, mantém READY.
+          // Caso contrário (incluindo explicitamente PENDING), fica PENDING.
+          const unitStatus = (String(u.unitStatus).toUpperCase() === 'READY') ? 'READY' :
+            (String(pu.unitStatus).toUpperCase() === 'READY' && !u.unitStatus ? 'READY' : 'PENDING');
+
           return {
             ...u,
             operatorName: u.operatorName ?? pu.operatorName,
             unitStatus,
             completedObservations: Array.isArray(u.completedObservations) ? u.completedObservations : pu.completedObservations,
-            completedAt: u.completedAt ?? pu.completedAt,
+            completedAt: unitStatus === 'READY' ? (u.completedAt ?? pu.completedAt) : undefined,
             deliveredAt: u.deliveredAt ?? pu.deliveredAt,
           }
         })
@@ -1372,6 +1378,7 @@ export default function CozinhaPage() {
     try { kdsService.setUnitOperator(orderId, itemId, unitId, operatorName) } catch { }
   };
 
+
   const handleAssignOperatorToAll = (orderId: string, operatorName: string) => {
     startTransition(() => {
       setOrders(prevOrders =>
@@ -1400,6 +1407,7 @@ export default function CozinhaPage() {
   };
 
   const cancelOrder = (orderId: string, reason: string) => {
+    console.log(`[Cozinha] Cancelando pedido ${orderId} por motivo: ${reason}`);
     // Persist to Supabase first
     (async () => {
       try {
@@ -1414,30 +1422,30 @@ export default function CozinhaPage() {
             .eq('order_id', orderId);
 
           if (ticketError) {
-            console.error('[Cozinha] Erro ao cancelar ticket:', ticketError);
+            console.error('[Cozinha] Erro ao cancelar ticket no Supabase:', ticketError);
           }
 
           // Update orders table
           const { error: orderError } = await supabase
             .from('orders')
-            .update({ status: 'CANCELLED', updated_at: nowIso })
+            .update({ status: 'CANCELLED', updated_at: nowIso, cancel_reason: reason })
             .eq('id', orderId);
 
           if (orderError) {
-            console.error('[Cozinha] Erro ao cancelar pedido:', orderError);
+            console.error('[Cozinha] Erro ao cancelar pedido no Supabase:', orderError);
           }
 
-          console.log('[Cozinha] Pedido cancelado no Supabase:', orderId);
+          console.log('[Cozinha] Pedido cancelado com sucesso no Supabase:', orderId);
         }
       } catch (e) {
-        console.error('[Cozinha] Erro ao cancelar no Supabase:', e);
+        console.error('[Cozinha] Erro fatal ao cancelar no Supabase:', e);
       }
     })();
 
     // Update local state immediately for UI feedback
     startTransition(() => {
-      setOrders(orders.map(order =>
-        order.id === orderId
+      setOrders(prev => prev.map(order =>
+        String(order.id) === String(orderId)
           ? { ...order, status: 'CANCELLED', cancelReason: reason, updatedAt: new Date() }
           : order
       ));
