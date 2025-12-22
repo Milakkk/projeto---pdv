@@ -81,7 +81,11 @@ ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS operational_session_id UUID;
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS pin TEXT;
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS password TEXT;
 
--- 2. Criar índice para performance de sessão
+-- 2. Garantir tipos de dados corretos (caso colunas já existissem como INTEGER)
+ALTER TABLE public.orders ALTER COLUMN pin TYPE TEXT;
+ALTER TABLE public.orders ALTER COLUMN password TYPE TEXT;
+
+-- 3. Criar índice para performance de sessão
 CREATE INDEX IF NOT EXISTS idx_orders_operational_session_id ON public.orders(operational_session_id);
 
 -- ============================================
