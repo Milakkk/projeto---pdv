@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import OrderBoard from './components/OrderBoard';
 import OperatorManagementModal from './components/OperatorManagementModal';
 import KitchenSelectModal from './components/KitchenSelectModal';
-import AlertModal from '../../components/base/AlertModal';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import type { Order, KitchenOperator, Category, ProductionUnit, OperationalSession } from '../../types';
 import { useOffline } from '../../hooks/useOffline';
@@ -11,14 +10,12 @@ import Button from '../../components/base/Button';
 import { mockCategories } from '../../mocks/data';
 import { showSuccess } from '../../utils/toast';
 import ReadyOrderTable from './components/ReadyOrderTable';
-import { useAuth } from '../../context/AuthContext';
 import Modal from '../../components/base/Modal';
 import DeliveredOrderList from './components/DeliveredOrderList';
 import Icon from '../../ui/Icon';
 // Serviços offline (leitura do SQLite)
 import * as productsService from "../../offline/services/productsService";
 import * as kdsService from "../../offline/services/kdsService";
-import * as cashService from "../../offline/services/cashService";
 import { ensureDeviceProfile } from '@/offline/services/deviceProfileService'
 
 import OperationModeBadge from '@/components/OperationModeBadge'
@@ -39,7 +36,6 @@ const createProductionUnits = (quantity: number): ProductionUnit[] => {
 
 export default function CozinhaPage() {
   const { isOnline } = useOffline();
-  const { user, store } = useAuth();
   const navigate = useNavigate();
 
   // Seleção de cozinha e operador
@@ -57,7 +53,6 @@ export default function CozinhaPage() {
   const [categories, setCategories] = useLocalStorage<Category[]>('categories', mockCategories);
 
   const [operationalSession] = useLocalStorage<OperationalSession | null>('currentOperationalSession', null);
-  const [cashSession, setCashSession] = useLocalStorage<any>('currentCashSession', null);
 
   const [showOperatorModal, setShowOperatorModal] = useState(false);
   const [showOperatorViewModal, setShowOperatorViewModal] = useState(false);
@@ -68,9 +63,6 @@ export default function CozinhaPage() {
   const [showReadyModal, setShowReadyModal] = useState(false);
   const [showDeliveredModal, setShowDeliveredModal] = useState(false);
   const [showCanceledModal, setShowCanceledModal] = useState(false);
-
-  const [showAlertModal, setShowAlertModal] = useState(false);
-  const [alertModalMessage, setAlertModalMessage] = useState({ title: '', message: '', variant: 'error' as 'error' | 'info' | 'success' });
 
   const [showDeliveryConfirmation, setShowDeliveryConfirmation] = useState(false);
   const [orderToDeliver, setOrderToDeliver] = useState<Order | null>(null);
@@ -92,7 +84,7 @@ export default function CozinhaPage() {
     try { const raw = localStorage.getItem('kdsOrderDetails'); const map = raw ? JSON.parse(raw) : {}; map[id] = { ...(map[id] || {}), ...patch }; localStorage.setItem('kdsOrderDetails', JSON.stringify(map)) } catch { }
   }
 
-  const isOperationalSessionOpen = useMemo(() => !!operationalSession && operationalSession.status === 'OPEN', [operationalSession]);
+
 
   const statusRank = (s: Order['status']) => {
     if (s === 'DELIVERED' || s === 'CANCELLED') return 3
@@ -130,6 +122,7 @@ export default function CozinhaPage() {
 
       const createdAt = pickMinDate(prev?.createdAt, next.createdAt) ?? next.createdAt
       const updatedAt = pickMinDate(prev?.updatedAt, next.updatedAt)
+      const preparingStartedAt = pickMinDate(prev?.preparingStartedAt, next.preparingStartedAt)
       const readyAt = pickMinDate(prev?.readyAt, next.readyAt)
       const deliveredAt = pickMinDate(prev?.deliveredAt, next.deliveredAt)
 
@@ -173,13 +166,11 @@ export default function CozinhaPage() {
         return { ...it, productionUnits: mergedUnits }
       })
 
-      return { ...next, status, createdAt, updatedAt, readyAt, deliveredAt, pin, password, items: mergedItems }
+      return { ...next, status, createdAt, updatedAt, preparingStartedAt, readyAt, deliveredAt, pin, password, items: mergedItems }
     })
   }
 
-  const activeProductionOrders = useMemo(() => {
-    return orders.filter(order => ['NEW', 'PREPARING', 'READY'].includes(order.status));
-  }, [orders]);
+
 
   useEffect(() => {
     let mounted = true
@@ -662,10 +653,9 @@ export default function CozinhaPage() {
       try {
         try { await ensureDeviceProfile({ role: 'kds' }) } catch (e) { }
         await productsService.migrateLocalStorageCatalog()
-        const [ops, cats, sess] = await Promise.all([
+        const [ops, cats] = await Promise.all([
           kdsService.listOperators(),
           productsService.listCategories(),
-          cashService.getCurrentSession(),
         ]);
 
         if (!mounted) return;
@@ -679,9 +669,7 @@ export default function CozinhaPage() {
           startTransition(() => setCategories(mapped));
         }
 
-        if (sess) {
-          startTransition(() => setCashSession(sess));
-        }
+
       } catch (error) {
         console.warn('cozinha: carregamento inicial', error);
       }
@@ -689,7 +677,7 @@ export default function CozinhaPage() {
     return () => {
       mounted = false;
     };
-  }, [setOperators, setCategories, setCashSession]);
+  }, [setOperators, setCategories]);
 
   // Carregar tickets por status e atualizar orders (mantendo estrutura da UI)
   useEffect(() => {
@@ -709,7 +697,6 @@ export default function CozinhaPage() {
     }
     const fetchTickets = async () => {
       if (!mounted) return;
-      const startTime = performance.now();
       try {
         let gotTickets = false;
         const kitchenFilter = selectedKitchenId || undefined
@@ -889,6 +876,9 @@ export default function CozinhaPage() {
             deliveredAt: t.deliveredAt || t.delivered_at
           }
 
+          const ordPin = t.pin || t.order_pin || ordersMap[oid]?.pin || ''
+          const ordPassword = t.password || t.order_password || ordersMap[oid]?.password || ''
+
           let items: any[] = (itemsByOrder[oid] && itemsByOrder[oid].length > 0) ? itemsByOrder[oid] : (Array.isArray(t.items) ? t.items : [])
           const unitMap: Record<string, any> = unitMapByOrder[oid] || {}
 
@@ -936,11 +926,11 @@ export default function CozinhaPage() {
             }
           })
           const slaMinutes = Math.max(1, items.reduce((sum: number, it: any) => sum + (normalizeSla(it.menuItem?.sla ?? 15) * Math.max(1, Number(it.quantity ?? 1))), 0))
-          const details = getOrderDetails(String(t.order_id ?? t.orderId ?? t.id ?? ''))
+          // Removido getOrderDetails não confiável aqui, usando ordPin/ordPassword extraídos acima
           const ord: Order = {
             id: String(t.order_id ?? t.orderId ?? ''),
-            pin: String(t.pin ?? t.orderPin ?? details.pin ?? ''),
-            password: String(t.password ?? details.password ?? ''),
+            pin: String(ordPin),
+            password: String(ordPassword),
             status: mapStatus(String(t.status ?? 'NEW')),
             createdAt: t.createdAt
               ? new Date(t.createdAt)
@@ -955,6 +945,7 @@ export default function CozinhaPage() {
                       : (t.created_at ? new Date(t.created_at) : new Date()))))),
             updatedAt: times.preparingStart ? new Date(times.preparingStart) : (fallbackTimes.preparingStart ? new Date(fallbackTimes.preparingStart) : (t.updated_at ? new Date(t.updated_at) : (t.updatedAt ? new Date(t.updatedAt) : undefined))),
             readyAt: times.readyAt ? new Date(times.readyAt) : (fallbackTimes.readyAt ? new Date(fallbackTimes.readyAt) : (t.readyAt ? new Date(t.readyAt) : undefined)),
+            preparingStartedAt: times.preparingStart ? new Date(times.preparingStart) : (fallbackTimes.preparingStart ? new Date(fallbackTimes.preparingStart) : (t.updated_at ? new Date(t.updated_at) : (t.updatedAt ? new Date(t.updatedAt) : undefined))),
             deliveredAt: times.deliveredAt ? new Date(times.deliveredAt) : (fallbackTimes.deliveredAt ? new Date(fallbackTimes.deliveredAt) : (t.deliveredAt ? new Date(t.deliveredAt) : undefined)),
             items,
             slaMinutes,
@@ -1046,10 +1037,7 @@ export default function CozinhaPage() {
     previousOrdersRef.current = orders;
   }, [orders]); // Dependência apenas de orders para este efeito
 
-  const displayAlert = (title: string, message: string, variant: 'error' | 'info' | 'success' = 'error') => {
-    setAlertModalMessage({ title, message, variant });
-    setShowAlertModal(true);
-  };
+
 
   // Pré-marcar unidades já entregues (entrega direta) ao abrir confirmação
   useEffect(() => {
@@ -1121,9 +1109,10 @@ export default function CozinhaPage() {
               try {
                 const nowIso = new Date().toISOString();
                 const patch: any = {};
-                if (status === 'NEW') patch.newStart = nowIso;
-                if (status === 'PREPARING') patch.preparingStart = nowIso;
-                if (status === 'READY') patch.readyAt = nowIso;
+                if ((status as string) === 'NEW') patch.newStart = nowIso;
+                if ((status as string) === 'PREPARING') patch.preparingStart = nowIso;
+                if ((status as string) === 'READY') patch.readyAt = nowIso;
+                if ((status as string) === 'DELIVERED') patch.deliveredAt = nowIso;
 
                 await kdsService.setPhaseTime(orderId, patch);
 
@@ -1160,7 +1149,6 @@ export default function CozinhaPage() {
       if (String(order.id) === String(orderId)) {
         const now = new Date();
         let readyAt = order.readyAt;
-        let updatedAt = order.updatedAt;
 
         if (status === 'PREPARING' && (order.status === 'NEW')) {
           const updatedItems = (order.items || []).map(item => ({
@@ -1171,8 +1159,7 @@ export default function CozinhaPage() {
               completedAt: undefined,
             }))
           }));
-          updatedAt = now;
-          return { ...order, status, items: updatedItems, updatedAt, readyAt: undefined };
+          return { ...order, status, items: updatedItems, preparingStartedAt: now, readyAt: undefined };
         }
 
         if (status === 'READY' && order.status === 'PREPARING') {
@@ -1185,20 +1172,18 @@ export default function CozinhaPage() {
               completedAt: unit.unitStatus === 'READY' ? unit.completedAt : now,
             }))
           }));
-          return { ...order, status, items: updatedItems, updatedAt: order.updatedAt, readyAt };
+          return { ...order, status, items: updatedItems, readyAt };
         }
 
-        if (status === 'DELIVERED' && order.status === 'READY') {
-          // Não sobrescreva updatedAt (início do preparo); registre o tempo de entrega em deliveredAt
-          return { ...order, status, deliveredAt: now, updatedAt: order.updatedAt, readyAt };
+        if ((status as string) === 'DELIVERED' && order.status === 'READY') {
+          return { ...order, status: 'DELIVERED', deliveredAt: now };
         }
 
         if (status === 'PREPARING' && order.status === 'READY') {
-          readyAt = undefined;
-          return { ...order, status, updatedAt: order.updatedAt, readyAt: undefined };
+          return { ...order, status, readyAt: undefined };
         }
         if (status === 'NEW' && order.status === 'PREPARING') {
-          return { ...order, status, updatedAt: undefined, readyAt: undefined };
+          return { ...order, status, preparingStartedAt: undefined, readyAt: undefined };
         }
 
         return { ...order, status, updatedAt: now, readyAt };
@@ -1249,8 +1234,7 @@ export default function CozinhaPage() {
     startTransition(() => {
       setOrders(prevOrders => prevOrders.map(order => {
         if (order.id === orderToDeliver.id) {
-          // Preserve updatedAt como início do preparo; registre entrega em deliveredAt
-          return { ...order, status: 'DELIVERED', deliveredAt: new Date(), updatedAt: order.updatedAt };
+          return { ...order, status: 'DELIVERED', deliveredAt: new Date() };
         }
         return order;
       }));
@@ -1270,7 +1254,7 @@ export default function CozinhaPage() {
     startTransition(() => {
       setOrders(prevOrders => prevOrders.map(order => {
         if (order.id === orderId) {
-          return { ...order, status: 'DELIVERED', deliveredAt: new Date(), updatedAt: order.updatedAt };
+          return { ...order, status: 'DELIVERED', deliveredAt: new Date() };
         }
         return order;
       }));
@@ -1290,7 +1274,6 @@ export default function CozinhaPage() {
           const now = new Date();
           let newOrderStatus = order.status;
           let readyAt = order.readyAt;
-          let orderUpdated = false;
 
           const updatedItems = order.items.map(item => {
             if (item.id === itemId) {
@@ -1305,7 +1288,6 @@ export default function CozinhaPage() {
                   if (completedObservations !== undefined) {
                     updatedUnit.completedObservations = completedObservations;
                   }
-                  orderUpdated = true;
                   return updatedUnit;
                 }
                 return unit;
@@ -1319,28 +1301,29 @@ export default function CozinhaPage() {
             item.productionUnits.every(unit => unit.unitStatus === 'READY')
           );
 
-          if (order.status === 'NEW' && unitStatus === 'READY') {
-            newOrderStatus = 'PREPARING';
-            orderUpdated = true;
-          }
-
-          if (order.status === 'READY' && unitStatus === 'PENDING' && !allUnitsReady) {
+          if (allUnitsReady) {
+            newOrderStatus = 'READY';
+            readyAt = now;
+          } else if (order.status === 'READY' && unitStatus === 'PENDING' && !allUnitsReady) {
             newOrderStatus = 'PREPARING';
             readyAt = undefined;
-            orderUpdated = true;
+          } else if (order.status === 'NEW' && unitStatus === 'READY') {
+            newOrderStatus = 'PREPARING';
           }
 
-          let finalUpdatedAt = order.updatedAt;
-          if (newOrderStatus === 'PREPARING' && (order.status === 'NEW')) {
-            finalUpdatedAt = now;
+          let finalPreparingStartedAt = order.preparingStartedAt;
+          if ((newOrderStatus === 'PREPARING' || newOrderStatus === 'READY') && (order.status === 'NEW')) {
+            finalPreparingStartedAt = now;
+            // Persistir tempo de início do preparo via kdsService
+            kdsService.setPhaseTime(orderId, { preparingStart: now.toISOString() }).catch(() => { });
           }
 
           return {
             ...order,
             items: updatedItems,
             status: newOrderStatus,
-            updatedAt: order.status === 'NEW' && newOrderStatus === 'PREPARING' ? finalUpdatedAt : order.updatedAt,
-            readyAt: readyAt
+            preparingStartedAt: finalPreparingStartedAt,
+            readyAt,
           };
         }
         return order;
@@ -1375,7 +1358,6 @@ export default function CozinhaPage() {
     });
     try { kdsService.setUnitOperator(orderId, itemId, unitId, operatorName) } catch { }
   };
-
 
   const handleAssignOperatorToAll = (orderId: string, operatorName: string) => {
     startTransition(() => {
@@ -1444,15 +1426,11 @@ export default function CozinhaPage() {
     startTransition(() => {
       setOrders(prev => prev.map(order =>
         String(order.id) === String(orderId)
-          ? { ...order, status: 'CANCELLED', cancelReason: reason, updatedAt: new Date() }
+          ? { ...order, status: 'CANCELLED', cancelReason: reason }
           : order
       ));
     });
   };
-
-  const productionOrders = useMemo(() => {
-    return orders.filter(order => ['NEW', 'PREPARING'].includes(order.status));
-  }, [orders]);
 
   // Handler para seleção de cozinha
   const handleKitchenSelect = (kitchenId: string | null, kitchenName: string, operatorName: string) => {
@@ -1653,13 +1631,7 @@ export default function CozinhaPage() {
 
 
 
-        <AlertModal
-          isOpen={showAlertModal}
-          onClose={() => setShowAlertModal(false)}
-          title={alertModalMessage.title}
-          message={alertModalMessage.message}
-          variant={alertModalMessage.variant}
-        />
+
 
         {orderToDeliver && (
           <Modal

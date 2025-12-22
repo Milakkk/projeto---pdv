@@ -10,7 +10,7 @@ import { formatDurationSeconds, normalizeSlaMinutes } from '../../../utils/time'
 interface ReadyOrderTableProps {
   readyOrders: Order[];
   // Ação agora pode ser para marcar como entregue (embora o Caixa seja o principal) ou voltar
-  onUpdateStatus: (orderId: string, status: Order['status']) => void; 
+  onUpdateStatus: (orderId: string, status: Order['status']) => void;
   // NOVO: Persistir progresso de entrega direta por item
   onUpdateDirectDelivery: (orderId: string, updates: { itemId: string; deliveredCount: number }[]) => void;
   // NOVO: Confirmar entrega diretamente na Cozinha sem abrir checklist do Caixa
@@ -19,21 +19,21 @@ interface ReadyOrderTableProps {
 
 // Função auxiliar para extrair opções obrigatórias (agora com nome do grupo)
 const extractRequiredOptions = (observations: string | undefined): string[] => {
-    if (!observations) return [];
-    return observations
-        .split(', ')
-        .filter(p => p.startsWith('[OBRIGATÓRIO]'))
-        .map(p => p.replace('[OBRIGATÓRIO]', '').trim());
+  if (!observations) return [];
+  return observations
+    .split(', ')
+    .filter(p => p.startsWith('[OBRIGATÓRIO]'))
+    .map(p => p.replace('[OBRIGATÓRIO]', '').trim());
 };
 
 // Função auxiliar para extrair observações opcionais/customizadas
 const extractOptionalObservations = (observations: string | undefined): string[] => {
-    if (!observations) return [];
-    return observations
-        .split(', ')
-        .filter(p => !p.startsWith('[OBRIGATÓRIO]'))
-        .map(p => p.trim())
-        .filter(p => p.length > 0);
+  if (!observations) return [];
+  return observations
+    .split(', ')
+    .filter(p => !p.startsWith('[OBRIGATÓRIO]'))
+    .map(p => p.trim())
+    .filter(p => p.length > 0);
 };
 
 const formatOrderPin = (pin: string) => {
@@ -46,9 +46,9 @@ const formatOrderPin = (pin: string) => {
 function ReadyTimeStatus({ order }: { order: Order }) {
   // O timer deve medir o tempo desde que o status mudou para READY (usando readyAt ou updatedAt)
   const readyTime = order.readyAt ? new Date(order.readyAt) : (order.updatedAt ? new Date(order.updatedAt) : new Date(order.createdAt));
-  
+
   // O timer é sempre ativo para medir o tempo de espera
-  const { timeElapsed, formatTime } = useTimer(readyTime, 99999, true); 
+  const { timeElapsed, formatTime } = useTimer(readyTime, 99999, true);
 
   return (
     <div className="text-sm font-medium flex flex-col space-y-1">
@@ -63,29 +63,29 @@ function KitchenTimeStatus({ order }: { order: Order }) {
   const slaMinutes = normalizeSlaMinutes(order.slaMinutes, 15)
   const { totalTimeSeconds, wasLate, newTimeSeconds, preparingTimeSeconds } = useMemo(() => {
     const createdAt = new Date(order.createdAt).getTime();
-    
+
     // Tempo de saída de NEW (início do preparo)
-    const preparingStartTime = order.updatedAt && order.status !== 'NEW' 
-      ? new Date(order.updatedAt).getTime() 
-      : createdAt;
-      
+    const preparingStartTime = order.preparingStartedAt
+      ? new Date(order.preparingStartedAt).getTime()
+      : (order.updatedAt && order.status !== 'NEW' ? new Date(order.updatedAt).getTime() : createdAt);
+
     // Tempo que ficou pronto (fim do preparo)
     // Usamos readyAt se existir, senão o tempo de início do preparo (se o pedido foi marcado como pronto imediatamente)
     const readyAtTime = order.readyAt ? new Date(order.readyAt).getTime() : preparingStartTime;
-      
+
     // 1. Tempo Cozinha (Total NEW + PREPARING)
     const totalTimeSeconds = Math.floor((readyAtTime - createdAt) / 1000);
     const wasLate = (totalTimeSeconds / 60) > slaMinutes;
-    
+
     // 2. Tempo de Espera (NEW)
     const newTimeSeconds = Math.floor((preparingStartTime - createdAt) / 1000);
-    
+
     // 3. Tempo de Preparo (PREPARING Time): Tempo Cozinha - Tempo de Espera
     const preparingTimeSeconds = totalTimeSeconds - newTimeSeconds;
-    
-    return { 
-      totalTimeSeconds: Math.max(0, totalTimeSeconds), 
-      wasLate, 
+
+    return {
+      totalTimeSeconds: Math.max(0, totalTimeSeconds),
+      wasLate,
       newTimeSeconds: Math.max(0, newTimeSeconds),
       preparingTimeSeconds: Math.max(0, preparingTimeSeconds),
     };
@@ -116,7 +116,7 @@ export default function ReadyOrderTable({ readyOrders, onUpdateStatus, onUpdateD
   const [pendingDeliverOrderId, setPendingDeliverOrderId] = useState<string | null>(null);
   const [checklistUnitChecks, setChecklistUnitChecks] = useState<Record<string, boolean>>({});
   const [lockedUnitKeys, setLockedUnitKeys] = useState<Record<string, boolean>>({});
-  
+
   // Ordenar pedidos prontos pelo tempo de espera (mais antigo primeiro)
   const sortedOrders = useMemo(() => {
     return [...readyOrders].sort((a, b) => {
@@ -183,7 +183,7 @@ export default function ReadyOrderTable({ readyOrders, onUpdateStatus, onUpdateD
                   return acc + deliveredPerItem;
                 }, 0);
                 const isPartiallyDelivered = deliveredUnitsSum > 0 && deliveredUnitsSum < totalUnitsSum;
-                
+
                 return (
                   <tr key={order.id} className="hover:bg-green-50/50">
                     <td className="px-4 py-4 align-top">
@@ -196,13 +196,13 @@ export default function ReadyOrderTable({ readyOrders, onUpdateStatus, onUpdateD
                         </div>
                       )}
                     </td>
-                    
+
                     <td className="px-4 py-4 align-top">
                       <div className="text-lg font-bold text-green-600">
                         {order.password}
                       </div>
                     </td>
-                    
+
                     <td className="px-4 py-4 align-top text-sm text-gray-900">
                       <div className="text-xs text-gray-600">
                         {readyTime.toLocaleDateString('pt-BR')}
@@ -211,11 +211,11 @@ export default function ReadyOrderTable({ readyOrders, onUpdateStatus, onUpdateD
                         {readyTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                       </div>
                     </td>
-                    
+
                     <td className="px-4 py-4 align-top">
                       <ReadyTimeStatus order={order} />
                     </td>
-                    
+
                     <td className="px-4 py-4 align-top">
                       <KitchenTimeStatus order={order} />
                     </td>
@@ -230,7 +230,7 @@ export default function ReadyOrderTable({ readyOrders, onUpdateStatus, onUpdateD
                             : Math.max(0, item.directDeliveredUnitCount || 0);
                           const totalUnitsForItem = Math.max(1, item.quantity * Math.max(1, item.menuItem.unitDeliveryCount || 1));
                           const isItemPartiallyDelivered = deliveredCountForItem > 0 && deliveredCountForItem < totalUnitsForItem;
-                          
+
                           return (
                             <div key={index} className="border border-gray-200 rounded-lg p-2 bg-white">
                               <div className="text-sm font-medium mb-1">
@@ -249,7 +249,7 @@ export default function ReadyOrderTable({ readyOrders, onUpdateStatus, onUpdateD
                                   </span>
                                 )}
                               </div>
-                              
+
                               {/* Opções Obrigatórias */}
                               {requiredOptions.length > 0 && (
                                 <div className="text-xs text-red-800 bg-red-50 border border-red-200 rounded p-1.5 flex items-start mb-2">
@@ -257,7 +257,7 @@ export default function ReadyOrderTable({ readyOrders, onUpdateStatus, onUpdateD
                                   <span className="flex-1 font-medium">Opções: {requiredOptions.join(' | ')}</span>
                                 </div>
                               )}
-                              
+
                               {/* Observações Opcionais/Customizadas */}
                               {optionalObservations.length > 0 && (
                                 <div className="text-xs text-yellow-800 bg-yellow-50 border border-yellow-200 rounded p-1.5 flex items-start mb-2">
@@ -265,74 +265,74 @@ export default function ReadyOrderTable({ readyOrders, onUpdateStatus, onUpdateD
                                   <span className="flex-1">Obs: {optionalObservations.join(' | ')}</span>
                                 </div>
                               )}
-                              
+
                               {/* Detalhes de Produção por Unidade */}
                               {true && (
-                              <div className="space-y-1">
-                                {((item.productionUnits && item.productionUnits.length > 0) ? item.productionUnits : Array.from({ length: totalUnitsForItem }).map((_, idx) => ({ unitId: `direct-${idx}`, completedAt: undefined, operatorName: undefined, unitStatus: undefined as any }))).map((unit: any, unitIndex: number) => {
-                                  const unitOperator = unit.operatorName;
-                                  // CORREÇÃO: Usar unit.completedAt se existir, senão N/A
-                                  const completionTime = unit.completedAt
-                                    ? new Date(unit.completedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-                                    : 'N/A';
-                                  // Indicação de entrega por unidade: usar timestamp por índice quando existir; senão, entregue quando o pedido estiver DELIVERED
-                                  const deliveredTimesArr = item.directDeliveredUnitTimes || [];
-                                  const isUnitDelivered = !!unit.deliveredAt || !!deliveredTimesArr[unitIndex] || (order.status === 'DELIVERED');
-                                  // Exibir horário de entrega:
-                                  // - Entrega direta: quando a unidade está entregue, usar timestamp por unidade ou fallback do pedido
-                                  // - Itens de cozinha: quando o pedido inteiro está entregue, usar order.deliveredAt
-                                  const shouldShowDeliveredTime = isUnitDelivered;
-                                  const deliveredDate = shouldShowDeliveredTime
-                                    ? (unit.deliveredAt ? new Date(unit.deliveredAt) : (deliveredTimesArr[unitIndex] || (order.status === 'DELIVERED' && order.deliveredAt ? new Date(order.deliveredAt) : undefined)))
-                                    : undefined;
-                                  const deliveredTime = deliveredDate
-                                    ? new Date(deliveredDate).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-                                    : undefined;
-                                  // Cor da bolinha para itens de entrega direta
-                                  const directDotColor = item.skipKitchen ? (isUnitDelivered ? 'bg-green-500' : 'bg-amber-500') : '';
-                                  
-                                return (
-                                    <div key={unit.unitId} className="flex justify-between text-xs text-gray-600">
-                                      <div className="flex items-center space-x-1">
-                                        {item.skipKitchen && (
-                                          <span className={`w-2 h-2 rounded-full ${directDotColor}`}></span>
-                                        )}
-                                        <span className="font-medium">Unidade {item.quantity === 1 ? '' : unitIndex + 1}</span>
-                                        {unitOperator && (
-                                          <span className="text-blue-600 bg-blue-50 px-1 rounded">
-                                            {unitOperator}
-                                          </span>
-                                        )}
-                                        {isUnitDelivered && (
-                                          <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-green-100 text-green-800 border border-green-200">
-                                            <i className="ri-check-line mr-1"></i>
-                                            entregue
-                                          </span>
-                                        )}
+                                <div className="space-y-1">
+                                  {((item.productionUnits && item.productionUnits.length > 0) ? item.productionUnits : Array.from({ length: totalUnitsForItem }).map((_, idx) => ({ unitId: `direct-${idx}`, completedAt: undefined, operatorName: undefined, unitStatus: undefined as any }))).map((unit: any, unitIndex: number) => {
+                                    const unitOperator = unit.operatorName;
+                                    // CORREÇÃO: Usar unit.completedAt se existir, senão N/A
+                                    const completionTime = unit.completedAt
+                                      ? new Date(unit.completedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+                                      : 'N/A';
+                                    // Indicação de entrega por unidade: usar timestamp por índice quando existir; senão, entregue quando o pedido estiver DELIVERED
+                                    const deliveredTimesArr = item.directDeliveredUnitTimes || [];
+                                    const isUnitDelivered = !!unit.deliveredAt || !!deliveredTimesArr[unitIndex] || (order.status === 'DELIVERED');
+                                    // Exibir horário de entrega:
+                                    // - Entrega direta: quando a unidade está entregue, usar timestamp por unidade ou fallback do pedido
+                                    // - Itens de cozinha: quando o pedido inteiro está entregue, usar order.deliveredAt
+                                    const shouldShowDeliveredTime = isUnitDelivered;
+                                    const deliveredDate = shouldShowDeliveredTime
+                                      ? (unit.deliveredAt ? new Date(unit.deliveredAt) : (deliveredTimesArr[unitIndex] || (order.status === 'DELIVERED' && order.deliveredAt ? new Date(order.deliveredAt) : undefined)))
+                                      : undefined;
+                                    const deliveredTime = deliveredDate
+                                      ? new Date(deliveredDate).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+                                      : undefined;
+                                    // Cor da bolinha para itens de entrega direta
+                                    const directDotColor = item.skipKitchen ? (isUnitDelivered ? 'bg-green-500' : 'bg-amber-500') : '';
+
+                                    return (
+                                      <div key={unit.unitId} className="flex justify-between text-xs text-gray-600">
+                                        <div className="flex items-center space-x-1">
+                                          {item.skipKitchen && (
+                                            <span className={`w-2 h-2 rounded-full ${directDotColor}`}></span>
+                                          )}
+                                          <span className="font-medium">Unidade {item.quantity === 1 ? '' : unitIndex + 1}</span>
+                                          {unitOperator && (
+                                            <span className="text-blue-600 bg-blue-50 px-1 rounded">
+                                              {unitOperator}
+                                            </span>
+                                          )}
+                                          {isUnitDelivered && (
+                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-green-100 text-green-800 border border-green-200">
+                                              <i className="ri-check-line mr-1"></i>
+                                              entregue
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="flex items-center space-x-4">
+                                          {!item.skipKitchen && (
+                                            <span className="text-green-700 font-medium">
+                                              Pronto às {completionTime}
+                                            </span>
+                                          )}
+                                          {deliveredTime && (
+                                            <span className="text-gray-700 font-medium">
+                                              Entregue às {deliveredTime}
+                                            </span>
+                                          )}
+                                        </div>
                                       </div>
-                                      <div className="flex items-center space-x-4">
-                                        {!item.skipKitchen && (
-                                          <span className="text-green-700 font-medium">
-                                            Pronto às {completionTime}
-                                          </span>
-                                        )}
-                                        {deliveredTime && (
-                                          <span className="text-gray-700 font-medium">
-                                            Entregue às {deliveredTime}
-                                          </span>
-                                        )}
-                                      </div>
-                                    </div>
-                                );
-                                })}
-                              </div>
+                                    );
+                                  })}
+                                </div>
                               )}
                             </div>
                           );
                         })}
                       </div>
                     </td>
-                    
+
                     <td className="px-4 py-4 align-top space-y-2">
                       <Button
                         size="sm"
