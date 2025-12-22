@@ -55,13 +55,13 @@ const formatOrderPin = (pin: string) => {
   return `#${raw.replace(/^#+/, '')}`
 }
 
-function OrderCardComponent({ 
-  order, 
-  operators, 
+function OrderCardComponent({
+  order,
+  operators,
   categories,
-  onUpdateStatus, 
-  onCancelOrder, 
-  onAssignOperator, 
+  onUpdateStatus,
+  onCancelOrder,
+  onAssignOperator,
   onAssignOperatorToAll,
   onUpdateItemStatus
 }: OrderCardProps) {
@@ -71,8 +71,8 @@ function OrderCardComponent({
   const [cancelError, setCancelError] = useState('');
   const [showAssignOperatorAlert, setShowAssignOperatorAlert] = useState(false);
   const [alertModalMessage, setAlertModalMessage] = useState('');
-  
-  const [isCollapsed, setIsCollapsed] = useState(() => ['NEW', 'READY'].includes(order.status)); 
+
+  const [isCollapsed, setIsCollapsed] = useState(() => ['NEW', 'READY'].includes(order.status));
   const expandedItemsRef = useRef<Record<string, boolean>>({});
   const [forceUpdate, setForceUpdate] = useState(false);
   // Botão para alternar exibição de itens de entrega direta
@@ -105,7 +105,7 @@ function OrderCardComponent({
     };
     setForceUpdate(prev => !prev); // Força a re-renderização
   };
-  
+
   const isTimerActive = order.status === 'NEW' || order.status === 'PREPARING';
   const { timeElapsed, isOverdue, formatTime } = useTimer(order.createdAt, order.slaMinutes, isTimerActive);
 
@@ -115,10 +115,10 @@ function OrderCardComponent({
       return map;
     }, {} as Record<string, string>);
   }, [categories]);
-  
+
   // Considerar somente itens que passam pela cozinha
   const kitchenItems = useMemo(() => order.items.filter(item => !item.skipKitchen), [order.items]);
-  
+
   // NOVO: Itens de entrega direta (não passam pela cozinha)
   const directItems = useMemo(() => {
     return order.items.filter(item => item.skipKitchen || item.menuItem?.skipKitchen);
@@ -145,7 +145,7 @@ function OrderCardComponent({
 
   useEffect(() => {
     if (operators.length === 1 && ['NEW'].includes(order.status)) {
-      const needsAssignment = kitchenItems.some(item => 
+      const needsAssignment = kitchenItems.some(item =>
         (item.productionUnits || []).some(unit => !unit.operatorName)
       );
       if (needsAssignment) {
@@ -153,11 +153,11 @@ function OrderCardComponent({
       }
     }
   }, [order.id, order.status, operators, kitchenItems, onAssignOperatorToAll]);
-  
+
   const getNextStatus = (currentStatus: Order['status']): Order['status'] | null => {
     switch (currentStatus) {
       case 'NEW': return 'PREPARING';
-      case 'PREPARING': return 'READY'; 
+      case 'PREPARING': return 'READY';
       case 'READY': return 'DELIVERED';
       default: return null;
     }
@@ -179,12 +179,12 @@ function OrderCardComponent({
     if (s === 'READY') return 'Entregue';
     return null;
   };
-  
+
   const getActionVariant = (status: Order['status']): 'info' | 'primary' | 'success' => {
     switch (status) {
-      case 'NEW': return 'info'; 
-      case 'PREPARING': return 'success'; 
-      case 'READY': return 'success'; 
+      case 'NEW': return 'info';
+      case 'PREPARING': return 'success';
+      case 'READY': return 'success';
       default: return 'primary';
     }
   };
@@ -197,15 +197,15 @@ function OrderCardComponent({
       default: return null;
     }
   };
-  
+
   const isOrderReadyForNextStep = useMemo(() => {
-    return kitchenItems.every(item => 
+    return kitchenItems.every(item =>
       (item.productionUnits || []).every(unit => {
-          const isReady = unit.unitStatus === 'READY';
-          const allChecklistItems = getAllChecklistItems(item.observations);
-          const allChecklistCompleted = allChecklistItems.length === 0 || 
-            (unit.completedObservations && unit.completedObservations.length === allChecklistItems.length);
-          return isReady && allChecklistCompleted;
+        const isReady = unit.unitStatus === 'READY';
+        const allChecklistItems = getAllChecklistItems(item.observations);
+        const allChecklistCompleted = allChecklistItems.length === 0 ||
+          (unit.completedObservations && unit.completedObservations.length === allChecklistItems.length);
+        return isReady && allChecklistCompleted;
       })
     );
   }, [kitchenItems]);
@@ -245,7 +245,7 @@ function OrderCardComponent({
     }
     onUpdateStatus(order.id, nextStatus);
   };
-  
+
   const handleUnitReadyToggle = (e: React.MouseEvent, itemId: string, unitId: string, isReady: boolean) => {
     e.stopPropagation();
     const newStatus = isReady ? 'READY' : 'PENDING';
@@ -253,7 +253,7 @@ function OrderCardComponent({
     const unit = item?.productionUnits.find(u => u.unitId === unitId);
     if (isReady) {
       const allChecklistItems = getAllChecklistItems(item?.observations);
-      const allChecklistCompleted = allChecklistItems.length === 0 || 
+      const allChecklistCompleted = allChecklistItems.length === 0 ||
         (unit?.completedObservations && unit.completedObservations.length === allChecklistItems.length);
       if (allChecklistItems.length > 0 && !allChecklistCompleted) {
         setAlertModalMessage('Complete todos os itens do checklist (opções obrigatórias e observações) antes de marcar a unidade como pronta.');
@@ -264,7 +264,7 @@ function OrderCardComponent({
     const completedObservations = isReady ? unit?.completedObservations : [];
     onUpdateItemStatus(order.id, itemId, unitId, newStatus, completedObservations);
   };
-  
+
   const handleObservationToggle = (e: React.ChangeEvent<HTMLInputElement>, itemId: string, unitId: string, observationLabel: string, isChecked: boolean) => {
     e.stopPropagation();
     if (order.status !== 'PREPARING') return;
@@ -316,7 +316,7 @@ function OrderCardComponent({
     const mins = minutes % 60;
     return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
   };
-  
+
   const { totalTimeSeconds, wasLate } = calculateProductionTimeStatus(order);
   const timeToDisplay = order.status === 'READY' || order.status === 'DELIVERED' ? formatTime(totalTimeSeconds) : formatTime(timeElapsed);
   const isCurrentlyOverdue = order.status === 'READY' || order.status === 'DELIVERED' ? wasLate : isOverdue;
@@ -326,20 +326,19 @@ function OrderCardComponent({
   const showPreviousButton = getPreviousStatus(order.status) && order.status !== 'PREPARING' && order.status !== 'READY';
   const isPreparingStatus = order.status === 'PREPARING';
   const showUnitReadyButton = isPreparingStatus;
-  const isOperatorAssignmentDisabled = !['NEW'].includes(order.status); 
+  const isOperatorAssignmentDisabled = !['NEW'].includes(order.status);
   const isChecklistDisabled = !isPreparingStatus;
   const hasObservations = kitchenItems.some(item => item.observations);
   const isOrderReadyForNextStepStatus = isOrderReadyForNextStep;
 
   return (
     <>
-      <div className={`bg-white rounded-lg border-2 p-4 shadow-sm transition-all ${
-       isCurrentlyOverdue && ['NEW', 'PREPARING'].includes(order.status)
-          ? 'border-red-500 bg-red-50 shadow-lg ring-2 ring-red-200 animate-pulse' 
+      <div className={`bg-white rounded-lg border-2 p-4 shadow-sm transition-all ${isCurrentlyOverdue && ['NEW', 'PREPARING'].includes(order.status)
+          ? 'border-red-500 bg-red-50 shadow-lg ring-2 ring-red-200 animate-pulse'
           : 'border-gray-200'
-      }`}>
-        <div 
-          className="cursor-pointer pb-3" 
+        }`}>
+        <div
+          className="cursor-pointer pb-3"
           onClick={() => setIsCollapsed(prev => !prev)}
         >
           <div className="flex items-center justify-between mb-2">
@@ -395,15 +394,14 @@ function OrderCardComponent({
               )}
             </div>
             {['NEW', 'PREPARING', 'READY'].includes(order.status) && (
-              <span className={`text-white text-xs font-bold px-2.5 py-1 rounded-full flex-shrink-0 ${
-                isCurrentlyOverdue ? 'bg-red-600' : 'bg-green-600'
-              }`}>
+              <span className={`text-white text-xs font-bold px-2.5 py-1 rounded-full flex-shrink-0 ${isCurrentlyOverdue ? 'bg-red-600' : 'bg-green-600'
+                }`}>
                 {isCurrentlyOverdue ? 'ATRASADO' : 'NO PRAZO'}
               </span>
             )}
           </div>
         </div>
-        
+
         {!isCollapsed && (
           <div className="pt-3 border-t border-gray-200">
             {operators.length > 0 && !isOperatorAssignmentDisabled && (
@@ -415,11 +413,10 @@ function OrderCardComponent({
                       key={op.id}
                       size="md"
                       variant={allUnitsOperator === op.name ? 'primary' : 'secondary'}
-                      className={`text-sm px-3 py-1.5 ${
-                        allUnitsOperator === op.name 
+                      className={`text-sm px-3 py-1.5 ${allUnitsOperator === op.name
                           ? '!bg-amber-500 !text-white !font-semibold hover:!bg-amber-600'
                           : ''
-                      }`}
+                        }`}
                       onClick={(e) => {
                         e.stopPropagation();
                         const newOperatorName = allUnitsOperator === op.name ? '' : op.name;
@@ -448,46 +445,45 @@ function OrderCardComponent({
                 const optionalObservations = extractOptionalObservations(item.observations);
                 const hasObservationsItem = requiredOptions.length > 0 || optionalObservations.length > 0;
                 const allChecklistItems = getAllChecklistItems(item.observations);
-                
-              return (
-                <div key={item.id} className={`border-l-4 pl-3 p-2 rounded-r-lg transition-colors border-amber-400`}>
-                  <div 
-                    className={`font-medium flex items-center justify-between cursor-pointer p-2 rounded-lg border transition-colors text-white ${
-                      ['NEW'].includes(order.status)
-                        ? (assignedUnits === totalUnits ? 'bg-blue-500 hover:bg-blue-600 border-blue-500' : 'bg-gray-500 hover:bg-gray-600 border-gray-500')
-                        : (isItemReady ? 'bg-green-500 hover:bg-green-600 border-green-500' : 'bg-amber-500 hover:bg-amber-600 border-amber-500')
-                    }`}
-                    onClick={() => toggleItemCollapse(item.id)} // Corrigido para expandir/recolher o item
-                  >
-                    <div className="flex-1 min-w-0 pr-2 flex items-center">
-                      <span className="mx-1 text-amber-100 text-xs font-normal">[{categoryName}]</span>
-                      <span className="text-sm">{item.menuItem.name}</span>
-                      <span className="text-xs text-amber-100 ml-2">({item.quantity} {item.quantity === 1 ? 'unid.' : 'unid.'})</span>
-                      {/* Ícone de entrega direta por item removido conforme solicitação */}
-                      {['NEW'].includes(order.status) ? (
-                        assignedUnits === totalUnits ? (
-                          <i className="ri-user-check-line text-white ml-3 text-base" title="Todas as unidades atribuídas"></i>
+
+                return (
+                  <div key={item.id} className={`border-l-4 pl-3 p-2 rounded-r-lg transition-colors border-amber-400`}>
+                    <div
+                      className={`font-medium flex items-center justify-between cursor-pointer p-2 rounded-lg border transition-colors text-white ${['NEW'].includes(order.status)
+                          ? (assignedUnits === totalUnits ? 'bg-blue-500 hover:bg-blue-600 border-blue-500' : 'bg-gray-500 hover:bg-gray-600 border-gray-500')
+                          : (isItemReady ? 'bg-green-500 hover:bg-green-600 border-green-500' : 'bg-amber-500 hover:bg-amber-600 border-amber-500')
+                        }`}
+                      onClick={() => toggleItemCollapse(item.id)} // Corrigido para expandir/recolher o item
+                    >
+                      <div className="flex-1 min-w-0 pr-2 flex items-center">
+                        <span className="mx-1 text-amber-100 text-xs font-normal">[{categoryName}]</span>
+                        <span className="text-sm">{item.menuItem.name}</span>
+                        <span className="text-xs text-amber-100 ml-2">({item.quantity} {item.quantity === 1 ? 'unid.' : 'unid.'})</span>
+                        {/* Ícone de entrega direta por item removido conforme solicitação */}
+                        {['NEW'].includes(order.status) ? (
+                          assignedUnits === totalUnits ? (
+                            <i className="ri-user-check-line text-white ml-3 text-base" title="Todas as unidades atribuídas"></i>
+                          ) : (
+                            <span className="text-xs font-bold bg-white text-gray-600 px-2 py-0.5 rounded-full ml-3 flex-shrink-0">
+                              {assignedPendingUnits} PENDENTE{assignedPendingUnits > 1 ? 'S' : ''}
+                            </span>
+                          )
                         ) : (
-                          <span className="text-xs font-bold bg-white text-gray-600 px-2 py-0.5 rounded-full ml-3 flex-shrink-0">
-                            {assignedPendingUnits} PENDENTE{assignedPendingUnits > 1 ? 'S' : ''}
-                          </span>
-                        )
-                      ) : (
-                        isItemReady ? (
-                          <i className="ri-check-double-line text-white ml-3 text-base" title="Todas as unidades prontas"></i>
-                        ) : (
-                          <span className="text-xs font-bold bg-white text-amber-600 px-2 py-0.5 rounded-full ml-3 flex-shrink-0">
-                            {pendingUnits} PENDENTE{pendingUnits > 1 ? 'S' : ''}
-                          </span>
-                        )
-                      )}
-                      {!isItemExpanded && hasObservationsItem && (
-                        <i className="ri-alert-line text-white ml-2 text-base"></i>
-                      )}
+                          isItemReady ? (
+                            <i className="ri-check-double-line text-white ml-3 text-base" title="Todas as unidades prontas"></i>
+                          ) : (
+                            <span className="text-xs font-bold bg-white text-amber-600 px-2 py-0.5 rounded-full ml-3 flex-shrink-0">
+                              {pendingUnits} PENDENTE{pendingUnits > 1 ? 'S' : ''}
+                            </span>
+                          )
+                        )}
+                        {!isItemExpanded && hasObservationsItem && (
+                          <i className="ri-alert-line text-white ml-2 text-base"></i>
+                        )}
+                      </div>
+                      <i className={`ri-arrow-${isItemExpanded ? 'up' : 'down'}-s-line text-xl text-white flex-shrink-0`}></i> {/* Seta dinâmica */}
                     </div>
-                    <i className={`ri-arrow-${isItemExpanded ? 'up' : 'down'}-s-line text-xl text-white flex-shrink-0`}></i> {/* Seta dinâmica */}
-                  </div>
-                    
+
                     {isItemExpanded && requiredOptions.length > 0 && (
                       <div className="mt-2 bg-red-100 border border-red-300 rounded-lg p-3">
                         <div className="flex items-start space-x-2">
@@ -507,7 +503,7 @@ function OrderCardComponent({
                         </div>
                       </div>
                     )}
-                    
+
                     {isItemExpanded && optionalObservations.length > 0 && (
                       <div className="mt-2 bg-yellow-100 border border-yellow-300 rounded-lg p-3">
                         <div className="flex items-start space-x-2">
@@ -527,7 +523,7 @@ function OrderCardComponent({
                         </div>
                       </div>
                     )}
-                    
+
                     {isItemExpanded && (
                       <div className="mt-3 space-y-2 border-t pt-3">
                         {!isSingleUnit && <h5 className="text-xs font-medium text-gray-700 mb-2">Rastreamento por Unidade:</h5>}
@@ -535,7 +531,7 @@ function OrderCardComponent({
                           const isUnitReady = unit.unitStatus === 'READY';
                           const unitOperator = unit.operatorName;
                           const allChecklistItemsUnit = getAllChecklistItems(item.observations);
-                          const allChecklistCompleted = allChecklistItemsUnit.length === 0 || 
+                          const allChecklistCompleted = allChecklistItemsUnit.length === 0 ||
                             (unit.completedObservations && unit.completedObservations.length === allChecklistItemsUnit.length);
                           const disableReadyButton = !isUnitReady && allChecklistItemsUnit.length > 0 && !allChecklistCompleted;
 
@@ -543,7 +539,7 @@ function OrderCardComponent({
                             <div key={unit.unitId} className={`p-2 rounded-lg border transition-colors ${isUnitReady ? 'bg-green-100 border-green-300' : 'bg-gray-50 border-gray-200'}`}>
                               <div className="flex items-center justify-between">
                                 <span className="text-sm font-medium text-gray-700">
-                                  Unidade {isSingleUnit ? 'Única' : unitIndex + 1}: 
+                                  Unidade {isSingleUnit ? 'Única' : unitIndex + 1}:
                                   <span className={`ml-1 font-bold ${isUnitReady ? 'text-green-700' : 'text-gray-700'}`}>
                                     {isUnitReady ? 'Pronto' : 'Pendente'}
                                   </span>
@@ -562,7 +558,7 @@ function OrderCardComponent({
                                   </Button>
                                 )}
                               </div>
-                              
+
                               {allChecklistItemsUnit.length > 0 && (
                                 <div className="mt-3 pt-2 border-t border-gray-200 space-y-1">
                                   <h6 className="text-xs font-medium text-gray-700 mb-2">Checklist de Conferência:</h6>
@@ -585,7 +581,7 @@ function OrderCardComponent({
                                   })}
                                 </div>
                               )}
-                              
+
                               <div className="mt-2 flex items-center space-x-2">
                                 <i className="ri-user-line text-gray-500 flex-shrink-0"></i>
                                 {isOperatorAssignmentDisabled ? (
@@ -604,16 +600,15 @@ function OrderCardComponent({
                                           key={op.id}
                                           type="button"
                                           onClick={(e) => {
-                                          e.stopPropagation();
-                                          if (!['NEW'].includes(order.status)) return;
-                                          const newOperatorName = unitOperator === op.name ? '' : op.name;
-                                          onAssignOperator(order.id, item.id, unit.unitId, newOperatorName);
-                                        }}
-                                          className={`px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap pointer-events-auto ${
-                                            unitOperator === op.name
+                                            e.stopPropagation();
+                                            if (!['NEW'].includes(order.status)) return;
+                                            const newOperatorName = unitOperator === op.name ? '' : op.name;
+                                            onAssignOperator(order.id, item.id, unit.unitId, newOperatorName);
+                                          }}
+                                          className={`px-2 py-1 text-xs rounded-md transition-colors whitespace-nowrap pointer-events-auto ${unitOperator === op.name
                                               ? 'bg-amber-300 !text-amber-900 !font-semibold hover:!bg-amber-400'
                                               : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                                          }`}
+                                            }`}
                                         >
                                           {op.name}
                                         </button>
@@ -624,8 +619,8 @@ function OrderCardComponent({
                                   )
                                 )}
                               </div>
-                              
-                              {unit.completedAt && (
+
+                              {unit.completedAt && unit.unitStatus === 'READY' && (
                                 <div className="mt-2 text-xs text-green-700 font-medium">
                                   Concluído às: {new Date(unit.completedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                                 </div>
@@ -755,7 +750,7 @@ function OrderCardComponent({
           <p className="text-sm text-gray-600">
             Tem certeza que deseja cancelar o pedido {formatOrderPin(order.pin)}?
           </p>
-          
+
           <Input
             label="Motivo do cancelamento *"
             value={cancelReason}

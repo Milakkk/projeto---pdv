@@ -384,7 +384,7 @@ export async function loadUnitStatesForOrder(orderId: string): Promise<Record<st
           operatorName: r.operator_name ?? undefined,
           unitStatus: r.status || r.unit_status || undefined,
           completedObservations: (() => { try { const arr = JSON.parse(String(r.completed_observations_json ?? 'null')); return Array.isArray(arr) ? arr : [] } catch { return [] } })(),
-          completedAt: r.completed_at || r.updated_at || undefined,
+          completedAt: r.completed_at || undefined,  // Removed updated_at fallback - was causing "Concluído às" on PENDING units
         }
       }
       return out

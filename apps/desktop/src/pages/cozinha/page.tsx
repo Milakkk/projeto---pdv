@@ -285,7 +285,7 @@ export default function CozinhaPage() {
                   }
                   if (ackEvents.length) {
                     const headers: Record<string, string> = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${secret}` }
-                    fetch(`${hubUrl.replace(/\/$/, '')}/push`, { method: 'POST', headers, body: JSON.stringify({ events: ackEvents }) }).catch(() => {})
+                    fetch(`${hubUrl.replace(/\/$/, '')}/push`, { method: 'POST', headers, body: JSON.stringify({ events: ackEvents }) }).catch(() => { })
                   }
                 } catch { }
                 startTransition(() => {
@@ -390,22 +390,22 @@ export default function CozinhaPage() {
               if (!ordId) continue
 
               const times = await kdsService.getPhaseTimes(ordId)
-              
+
               // Fetch order details (opened_at, etc)
               let orderData: any = null;
               const api = (window as any)?.api
-              
+
               if (api?.db) {
                 const res = await api.db.query('SELECT * FROM orders WHERE id = ?', [ordId]);
                 orderData = res?.rows?.[0];
               } else if (isOnline) {
-                 try {
-                   const { supabase } = await import('../../utils/supabase');
-                   if (supabase) {
-                     const { data } = await supabase.from('orders').select('*').eq('id', ordId).maybeSingle();
-                     orderData = data;
-                   }
-                 } catch {}
+                try {
+                  const { supabase } = await import('../../utils/supabase');
+                  if (supabase) {
+                    const { data } = await supabase.from('orders').select('*').eq('id', ordId).maybeSingle();
+                    orderData = data;
+                  }
+                } catch { }
               }
 
               const resItems = api?.db ? await api.db.query(
@@ -443,7 +443,7 @@ export default function CozinhaPage() {
                     // This matches the format we used when saving if we passed unitId correctly
                     const key = `${ordId}:${String(it.id)}:${u.unitId}`
                     const s = unitMap[key] || {}
-                    
+
                     return {
                       ...u,
                       operatorName: s.operatorName || u.operatorName,
@@ -746,7 +746,7 @@ export default function CozinhaPage() {
                 transferMsList.length > 0 ? Math.round(transferMsList.reduce((a, b) => a + b, 0) / transferMsList.length) : null
               console.log('[PDV->KDS] Confirmação de recebimento (KDS)', { count: toAck.length, kitchenId: kitchenFilter ?? null, avgTransferMs })
             }
-          } catch {}
+          } catch { }
         }
 
         if (!useSupabase) {
@@ -764,17 +764,17 @@ export default function CozinhaPage() {
         // [FIX] Fetch order timestamps from 'orders' table to prevent reset on reload
         const orderIds = tk.map((t: any) => String(t.order_id ?? t.orderId ?? '')).filter(id => id);
         let ordersMap: Record<string, any> = {};
-        
+
         if (useSupabase && orderIds.length > 0) {
-           try {
-             const { data } = await supabase
-               .from('orders')
-               .select('id, opened_at, created_at')
-               .in('id', orderIds);
-             if (data) {
-               ordersMap = data.reduce((acc: any, o: any) => ({ ...acc, [o.id]: o }), {});
-             }
-           } catch {}
+          try {
+            const { data } = await supabase
+              .from('orders')
+              .select('id, opened_at, created_at')
+              .in('id', orderIds);
+            if (data) {
+              ordersMap = data.reduce((acc: any, o: any) => ({ ...acc, [o.id]: o }), {});
+            }
+          } catch { }
         }
 
         const timesByOrder: Record<string, any> = {}
@@ -790,7 +790,7 @@ export default function CozinhaPage() {
                 deliveredAt: t.delivered_at ?? t.deliveredAt,
               }
             }
-          } catch {}
+          } catch { }
         }
 
         const unitMapByOrder: Record<string, Record<string, any>> = {}
@@ -816,7 +816,7 @@ export default function CozinhaPage() {
                   deliveredAt: r.delivered_at || undefined,
                 }
               }
-            } catch {}
+            } catch { }
           } else {
             for (const oid of orderIds) {
               try {
@@ -862,7 +862,7 @@ export default function CozinhaPage() {
                 })
               }
             }
-          } catch {}
+          } catch { }
         }
 
         const localPhaseTimes = (() => {
@@ -875,15 +875,15 @@ export default function CozinhaPage() {
         for (const t of tk as any[]) {
           const oid = String(t.order_id ?? t.orderId ?? '')
           const times = timesByOrder[oid] || localPhaseTimes[oid] || {}
-          
+
           // Fallback para tempos enriquecidos pelo kdsService (offline/local mode) ou propriedades do ticket
           const fallbackTimes = {
-             newStart: t.createdAt || t.created_at,
-             preparingStart: t.updatedAt || t.updated_at,
-             readyAt: t.readyAt || t.ready_at,
-             deliveredAt: t.deliveredAt || t.delivered_at
+            newStart: t.createdAt || t.created_at,
+            preparingStart: t.updatedAt || t.updated_at,
+            readyAt: t.readyAt || t.ready_at,
+            deliveredAt: t.deliveredAt || t.delivered_at
           }
-          
+
           let items: any[] = (itemsByOrder[oid] && itemsByOrder[oid].length > 0) ? itemsByOrder[oid] : (Array.isArray(t.items) ? t.items : [])
           const unitMap: Record<string, any> = unitMapByOrder[oid] || {}
 
@@ -902,18 +902,18 @@ export default function CozinhaPage() {
 
             // Merge with persisted state
             const mergedUnits = currentUnits.map((u: any) => {
-               // Use consistent key format: orderId:itemId:unitId
-               const key = `${oid}:${String(item.id)}:${u.unitId}`
-               const s = unitMap[key] || {}
-               return {
-                 ...u,
-                 unitId: u.unitId ?? `${String(item.id)}-1`, // Ensure unitId exists
-                 operatorName: s.operatorName || u.operatorName,
-                 unitStatus: (s.unitStatus || u.unitStatus || 'PENDING'),
-                 completedObservations: Array.isArray(s.completedObservations) ? s.completedObservations : (u.completedObservations || []),
-                 completedAt: s.completedAt ? new Date(s.completedAt) : (u.completedAt ? new Date(u.completedAt) : undefined),
-                 deliveredAt: s.deliveredAt ? new Date(s.deliveredAt) : (u.deliveredAt ? new Date(u.deliveredAt) : undefined),
-               }
+              // Use consistent key format: orderId:itemId:unitId
+              const key = `${oid}:${String(item.id)}:${u.unitId}`
+              const s = unitMap[key] || {}
+              return {
+                ...u,
+                unitId: u.unitId ?? `${String(item.id)}-1`, // Ensure unitId exists
+                operatorName: s.operatorName || u.operatorName,
+                unitStatus: (s.unitStatus || u.unitStatus || 'PENDING'),
+                completedObservations: Array.isArray(s.completedObservations) ? s.completedObservations : (u.completedObservations || []),
+                completedAt: s.completedAt ? new Date(s.completedAt) : (u.completedAt ? new Date(u.completedAt) : undefined),
+                deliveredAt: s.deliveredAt ? new Date(s.deliveredAt) : (u.deliveredAt ? new Date(u.deliveredAt) : undefined),
+              }
             })
 
             return {
@@ -980,7 +980,7 @@ export default function CozinhaPage() {
                 localStorage.setItem('kdsOrdersSnapshot', JSON.stringify(final))
                 localStorage.setItem('kdsOrdersSnapshotAt', new Date().toISOString())
               }
-            } catch {}
+            } catch { }
             return next
           })
         });
@@ -996,7 +996,7 @@ export default function CozinhaPage() {
               })
             }
           }
-        } catch {}
+        } catch { }
       }
     };
     fetchTickets();
@@ -1081,33 +1081,33 @@ export default function CozinhaPage() {
 
     pendingStatusRef.current[String(orderId)] = { status, until: Date.now() + 8000 }
 
-    // Atualiza status via serviço KDS PRIMEIRO, aguarda confirmação, depois atualiza UI
-    (async () => {
-      try {
-        // Correção CRÍTICA: NEW → new, PREPARING → prep, READY → ready, DELIVERED → done
-        const mapToKds = (s: Order['status']) => {
-          if (s === 'NEW') return 'new';
-          if (s === 'PREPARING') return 'prep';
-          if (s === 'READY') return 'ready';
-          if (s === 'DELIVERED') return 'done';
-          return 'new';
-        };
-        const ord = orders.find(o => o.id === orderId)
-        const tId = (ord as any)?.ticketId || orderId
-        
-        // Tenta usar Supabase diretamente se disponível (Web Mode)
-        if (isOnline) {
+      // Atualiza status via serviço KDS PRIMEIRO, aguarda confirmação, depois atualiza UI
+      (async () => {
+        try {
+          // Correção CRÍTICA: NEW → new, PREPARING → prep, READY → ready, DELIVERED → done
+          const mapToKds = (s: Order['status']) => {
+            if (s === 'NEW') return 'new';
+            if (s === 'PREPARING') return 'prep';
+            if (s === 'READY') return 'ready';
+            if (s === 'DELIVERED') return 'done';
+            return 'new';
+          };
+          const ord = orders.find(o => o.id === orderId)
+          const tId = (ord as any)?.ticketId || orderId
+
+          // Tenta usar Supabase diretamente se disponível (Web Mode)
+          if (isOnline) {
             const { supabase } = await import('../../utils/supabase');
             if (supabase) {
               // Fix: Supabase expects 'PREPARING', 'NEW', 'READY', 'DELIVERED' in kds_tickets
               // But mapToKds returns 'prep', 'queued', etc.
               // We should use the uppercase status for the DB value to match kdsService expectations.
-              const dbStatus = status; 
+              const dbStatus = status;
               const { error } = await supabase
                 .from('kds_tickets')
                 .update({ status: dbStatus, updated_at: new Date().toISOString() })
                 .eq('id', tId);
-                
+
               if (error) {
                 console.error('[Cozinha] Erro ao atualizar Supabase:', error);
                 // Fallback para kdsService se falhar (pode ser ticket não encontrado ou outra tabela)
@@ -1115,19 +1115,19 @@ export default function CozinhaPage() {
                 // Persistir timestamps de fase via kdsService (que trata SQLite, Supabase e LocalStorage)
                 try {
                   const nowIso = new Date().toISOString();
-                  const patch: any = { };
-          if (status === 'NEW') patch.newStart = nowIso;
-          if (status === 'PREPARING') patch.preparingStart = nowIso;
+                  const patch: any = {};
+                  if (status === 'NEW') patch.newStart = nowIso;
+                  if (status === 'PREPARING') patch.preparingStart = nowIso;
                   if (status === 'READY') patch.readyAt = nowIso;
                   if (status === 'DELIVERED') patch.deliveredAt = nowIso;
-                  
+
                   await kdsService.setPhaseTime(orderId, patch);
-                  
+
                   // Atualizar tabela de orders também (incluindo status e timestamps relevantes)
                   const orderUpdate: any = { status: status, updated_at: nowIso };
                   // Opcional: Se quiser salvar timestamps na tabela orders também (embora kds_phase_times seja a fonte da verdade para métricas)
                   // if (status === 'READY') orderUpdate.ready_at = nowIso; 
-                  
+
                   await supabase
                     .from('orders')
                     .update(orderUpdate)
@@ -1135,7 +1135,7 @@ export default function CozinhaPage() {
 
                   try {
                     await kdsService.setTicketStatus(String(tId), mapToKds(status));
-                  } catch {}
+                  } catch { }
 
                   return;
                 } catch (e) {
@@ -1143,63 +1143,63 @@ export default function CozinhaPage() {
                 }
               }
             }
-        }
+          }
 
-        await kdsService.setTicketStatus(String(tId), mapToKds(status));
-      } catch (error) {
-        console.error('[Cozinha] ERRO ao atualizar status:', error);
-      }
-    })();
+          await kdsService.setTicketStatus(String(tId), mapToKds(status));
+        } catch (error) {
+          console.error('[Cozinha] ERRO ao atualizar status:', error);
+        }
+      })();
 
     // Atualização local imediata para feedback instantâneo
     setOrders(prevOrders => prevOrders.map(order => {
       if (String(order.id) === String(orderId)) {
         const now = new Date();
-          let readyAt = order.readyAt;
-          let updatedAt = order.updatedAt;
+        let readyAt = order.readyAt;
+        let updatedAt = order.updatedAt;
 
-          if (status === 'PREPARING' && (order.status === 'NEW')) {
-            const updatedItems = (order.items || []).map(item => ({
-              ...item,
-              productionUnits: (item.productionUnits || []).map(unit => ({
-                ...unit,
-                unitStatus: unit.unitStatus || 'PENDING',
-                completedAt: undefined,
-              }))
-            }));
-            updatedAt = now;
-            return { ...order, status, items: updatedItems, updatedAt, readyAt: undefined };
-          }
-
-          if (status === 'READY' && order.status === 'PREPARING') {
-            readyAt = now;
-            const updatedItems = (order.items || []).map(item => ({
-              ...item,
-              productionUnits: (item.productionUnits || []).map(unit => ({
-                ...unit,
-                unitStatus: 'READY' as ProductionUnit['unitStatus'],
-                completedAt: unit.unitStatus === 'READY' ? unit.completedAt : now,
-              }))
-            }));
-            return { ...order, status, items: updatedItems, updatedAt: order.updatedAt, readyAt };
-          }
-
-          if (status === 'DELIVERED' && order.status === 'READY') {
-            // Não sobrescreva updatedAt (início do preparo); registre o tempo de entrega em deliveredAt
-            return { ...order, status, deliveredAt: now, updatedAt: order.updatedAt, readyAt };
-          }
-
-          if (status === 'PREPARING' && order.status === 'READY') {
-            readyAt = undefined;
-            return { ...order, status, updatedAt: order.updatedAt, readyAt: undefined };
-          }
-          if (status === 'NEW' && order.status === 'PREPARING') {
-            return { ...order, status, updatedAt: undefined, readyAt: undefined };
-          }
-
-          return { ...order, status, updatedAt: now, readyAt };
+        if (status === 'PREPARING' && (order.status === 'NEW')) {
+          const updatedItems = (order.items || []).map(item => ({
+            ...item,
+            productionUnits: (item.productionUnits || []).map(unit => ({
+              ...unit,
+              unitStatus: unit.unitStatus || 'PENDING',
+              completedAt: undefined,
+            }))
+          }));
+          updatedAt = now;
+          return { ...order, status, items: updatedItems, updatedAt, readyAt: undefined };
         }
-        return order;
+
+        if (status === 'READY' && order.status === 'PREPARING') {
+          readyAt = now;
+          const updatedItems = (order.items || []).map(item => ({
+            ...item,
+            productionUnits: (item.productionUnits || []).map(unit => ({
+              ...unit,
+              unitStatus: 'READY' as ProductionUnit['unitStatus'],
+              completedAt: unit.unitStatus === 'READY' ? unit.completedAt : now,
+            }))
+          }));
+          return { ...order, status, items: updatedItems, updatedAt: order.updatedAt, readyAt };
+        }
+
+        if (status === 'DELIVERED' && order.status === 'READY') {
+          // Não sobrescreva updatedAt (início do preparo); registre o tempo de entrega em deliveredAt
+          return { ...order, status, deliveredAt: now, updatedAt: order.updatedAt, readyAt };
+        }
+
+        if (status === 'PREPARING' && order.status === 'READY') {
+          readyAt = undefined;
+          return { ...order, status, updatedAt: order.updatedAt, readyAt: undefined };
+        }
+        if (status === 'NEW' && order.status === 'PREPARING') {
+          return { ...order, status, updatedAt: undefined, readyAt: undefined };
+        }
+
+        return { ...order, status, updatedAt: now, readyAt };
+      }
+      return order;
     }));
   };
 
@@ -1400,6 +1400,41 @@ export default function CozinhaPage() {
   };
 
   const cancelOrder = (orderId: string, reason: string) => {
+    // Persist to Supabase first
+    (async () => {
+      try {
+        const { supabase } = await import('../../utils/supabase');
+        if (supabase) {
+          const nowIso = new Date().toISOString();
+
+          // Update kds_tickets status to CANCELLED
+          const { error: ticketError } = await supabase
+            .from('kds_tickets')
+            .update({ status: 'CANCELLED', updated_at: nowIso })
+            .eq('order_id', orderId);
+
+          if (ticketError) {
+            console.error('[Cozinha] Erro ao cancelar ticket:', ticketError);
+          }
+
+          // Update orders table
+          const { error: orderError } = await supabase
+            .from('orders')
+            .update({ status: 'CANCELLED', updated_at: nowIso })
+            .eq('id', orderId);
+
+          if (orderError) {
+            console.error('[Cozinha] Erro ao cancelar pedido:', orderError);
+          }
+
+          console.log('[Cozinha] Pedido cancelado no Supabase:', orderId);
+        }
+      } catch (e) {
+        console.error('[Cozinha] Erro ao cancelar no Supabase:', e);
+      }
+    })();
+
+    // Update local state immediately for UI feedback
     startTransition(() => {
       setOrders(orders.map(order =>
         order.id === orderId
