@@ -23,6 +23,7 @@ import * as cashService from '../../offline/services/cashService';
 import * as ordersService from '../../offline/services/ordersService';
 import * as kdsService from '../../offline/services/kdsService';
 import * as stationsService from '../../offline/services/stationsService';
+import { uuid } from '../../utils/uuid';
 import { useOffline } from '../../hooks/useOffline';
 import Input from '../../components/base/Input';
 import Button from '../../components/base/Button';
@@ -1008,7 +1009,7 @@ export default function CaixaPage() {
     }
 
     const newSession: OperationalSession = {
-      id: Date.now().toString(),
+      id: uuid(),
       pin: generateSessionPin(sessionCounter),
       storeId: store.id,
       storeName: store.name,

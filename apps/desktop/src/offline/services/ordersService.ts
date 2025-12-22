@@ -1,6 +1,7 @@
 import { supabase } from '../../utils/supabase'
 import { supabaseSync } from '../../utils/supabaseSync'
 import { setPhaseTime } from './kdsService'
+import { uuid } from '../../utils/uuid'
 
 const query = async (sql: string, params?: any[]) => {
   const fn = (window as any)?.api?.db?.query
@@ -19,10 +20,7 @@ const query = async (sql: string, params?: any[]) => {
 
 type UUID = string
 
-const uuid = () =>
-  typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+// local uuid removed, now using shared utility
 
 async function scheduleTicketReceiptCheck(params: { orderId: UUID; ticketId: UUID; sentAtIso: string; kitchenId: string | null }) {
   if (!supabase) return
@@ -328,7 +326,8 @@ export async function closeOrder(orderId: UUID) {
         q.select('completed_at').eq('id', orderId).maybeSingle(),
         { silent: true }
       )
-      const completedAt = existing?.completed_at ?? now
+      const row = (existing as any)
+      const completedAt = row?.completed_at ?? now
       await supabaseSync.update('orders',
         { status: 'DELIVERED', completed_at: completedAt, updated_at: now },
         { id: orderId }
@@ -554,7 +553,7 @@ export async function listOrdersDetailed(limit = 100): Promise<Array<{ order: an
       if (unitId) q = q.eq('unit_id', unitId)
       const { data: ords, error: ordErr } = await q
       if (ordErr) throw ordErr
-      const ids = (ords || []).map(r => String(r.id))
+      const ids = (ords || []).map((r: any) => String(r.id))
       if (!ids.length) return []
 
       const { data: itemsData, error: itemsErr } = await supabase.from('order_items').select('id, order_id, product_id, product_name, quantity, unit_price_cents, total_cents').in('order_id', ids)
@@ -565,7 +564,7 @@ export async function listOrdersDetailed(limit = 100): Promise<Array<{ order: an
 
       const { data: timesData } = await supabase.from('kds_phase_times').select('*').in('order_id', ids)
 
-      const prodIds = Array.from(new Set((itemsData || []).map(it => String(it.product_id)).filter(id => id && id !== 'null' && id !== 'undefined')))
+      const prodIds = Array.from(new Set((itemsData || []).map((it: any) => String(it.product_id)).filter((id: any) => id && id !== 'null' && id !== 'undefined')))
       const { data: prods } = prodIds.length > 0 ? await supabase.from('products').select('id, category_id, name').in('id', prodIds) : { data: [] as any[] }
       const catByProd: Record<string, string | null> = {}
       for (const p of (prods || [])) catByProd[String(p.id)] = (p as any).category_id ?? null
@@ -595,7 +594,7 @@ export async function listOrdersDetailed(limit = 100): Promise<Array<{ order: an
         }
       }
 
-      return (ords || []).map(r => {
+      return (ords || []).map((r: any) => {
         const oid = String(r.id)
         const pt = timesByOrder[oid]
 

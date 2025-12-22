@@ -1,5 +1,6 @@
 import { supabase } from '../../utils/supabase'
 import { getCurrentUnitId } from './deviceProfileService'
+import { uuid } from '../../utils/uuid'
 
 // Renderer: usar IPC seguro exposto pelo preload
 const query = async (sql: string, params?: any[]) => {
@@ -19,10 +20,7 @@ const query = async (sql: string, params?: any[]) => {
 
 type UUID = string
 
-const uuid = () =>
-  typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+// local uuid removed, now using shared utility
 
 const lanHubUrl: string | undefined = (() => {
   const envUrl = (import.meta as any)?.env?.VITE_LAN_HUB_URL
@@ -39,7 +37,7 @@ async function pushLanEvents(events: any[]) {
   if (lastPushFailAt && nowMs - lastPushFailAt < 15000) return
   try {
     const unitDefault = 'default'
-    const enriched = (Array.isArray(events) ? events : []).map((e:any)=> ({ ...e, unit_id: e?.unit_id ?? unitDefault }))
+    const enriched = (Array.isArray(events) ? events : []).map((e: any) => ({ ...e, unit_id: e?.unit_id ?? unitDefault }))
     const headers: Record<string, string> = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${lanSecret}` }
     await fetch(`${lanHubUrl.replace(/\/$/, '')}/push`, {
       method: 'POST',
@@ -54,11 +52,11 @@ async function pushLanEvents(events: any[]) {
 export async function openSession(params: { openedBy?: string | null; openingAmountCents?: number }) {
   const id = uuid()
   const now = new Date().toISOString()
-  
+
   // Identifica Estação
   const stationId = localStorage.getItem('currentStationId')
   let operatorName = params.openedBy ?? null
-  
+
   if (stationId) {
     try {
       const unitId = await getCurrentUnitId()
@@ -66,14 +64,14 @@ export async function openSession(params: { openedBy?: string | null; openingAmo
         const raw = localStorage.getItem(`stations_${unitId}`)
         if (raw) {
           const stations = JSON.parse(raw)
-          const st = stations.find((s:any) => String(s.id) === String(stationId))
+          const st = stations.find((s: any) => String(s.id) === String(stationId))
           if (st) operatorName = `${operatorName || 'Operador'} (${st.name})`
         }
       }
-    } catch {}
+    } catch { }
     // Adiciona ID para filtro futuro (apenas se já não tiver sido formatado antes)
     if (!operatorName?.includes(`[${stationId}]`)) {
-       operatorName = `${operatorName || 'Operador'} [${stationId}]`
+      operatorName = `${operatorName || 'Operador'} [${stationId}]`
     }
   }
 
@@ -89,7 +87,7 @@ export async function openSession(params: { openedBy?: string | null; openingAmo
         pending_sync: false
       })
       if (error) throw error
-      
+
       const session = {
         id,
         opened_at: now,
@@ -145,14 +143,14 @@ function saveLocalStorageSession(id: string, now: string, params: any) {
       status: 'OPEN'
     }
     const sessions = JSON.parse(localStorage.getItem('cashSessions') || '[]')
-    localStorage.setItem('cashSessions', JSON.stringify([fallback, ...sessions.filter((s:any)=>s.id!==id)]))
+    localStorage.setItem('cashSessions', JSON.stringify([fallback, ...sessions.filter((s: any) => s.id !== id)]))
     localStorage.setItem('currentCashSession', JSON.stringify(fallback))
-  } catch {}
+  } catch { }
 }
 
 export async function closeSession(id: UUID, params?: { closedBy?: string | null; closingAmountCents?: number }) {
   const now = new Date().toISOString()
-  
+
   if (supabase) {
     try {
       const { error } = await supabase.from('cash_sessions').update({
@@ -163,7 +161,7 @@ export async function closeSession(id: UUID, params?: { closedBy?: string | null
         pending_sync: false
       }).eq('id', id)
       if (error) throw error
-      
+
       localStorage.removeItem('currentCashSession')
     } catch (e) {
       console.warn('[cashService] Falha ao fechar sessão no Supabase, tentando local:', e)
@@ -198,9 +196,9 @@ function updateLocalStorageClosure(id: string, now: string, params: any) {
       cur.status = 'CLOSED'
       localStorage.setItem('currentCashSession', JSON.stringify(cur)) // Mantém mas como fechado ou remove? Melhor remover ou marcar
       const sessions = JSON.parse(localStorage.getItem('cashSessions') || '[]')
-      localStorage.setItem('cashSessions', JSON.stringify([cur, ...sessions.filter((s:any)=>s.id!==id)]))
+      localStorage.setItem('cashSessions', JSON.stringify([cur, ...sessions.filter((s: any) => s.id !== id)]))
     }
-  } catch {}
+  } catch { }
 }
 
 export async function addMovement(params: {
@@ -211,7 +209,7 @@ export async function addMovement(params: {
 }) {
   const id = uuid()
   const now = new Date().toISOString()
-  
+
   if (supabase) {
     try {
       const { error } = await supabase.from('cash_movements').insert({
@@ -224,8 +222,8 @@ export async function addMovement(params: {
       })
       if (error) throw error
     } catch (e) {
-       console.warn('[cashService] Falha ao adicionar movimento no Supabase, tentando local:', e)
-       await addMovementLocal(id, now, params)
+      console.warn('[cashService] Falha ao adicionar movimento no Supabase, tentando local:', e)
+      await addMovementLocal(id, now, params)
     }
   } else {
     await addMovementLocal(id, now, params)
@@ -259,7 +257,7 @@ async function addMovementLocal(id: string, now: string, params: any) {
     const movs = JSON.parse(localStorage.getItem('cashMovements') || '[]')
     movs.push(mov)
     localStorage.setItem('cashMovements', JSON.stringify(movs))
-  } catch {}
+  } catch { }
 }
 
 export async function getCurrentSession() {
@@ -270,7 +268,7 @@ export async function getCurrentSession() {
         .select('*')
         .is('closed_at', null)
         .order('opened_at', { ascending: false })
-      
+
       const stationId = localStorage.getItem('currentStationId')
       if (stationId) {
         query = query.ilike('operator_name', `%[${stationId}]%`)
@@ -279,13 +277,13 @@ export async function getCurrentSession() {
       const { data, error } = await query
         .limit(1)
         .maybeSingle()
-      
+
       if (data) {
-        const session = { 
-          ...data, 
+        const session = {
+          ...data,
           opening_amount_cents: data.initial_amount_cents,
           opened_by: data.operator_name,
-          status: 'OPEN' 
+          status: 'OPEN'
         }
         localStorage.setItem('currentCashSession', JSON.stringify(session))
         return session
@@ -299,7 +297,7 @@ export async function getCurrentSession() {
     const raw = localStorage.getItem('currentCashSession')
     const cur = raw ? JSON.parse(raw) : null
     if (cur && !cur.closed_at) return cur
-  } catch {}
+  } catch { }
   return null
 }
 
@@ -311,12 +309,12 @@ export async function listSessions(limit = 50) {
         .select('*')
         .order('opened_at', { ascending: false })
         .limit(limit)
-      
+
       if (error) throw error
-      
+
       // Cache no localStorage e mapeamento
       if (data) {
-        const mapped = data.map((d:any) => ({
+        const mapped = data.map((d: any) => ({
           ...d,
           opening_amount_cents: d.initial_amount_cents,
           closing_amount_cents: d.final_amount_cents,
@@ -355,11 +353,11 @@ export async function listMovementsBySession(sessionId: UUID) {
         .from('cash_movements')
         .select('*')
         .eq('session_id', sessionId)
-      
+
       if (error) throw error
-      
+
       if (data) {
-        const mapped = data.map((d:any) => ({
+        const mapped = data.map((d: any) => ({
           ...d,
           reason: d.description
         }))
@@ -377,13 +375,13 @@ export async function listMovementsBySession(sessionId: UUID) {
     try {
       const raw = localStorage.getItem('cashMovements')
       const arr = raw ? JSON.parse(raw) : []
-      return Array.isArray(arr) ? arr.filter((m:any)=>String(m.session_id)===String(sessionId)) : []
+      return Array.isArray(arr) ? arr.filter((m: any) => String(m.session_id) === String(sessionId)) : []
     } catch { return [] }
   } catch {
     try {
       const raw = localStorage.getItem('cashMovements')
       const arr = raw ? JSON.parse(raw) : []
-      return Array.isArray(arr) ? arr.filter((m:any)=>String(m.session_id)===String(sessionId)) : []
+      return Array.isArray(arr) ? arr.filter((m: any) => String(m.session_id) === String(sessionId)) : []
     } catch { return [] }
   }
 }

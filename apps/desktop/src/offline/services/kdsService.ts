@@ -1,5 +1,6 @@
 import { supabase } from '../../utils/supabase'
 import { supabaseSync } from '../../utils/supabaseSync'
+import { uuid } from '../../utils/uuid'
 // Renderer: usar IPC seguro exposto pelo preload
 const query = async (sql: string, params?: any[]) => {
   const fn = (window as any)?.api?.db?.query
@@ -18,10 +19,7 @@ const query = async (sql: string, params?: any[]) => {
 
 type UUID = string
 
-const uuid = () =>
-  typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+// local uuid removed, now using shared utility
 
 const lanHubUrl: string | undefined = (() => {
   const envUrl = (import.meta as any)?.env?.VITE_LAN_HUB_URL
