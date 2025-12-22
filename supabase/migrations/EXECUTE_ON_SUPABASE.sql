@@ -74,6 +74,16 @@ ALTER TABLE public.kds_tickets ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAM
 -- 1. Adicionar category_id para referência direta (evita "Sem Categoria")
 ALTER TABLE public.order_items ADD COLUMN IF NOT EXISTS category_id UUID REFERENCES public.categories(id) ON DELETE SET NULL;
 
+-- ========== ORDERS ==========
+
+-- 1. Adicionar colunas de sessão e identificação
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS operational_session_id UUID;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS pin TEXT;
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS password TEXT;
+
+-- 2. Criar índice para performance de sessão
+CREATE INDEX IF NOT EXISTS idx_orders_operational_session_id ON public.orders(operational_session_id);
+
 -- ============================================
 -- VERIFICAÇÃO
 -- ============================================
