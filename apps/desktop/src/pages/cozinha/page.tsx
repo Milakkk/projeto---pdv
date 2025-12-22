@@ -609,8 +609,6 @@ export default function CozinhaPage() {
           currentItem = {
             ...currentItem,
             productionUnits: newUnits,
-            operatorName: undefined,
-            itemStatus: undefined,
           };
         }
 
@@ -773,9 +771,10 @@ export default function CozinhaPage() {
 
         if (useSupabase && orderIds.length > 0) {
           try {
+            // Fix: remove 'opened_at' if it doesn't exist on orders table
             const { data } = await supabase
               .from('orders')
-              .select('id, opened_at, created_at')
+              .select('id, created_at')
               .in('id', orderIds);
             if (data) {
               ordersMap = data.reduce((acc: any, o: any) => ({ ...acc, [o.id]: o }), {});
@@ -1085,77 +1084,76 @@ export default function CozinhaPage() {
 
 
 
-    pendingStatusRef.current[String(orderId)] = { status, until: Date.now() + 8000 }
+    pendingStatusRef.current[String(orderId)] = { status, until: Date.now() + 8000 };
 
-      // Atualiza status via serviço KDS PRIMEIRO, aguarda confirmação, depois atualiza UI
-      (async () => {
-        try {
-          // Correção CRÍTICA: NEW → new, PREPARING → prep, READY → ready, DELIVERED → done
-          const mapToKds = (s: Order['status']) => {
-            if (s === 'NEW') return 'new';
-            if (s === 'PREPARING') return 'prep';
-            if (s === 'READY') return 'ready';
-            if (s === 'DELIVERED') return 'done';
-            return 'new';
-          };
-          const ord = orders.find(o => o.id === orderId)
-          const tId = (ord as any)?.ticketId || orderId
+    // Atualiza status via serviço KDS PRIMEIRO, aguarda confirmação, depois atualiza UI
+    (async () => {
+      try {
+        // Correção CRÍTICA: NEW → new, PREPARING → prep, READY → ready, DELIVERED → done
+        const mapToKds = (s: Order['status']) => {
+          if (s === 'NEW') return 'queued';
+          if (s === 'PREPARING') return 'prep';
+          if (s === 'READY') return 'ready';
+          if (s === 'DELIVERED') return 'done';
+          return 'queued';
+        };
+        const ord = orders.find(o => o.id === orderId)
+        const tId = (ord as any)?.ticketId || orderId
 
-          // Tenta usar Supabase diretamente se disponível (Web Mode)
-          if (isOnline) {
-            const { supabase } = await import('../../utils/supabase');
-            if (supabase) {
-              // Fix: Supabase expects 'PREPARING', 'NEW', 'READY', 'DELIVERED' in kds_tickets
-              // But mapToKds returns 'prep', 'queued', etc.
-              // We should use the uppercase status for the DB value to match kdsService expectations.
-              const dbStatus = status;
-              const { error } = await supabase
-                .from('kds_tickets')
-                .update({ status: dbStatus, updated_at: new Date().toISOString() })
-                .eq('id', tId);
+        // Tenta usar Supabase diretamente se disponível (Web Mode)
+        if (isOnline) {
+          const { supabase } = await import('../../utils/supabase');
+          if (supabase) {
+            // Fix: Supabase expects 'PREPARING', 'NEW', 'READY', 'DELIVERED' in kds_tickets
+            // But mapToKds returns 'prep', 'queued', etc.
+            // We should use the uppercase status for the DB value to match kdsService expectations.
+            const dbStatus = status;
+            const { error } = await supabase
+              .from('kds_tickets')
+              .update({ status: dbStatus, updated_at: new Date().toISOString() })
+              .eq('id', tId);
 
-              if (error) {
-                console.error('[Cozinha] Erro ao atualizar Supabase:', error);
-                // Fallback para kdsService se falhar (pode ser ticket não encontrado ou outra tabela)
-              } else {
-                // Persistir timestamps de fase via kdsService (que trata SQLite, Supabase e LocalStorage)
+            if (error) {
+              console.error('[Cozinha] Erro ao atualizar Supabase:', error);
+              // Fallback para kdsService se falhar (pode ser ticket não encontrado ou outra tabela)
+            } else {
+              // Persistir timestamps de fase via kdsService (que trata SQLite, Supabase e LocalStorage)
+              try {
+                const nowIso = new Date().toISOString();
+                const patch: any = {};
+                if (status === 'NEW') patch.newStart = nowIso;
+                if (status === 'PREPARING') patch.preparingStart = nowIso;
+                if (status === 'READY') patch.readyAt = nowIso;
+
+                await kdsService.setPhaseTime(orderId, patch);
+
+                // Atualizar tabela de orders também (incluindo status e timestamps relevantes)
+                const orderUpdate: any = { status: status, updated_at: nowIso };
+                // Opcional: Se quiser salvar timestamps na tabela orders também (embora kds_phase_times seja a fonte da verdade para métricas)
+                // if (status === 'READY') orderUpdate.ready_at = nowIso; 
+
+                await supabase
+                  .from('orders')
+                  .update(orderUpdate)
+                  .eq('id', orderId);
+
                 try {
-                  const nowIso = new Date().toISOString();
-                  const patch: any = {};
-                  if (status === 'NEW') patch.newStart = nowIso;
-                  if (status === 'PREPARING') patch.preparingStart = nowIso;
-                  if (status === 'READY') patch.readyAt = nowIso;
-                  if (status === 'DELIVERED') patch.deliveredAt = nowIso;
+                  await kdsService.setTicketStatus(String(tId), mapToKds(status));
+                } catch { }
 
-                  await kdsService.setPhaseTime(orderId, patch);
-
-                  // Atualizar tabela de orders também (incluindo status e timestamps relevantes)
-                  const orderUpdate: any = { status: status, updated_at: nowIso };
-                  // Opcional: Se quiser salvar timestamps na tabela orders também (embora kds_phase_times seja a fonte da verdade para métricas)
-                  // if (status === 'READY') orderUpdate.ready_at = nowIso; 
-
-                  await supabase
-                    .from('orders')
-                    .update(orderUpdate)
-                    .eq('id', orderId);
-
-                  try {
-                    await kdsService.setTicketStatus(String(tId), mapToKds(status));
-                  } catch { }
-
-                  return;
-                } catch (e) {
-                  console.error('[Cozinha] Erro ao persistir fase:', e);
-                }
+                return;
+              } catch (e) {
+                console.error('[Cozinha] Erro ao persistir fase:', e);
               }
             }
           }
-
-          await kdsService.setTicketStatus(String(tId), mapToKds(status));
-        } catch (error) {
-          console.error('[Cozinha] ERRO ao atualizar status:', error);
         }
-      })();
+
+        await kdsService.setTicketStatus(String(tId), mapToKds(status));
+      } catch (error) {
+        console.error('[Cozinha] ERRO ao atualizar status:', error);
+      }
+    })();
 
     // Atualização local imediata para feedback instantâneo
     setOrders(prevOrders => prevOrders.map(order => {
