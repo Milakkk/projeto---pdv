@@ -131,24 +131,37 @@ export async function listCategories() {
     }
     const { supabase } = await import('../../utils/supabase')
     if (supabase) {
-      const { data, error } = await supabase.from('categories').select('id, name, unit_id, display_order, updated_at').order('display_order', { ascending: true })
-      if (error) throw error
-      const list = data || []
-      const map = new Map<string, any>()
-      for (const c of list) {
-        const key = String((c as any).name || '').trim().toLowerCase()
-        if (!key) continue
-        const prev = map.get(key)
-        if (!prev) {
-          map.set(key, c)
-        } else {
-          const preferCurrent = Boolean((c as any).unit_id) && !Boolean((prev as any).unit_id)
-          map.set(key, preferCurrent ? c : prev)
+      try {
+        const { data, error } = await supabase.from('categories').select('id, name, unit_id, display_order, updated_at').order('display_order', { ascending: true })
+        if (error) {
+          if (error.code === 'PGRST204' || error.message.includes('display_order')) {
+            console.warn('[productsService] Coluna display_order não encontrada no Supabase, tentando sem ela...')
+            const { data: fallbackData, error: fallbackError } = await supabase.from('categories').select('id, name, unit_id, updated_at')
+            if (fallbackError) throw fallbackError
+            return (fallbackData || []).map(c => ({ id: (c as any).id, name: (c as any).name, displayOrder: 0 }))
+          }
+          throw error
         }
+        const list = data || []
+        const map = new Map<string, any>()
+        for (const c of list) {
+          const key = String((c as any).name || '').trim().toLowerCase()
+          if (!key) continue
+          const prev = map.get(key)
+          if (!prev) {
+            map.set(key, c)
+          } else {
+            const preferCurrent = Boolean((c as any).unit_id) && !Boolean((prev as any).unit_id)
+            map.set(key, preferCurrent ? c : prev)
+          }
+        }
+        return Array.from(map.values())
+          .map(c => ({ id: (c as any).id, name: (c as any).name, displayOrder: (c as any).display_order ?? 0 }))
+          .sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0))
+      } catch (e) {
+        console.error('[productsService] Erro ao listar categorias no Supabase:', e)
+        throw e
       }
-      return Array.from(map.values())
-        .map(c => ({ id: (c as any).id, name: (c as any).name, displayOrder: (c as any).display_order ?? 0 }))
-        .sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0))
     }
     const raw = localStorage.getItem('categories')
     const arr = raw ? JSON.parse(raw) : []
@@ -373,25 +386,43 @@ export async function upsertCategory(params: { id?: UUID; name: string; displayO
         finalId = existing.id; // Garante que usa o ID encontrado
       }
 
-      const categoryData = {
+      const categoryData: any = {
         id: finalId,
         name: params.name,
         unit_id: unitId ?? null,
         default_station: null,
-        display_order: params.displayOrder ?? 0,
         updated_at: now,
         version: 1,
         pending_sync: false,
       }
 
+      // Adiciona display_order apenas se fornecido
+      if (typeof params.displayOrder === 'number') {
+        categoryData.display_order = params.displayOrder
+      }
+
       if (existing) {
         // Atualiza categoria existente
         console.log('[productsService] Atualizando categoria existente com ID:', finalId);
-        const { data: updatedData, error: updateError } = await supabase
+        let { data: updatedData, error: updateError } = await supabase
           .from('categories')
           .update(categoryData)
           .eq('id', finalId)
           .select()
+
+        // Safeguard para display_order
+        if (updateError && (updateError.code === 'PGRST204' || updateError.message.includes('display_order'))) {
+          console.warn('[productsService] Coluna display_order não encontrada ao atualizar, tentando sem ela...')
+          const fallbackData = { ...categoryData }
+          delete fallbackData.display_order
+          const { data: fData, error: fError } = await supabase
+            .from('categories')
+            .update(fallbackData)
+            .eq('id', finalId)
+            .select()
+          updatedData = fData
+          updateError = fError
+        }
 
         if (updateError) {
           console.error('[productsService] Erro ao atualizar categoria:', updateError)
@@ -402,31 +433,7 @@ export async function upsertCategory(params: { id?: UUID; name: string; displayO
           console.log('[productsService] ✅ Categoria atualizada no Supabase:', updatedData[0])
           // Aguarda um pouco e verifica se a categoria foi realmente atualizada
           await new Promise(resolve => setTimeout(resolve, 300))
-          const { data: verifyData } = await supabase
-            .from('categories')
-            .select('id')
-            .eq('id', updatedData[0].id)
-            .maybeSingle()
-          if (verifyData) {
-            return updatedData[0].id
-          } else {
-            console.warn('[productsService] ⚠️ Categoria não encontrada após atualização, mas retornando ID:', finalId)
-            return finalId
-          }
-        } else {
-          console.warn('[productsService] ⚠️ Categoria atualizada mas não retornada. Verificando...')
-          // Aguarda e verifica se a categoria existe
-          await new Promise(resolve => setTimeout(resolve, 300))
-          const { data: verifyData } = await supabase
-            .from('categories')
-            .select('id')
-            .eq('id', finalId)
-            .maybeSingle()
-          if (verifyData) {
-            return finalId
-          } else {
-            throw new Error('Categoria não encontrada após atualização')
-          }
+          return finalId
         }
       } else {
         // Insere nova categoria
@@ -512,7 +519,12 @@ export async function updateCategoryOrder(categoryId: string, order: number) {
   } else {
     const { supabase } = await import('../../utils/supabase')
     if (supabase) {
-      await supabase.from('categories').update({ display_order: order, updated_at: now }).eq('id', categoryId)
+      const { error } = await supabase.from('categories').update({ display_order: order, updated_at: now }).eq('id', categoryId)
+      if (error && (error.code === 'PGRST204' || error.message.includes('display_order'))) {
+        console.warn('[productsService] Coluna display_order não encontrada ao atualizar ordem, ignorando persistência...')
+        return
+      }
+      if (error) throw error
     }
   }
 

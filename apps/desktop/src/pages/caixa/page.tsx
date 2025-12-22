@@ -382,16 +382,28 @@ export default function CaixaPage() {
 
         if (mounted) {
           const baseCategories = (mappedCategories && mappedCategories.length > 0) ? mappedCategories : categories;
-          const promoCategory: Category = {
-            id: 'promo-combos',
-            name: 'Promoções / Combos',
-            icon: '',
-            order: Math.max(0, baseCategories.length),
-            active: true,
-            isPromo: true,
+
+          // Verifica se já existe uma categoria de promoções vinda do banco (pelo ID ou nome similar)
+          const hasExistingPromo = baseCategories.some(cat =>
+            cat.id === 'promo-combos' ||
+            cat.name.toLowerCase().includes('promo') ||
+            cat.name.toLowerCase().includes('combo')
+          );
+
+          let finalCategories = [...baseCategories];
+
+          if (!hasExistingPromo) {
+            const promoCategory: Category = {
+              id: 'promo-combos',
+              name: 'Promoções / Combos',
+              icon: '',
+              order: Math.max(0, baseCategories.length),
+              active: true,
+              isPromo: true,
+            };
+            finalCategories.push(promoCategory);
           }
-          const withoutDupPromo = baseCategories.filter(cat => cat.id !== 'promo-combos')
-          const finalCategories = [...withoutDupPromo, promoCategory]
+
           setCategories(finalCategories);
           // Fallback para itens do armazenamento local quando o banco estiver vazio
           const finalMenuItems = (mappedMenuItems && mappedMenuItems.length > 0) ? mappedMenuItems : menuItemsLS;

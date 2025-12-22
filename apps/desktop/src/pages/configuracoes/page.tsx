@@ -452,7 +452,12 @@ export default function ConfiguracoesPage() {
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
   const [editingPayment, setEditingPayment] = useState<string>('');
-  const [comboForm, setComboForm] = useState({ name: '', price: '', includedItemIds: [] as string[] });
+  const [comboForm, setComboForm] = useState({
+    name: '',
+    price: '',
+    discountPercent: '0',
+    items: [] as { id: string, name: string, price: number, qty: number }[]
+  });
 
   // Carregar cozinhas do banco de dados
   useEffect(() => {
@@ -1410,6 +1415,10 @@ export default function ConfiguracoesPage() {
 
     const priceValue = parseFloat(comboForm.price);
     const priceCents = Math.round((Number(priceValue) || 0) * 100);
+
+    // Flatten item IDs if needed for legacy compatibility, but new systems should use structured data
+    const comboItemIds = comboForm.items.flatMap(it => Array(it.qty).fill(it.id));
+
     productsService
       .upsertProduct({ sku: null, name: comboForm.name, categoryId: null, priceCents, isActive: true })
       .then((newId) => {
@@ -1429,11 +1438,13 @@ export default function ConfiguracoesPage() {
           allowPartialDelivery: true,
           unitDeliveryCount: 1,
           isPromo: true,
-          comboItemIds: comboForm.includedItemIds,
+          comboItemIds,
         };
         setMenuItems([...menuItems, newItem]);
+        showSuccess('Combo criado com sucesso');
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error('Erro ao salvar combo:', err);
         const newItem: MenuItem = {
           id: Date.now().toString(),
           name: comboForm.name,
@@ -1450,13 +1461,13 @@ export default function ConfiguracoesPage() {
           allowPartialDelivery: true,
           unitDeliveryCount: 1,
           isPromo: true,
-          comboItemIds: comboForm.includedItemIds,
+          comboItemIds,
         };
         setMenuItems([...menuItems, newItem]);
       });
 
     setShowComboModal(false);
-    setComboForm({ name: '', price: '', includedItemIds: [] });
+    setComboForm({ name: '', price: '', discountPercent: '0', items: [] });
   };
 
   const handleSavePayment = () => {
@@ -2020,8 +2031,8 @@ export default function ConfiguracoesPage() {
                   resetSelections();
                 }}
                 className={`py-4 px-2 border-b-2 font-medium text-sm transition-colors cursor-pointer whitespace-nowrap ${activeTab === tab.id
-                    ? 'border-amber-500 text-amber-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                  ? 'border-amber-500 text-amber-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
                   }`}
               >
                 <i className={`${tab.icon} mr-2`}></i>
@@ -2236,8 +2247,8 @@ export default function ConfiguracoesPage() {
                               onClick={() => handleReorderCategory(category.id, 'up')}
                               disabled={index === 0}
                               className={`w-6 h-6 flex items-center justify-center rounded cursor-pointer transition-colors ${index === 0
-                                  ? 'text-gray-300 cursor-not-allowed'
-                                  : 'text-gray-600 hover:text-amber-600 hover:bg-amber-50'
+                                ? 'text-gray-300 cursor-not-allowed'
+                                : 'text-gray-600 hover:text-amber-600 hover:bg-amber-50'
                                 }`}
                               title="Mover para cima"
                             >
@@ -2247,8 +2258,8 @@ export default function ConfiguracoesPage() {
                               onClick={() => handleReorderCategory(category.id, 'down')}
                               disabled={index === categories.length - 1}
                               className={`w-6 h-6 flex items-center justify-center rounded cursor-pointer transition-colors ${index === categories.length - 1
-                                  ? 'text-gray-300 cursor-not-allowed'
-                                  : 'text-gray-600 hover:text-amber-600 hover:bg-amber-50'
+                                ? 'text-gray-300 cursor-not-allowed'
+                                : 'text-gray-600 hover:text-amber-600 hover:bg-amber-50'
                                 }`}
                               title="Mover para baixo"
                             >
@@ -2389,8 +2400,8 @@ export default function ConfiguracoesPage() {
                             onClick={() => handleReorderItem(item.id, 'up')}
                             disabled={itemIndex === 0}
                             className={`w-6 h-6 flex items-center justify-center rounded cursor-pointer transition-colors ${itemIndex === 0
-                                ? 'text-gray-300 cursor-not-allowed'
-                                : 'text-gray-600 hover:text-amber-600 hover:bg-amber-50'
+                              ? 'text-gray-300 cursor-not-allowed'
+                              : 'text-gray-600 hover:text-amber-600 hover:bg-amber-50'
                               }`}
                             title="Mover para cima"
                           >
@@ -2400,8 +2411,8 @@ export default function ConfiguracoesPage() {
                             onClick={() => handleReorderItem(item.id, 'down')}
                             disabled={itemIndex === menuItems.length - 1}
                             className={`w-6 h-6 flex items-center justify-center rounded cursor-pointer transition-colors ${itemIndex === menuItems.length - 1
-                                ? 'text-gray-300 cursor-not-allowed'
-                                : 'text-gray-600 hover:text-amber-600 hover:bg-amber-50'
+                              ? 'text-gray-300 cursor-not-allowed'
+                              : 'text-gray-600 hover:text-amber-600 hover:bg-amber-50'
                               }`}
                             title="Mover para baixo"
                           >
@@ -2637,8 +2648,8 @@ export default function ConfiguracoesPage() {
                     <button
                       onClick={() => handleConfigChange('passwordFormat', 'numeric')}
                       className={`flex-1 p-3 rounded-lg border-2 transition-colors cursor-pointer ${appConfig.passwordFormat === 'numeric'
-                          ? 'border-amber-500 bg-amber-50 text-amber-800'
-                          : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                        ? 'border-amber-500 bg-amber-50 text-amber-800'
+                        : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
                         }`}
                     >
                       <i className="ri-hashtag text-xl mb-1"></i>
@@ -2647,8 +2658,8 @@ export default function ConfiguracoesPage() {
                     <button
                       onClick={() => handleConfigChange('passwordFormat', 'alphabetic')}
                       className={`flex-1 p-3 rounded-lg border-2 transition-colors cursor-pointer ${appConfig.passwordFormat === 'alphabetic'
-                          ? 'border-amber-500 bg-amber-50 text-amber-800'
-                          : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                        ? 'border-amber-500 bg-amber-50 text-amber-800'
+                        : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
                         }`}
                     >
                       <i className="ri-font-size-2 text-xl mb-1"></i>
@@ -2657,8 +2668,8 @@ export default function ConfiguracoesPage() {
                     <button
                       onClick={() => handleConfigChange('passwordFormat', 'alphanumeric')}
                       className={`flex-1 p-3 rounded-lg border-2 transition-colors cursor-pointer ${appConfig.passwordFormat === 'alphanumeric'
-                          ? 'border-amber-500 bg-amber-50 text-amber-800'
-                          : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                        ? 'border-amber-500 bg-amber-50 text-amber-800'
+                        : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
                         }`}
                     >
                       <i className="ri-text text-xl mb-1"></i>
@@ -2845,8 +2856,8 @@ export default function ConfiguracoesPage() {
                   <label
                     key={k.id}
                     className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-colors ${categoryForm.kitchenIds.includes(k.id)
-                        ? 'bg-amber-50 border border-amber-300'
-                        : 'hover:bg-gray-50'
+                      ? 'bg-amber-50 border border-amber-300'
+                      : 'hover:bg-gray-50'
                       }`}
                   >
                     <input
@@ -2904,8 +2915,8 @@ export default function ConfiguracoesPage() {
                     type="button"
                     onClick={() => setCategoryForm({ ...categoryForm, icon: option.value })}
                     className={`p-3 rounded-lg border-2 transition-all cursor-pointer hover:bg-gray-50 ${categoryForm.icon === option.value
-                        ? 'border-amber-500 bg-amber-50'
-                        : 'border-gray-200'
+                      ? 'border-amber-500 bg-amber-50'
+                      : 'border-gray-200'
                       }`}
                     title={option.label}
                   >
@@ -3284,10 +3295,10 @@ export default function ConfiguracoesPage() {
         isOpen={showComboModal}
         onClose={() => {
           setShowComboModal(false);
-          setComboForm({ name: '', price: '', includedItemIds: [] });
+          setComboForm({ name: '', price: '', discountPercent: '0', items: [] });
         }}
         title={'Novo Combo'}
-        size="md"
+        size="lg"
       >
         <div className="space-y-4">
           <Input
@@ -3297,45 +3308,124 @@ export default function ConfiguracoesPage() {
             placeholder="Ex: Combo X"
             required
           />
-          <Input
-            label="Preço do combo *"
-            type="number"
-            value={comboForm.price}
-            onChange={(e) => setComboForm({ ...comboForm, price: e.target.value })}
-            placeholder="Ex: 19.90"
-            required
-          />
+
+          <div className="grid grid-cols-2 gap-4">
+            <Input
+              label="Preço do combo *"
+              type="number"
+              step="0.01"
+              value={comboForm.price}
+              onChange={(e) => setComboForm({ ...comboForm, price: e.target.value })}
+              placeholder="Ex: 19.90"
+              required
+            />
+            <Input
+              label="Desconto (%)"
+              type="number"
+              value={comboForm.discountPercent}
+              onChange={(e) => {
+                const disc = e.target.value;
+                setComboForm(prev => {
+                  const subtotal = prev.items.reduce((acc, it) => acc + (it.price * it.qty), 0);
+                  const d = parseFloat(disc) || 0;
+                  const newPrice = (subtotal * (1 - d / 100)).toFixed(2);
+                  return { ...prev, discountPercent: disc, price: newPrice };
+                });
+              }}
+              placeholder="0"
+            />
+          </div>
+
           <div className="space-y-2">
-            <div className="text-sm text-gray-600">Itens incluídos (opcional)</div>
-            <div className="max-h-40 overflow-y-auto border rounded">
-              {menuItems.filter(mi => mi.active).map(mi => (
-                <label key={mi.id} className="flex items-center px-3 py-2 text-sm gap-2">
-                  <input
-                    type="checkbox"
-                    checked={comboForm.includedItemIds.includes(mi.id)}
-                    onChange={(e) => {
-                      const checked = e.target.checked
-                      const next = checked ? [...comboForm.includedItemIds, mi.id] : comboForm.includedItemIds.filter(id => id !== mi.id)
-                      setComboForm({ ...comboForm, includedItemIds: next })
-                    }}
-                  />
-                  <span>{mi.name}</span>
-                </label>
-              ))}
+            <div className="text-sm font-medium text-gray-700 flex justify-between items-center">
+              <span>Itens incluídos</span>
+              <span className="text-xs text-amber-600 font-bold">
+                Subtotal: R$ {comboForm.items.reduce((acc, it) => acc + (it.price * it.qty), 0).toFixed(2)}
+              </span>
+            </div>
+            <div className="max-h-60 overflow-y-auto border rounded-xl divide-y bg-gray-50">
+              {menuItems.filter(mi => mi.active && !mi.isPromo).map(mi => {
+                const current = comboForm.items.find(it => it.id === mi.id);
+                const qty = current?.qty || 0;
+
+                return (
+                  <div key={mi.id} className="flex items-center justify-between px-4 py-3 bg-white hover:bg-amber-50 transition-colors">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-gray-900 truncate">{mi.name}</div>
+                      <div className="text-xs text-gray-500">R$ {mi.price.toFixed(2)} / un</div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      {qty > 0 && (
+                        <div className="flex items-center bg-gray-100 rounded-lg p-1 border">
+                          <button
+                            onClick={() => {
+                              const nextItems = qty === 1
+                                ? comboForm.items.filter(it => it.id !== mi.id)
+                                : comboForm.items.map(it => it.id === mi.id ? { ...it, qty: it.qty - 1 } : it);
+
+                              const subtotal = nextItems.reduce((acc, it) => acc + (it.price * it.qty), 0);
+                              const disc = parseFloat(comboForm.discountPercent) || 0;
+                              const newPrice = (subtotal * (1 - disc / 100)).toFixed(2);
+
+                              setComboForm({ ...comboForm, items: nextItems, price: newPrice });
+                            }}
+                            className="w-8 h-8 flex items-center justify-center text-amber-600 hover:bg-white rounded-md transition-colors"
+                          >
+                            <i className="ri-subtract-line"></i>
+                          </button>
+                          <span className="w-8 text-center font-bold text-gray-800">{qty}</span>
+                          <button
+                            onClick={() => {
+                              const nextItems = comboForm.items.map(it => it.id === mi.id ? { ...it, qty: it.qty + 1 } : it);
+                              const subtotal = nextItems.reduce((acc, it) => acc + (it.price * it.qty), 0);
+                              const disc = parseFloat(comboForm.discountPercent) || 0;
+                              const newPrice = (subtotal * (1 - disc / 100)).toFixed(2);
+
+                              setComboForm({ ...comboForm, items: nextItems, price: newPrice });
+                            }}
+                            className="w-8 h-8 flex items-center justify-center text-amber-600 hover:bg-white rounded-md transition-colors"
+                          >
+                            <i className="ri-add-line"></i>
+                          </button>
+                        </div>
+                      )}
+
+                      {qty === 0 && (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => {
+                            const nextItems = [...comboForm.items, { id: mi.id, name: mi.name, price: mi.price, qty: 1 }];
+                            const subtotal = nextItems.reduce((acc, it) => acc + (it.price * it.qty), 0);
+                            const disc = parseFloat(comboForm.discountPercent) || 0;
+                            const newPrice = (subtotal * (1 - disc / 100)).toFixed(2);
+
+                            setComboForm({ ...comboForm, items: nextItems, price: newPrice });
+                          }}
+                        >
+                          Adicionar
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
+
           <div className="flex space-x-3 pt-2">
             <Button
               variant="secondary"
               onClick={() => {
                 setShowComboModal(false);
-                setComboForm({ name: '', price: '', includedItemIds: [] });
+                setComboForm({ name: '', price: '', discountPercent: '0', items: [] });
               }}
               className="flex-1"
             >
               Cancelar
             </Button>
-            <Button onClick={handleSaveCombo} className="flex-1">
+            <Button onClick={handleSaveCombo} className="flex-1" disabled={comboForm.items.length === 0}>
               Criar
             </Button>
           </div>
