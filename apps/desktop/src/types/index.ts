@@ -39,6 +39,7 @@ export interface MenuItem {
   unitDeliveryCount?: number;
   isPromo?: boolean;
   comboItemIds?: string[];
+  comboConfig?: { items: { id: string; name: string; price: number; qty: number }[] };
 }
 
 // Novo tipo para rastrear o status de cada unidade de produção
@@ -57,7 +58,7 @@ export interface OrderItem {
   quantity: number;
   unitPrice: number;
   observations?: string;
-  
+
   // NOVO: Array de unidades de produção para rastreamento individual
   productionUnits: ProductionUnit[];
   // NOVO: Flag derivada para facilitar lógica na Cozinha/Caixa

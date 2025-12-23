@@ -85,6 +85,9 @@ ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS password TEXT;
 ALTER TABLE public.orders ALTER COLUMN pin TYPE TEXT;
 ALTER TABLE public.orders ALTER COLUMN password TYPE TEXT;
 
+-- Adicionar coluna para configurações de combo na tabela products
+ALTER TABLE public.products ADD COLUMN IF NOT EXISTS combo_config JSONB;
+
 -- 3. Criar índice para performance de sessão
 CREATE INDEX IF NOT EXISTS idx_orders_operational_session_id ON public.orders(operational_session_id);
 

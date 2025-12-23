@@ -134,6 +134,7 @@ export const products = sqliteTable(
     pendingSync: integer("pending_sync", { mode: "boolean" })
       .notNull()
       .default(false),
+    comboConfig: text("combo_config", { mode: "json" }),
   },
   (t) => ({
     skuIdx: uniqueIndex("ux_products_sku").on(t.sku),

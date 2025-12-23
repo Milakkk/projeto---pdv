@@ -35,7 +35,7 @@ export async function listProducts() {
     }
     const { supabase } = await import('../../utils/supabase')
     if (supabase) {
-      let q = supabase.from('products').select('id, sku, name, category_id, unit_id, price_cents, is_active')
+      let q = supabase.from('products').select('id, sku, name, category_id, unit_id, price_cents, is_active, combo_config')
       if (unitId) q = q.or(`unit_id.eq.${unitId},unit_id.is.null`)
       const { data, error } = await q
       if (error) throw error
@@ -47,6 +47,7 @@ export async function listProducts() {
         unitId: (p as any).unit_id ?? null,
         priceCents: Math.max(0, Number((p as any).price_cents ?? 0)),
         isActive: ((p as any).is_active ?? true) ? 1 : 0,
+        comboConfig: (p as any).combo_config ?? undefined,
       }))
 
       // Client-side Deduplication: Filter out duplicates based on SKU or Name+Category
@@ -76,7 +77,15 @@ export async function listProducts() {
     }
     const raw = localStorage.getItem('menuItems')
     const arr = raw ? JSON.parse(raw) : []
-    return Array.isArray(arr) ? arr.map((p: any) => ({ id: p.id, sku: p.code, name: p.name, categoryId: p.categoryId, priceCents: Math.round((p.price || 0) * 100), isActive: p.active ? 1 : 0 })) : []
+    return Array.isArray(arr) ? arr.map((p: any) => ({
+      id: p.id,
+      sku: p.code,
+      name: p.name,
+      categoryId: p.categoryId,
+      priceCents: Math.round((p.price || 0) * 100),
+      isActive: p.active ? 1 : 0,
+      comboConfig: p.comboConfig
+    })) : []
   } catch { return [] }
 }
 
@@ -92,6 +101,8 @@ export async function searchProducts(term: string) {
     const sql = unitId ? 'SELECT * FROM products WHERE unit_id = ? OR unit_id IS NULL' : 'SELECT * FROM products'
     const res = await query(sql, unitId ? [unitId] : [])
     const rows = res?.rows ?? []
+    // Add mapping for comboConfig if needed, but search usually just returns basic info?
+    // Let's assume the rows returned by SELECT * already contain combo_config if the column exists in SQLite
     return rows.filter((p: any) => String(p.name ?? '').toLowerCase().includes(q) || String(p.sku ?? '').toLowerCase().includes(q))
   } catch {
     try {
@@ -194,6 +205,7 @@ export async function upsertProduct(params: {
   categoryId?: string | null
   priceCents: number
   isActive?: boolean
+  comboConfig?: any
 }) {
   const id = params.id ?? uuid()
   const rawUnitId = await getCurrentUnitId()
@@ -205,21 +217,47 @@ export async function upsertProduct(params: {
   try {
     if (isElectron) {
       // Modo Electron - usa banco local
-      await query(
-        'INSERT INTO products (id, sku, name, category_id, unit_id, price_cents, is_active, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET sku=excluded.sku, name=excluded.name, category_id=excluded.category_id, unit_id=excluded.unit_id, price_cents=excluded.price_cents, is_active=excluded.is_active, updated_at=excluded.updated_at, version=excluded.version, pending_sync=excluded.pending_sync',
-        [
-          id,
-          params.sku ?? null,
-          params.name,
-          params.categoryId ?? null,
-          unitId ?? null,
-          Math.max(0, Number(params.priceCents ?? 0)),
-          params.isActive ? 1 : 0,
-          now,
-          1,
-          1,
-        ],
-      )
+      // Tenta inserir com combo_config. Se falhar (coluna missing), tenta sem.
+      const comboConfigStr = params.comboConfig ? JSON.stringify(params.comboConfig) : null
+      try {
+        await query(
+          'INSERT INTO products (id, sku, name, category_id, unit_id, price_cents, is_active, updated_at, version, pending_sync, combo_config) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET sku=excluded.sku, name=excluded.name, category_id=excluded.category_id, unit_id=excluded.unit_id, price_cents=excluded.price_cents, is_active=excluded.is_active, updated_at=excluded.updated_at, version=excluded.version, pending_sync=excluded.pending_sync, combo_config=excluded.combo_config',
+          [
+            id,
+            params.sku ?? null,
+            params.name,
+            params.categoryId ?? null,
+            unitId ?? null,
+            Math.max(0, Number(params.priceCents ?? 0)),
+            params.isActive ? 1 : 0,
+            now,
+            1,
+            1,
+            comboConfigStr
+          ],
+        )
+      } catch (insertError: any) {
+        if (insertError?.message?.includes('no such column') || String(insertError).includes('combo_config')) {
+          console.warn('[productsService] Coluna combo_config ausente no SQLite local. Salvando sem persistir config por enquanto.')
+          await query(
+            'INSERT INTO products (id, sku, name, category_id, unit_id, price_cents, is_active, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET sku=excluded.sku, name=excluded.name, category_id=excluded.category_id, unit_id=excluded.unit_id, price_cents=excluded.price_cents, is_active=excluded.is_active, updated_at=excluded.updated_at, version=excluded.version, pending_sync=excluded.pending_sync',
+            [
+              id,
+              params.sku ?? null,
+              params.name,
+              params.categoryId ?? null,
+              unitId ?? null,
+              Math.max(0, Number(params.priceCents ?? 0)),
+              params.isActive ? 1 : 0,
+              now,
+              1,
+              1,
+            ],
+          )
+        } else {
+          throw insertError
+        }
+      }
       return id
     } else {
       // Modo Navegador - usa Supabase
@@ -243,6 +281,7 @@ export async function upsertProduct(params: {
         updated_at: now,
         version: 1,
         pending_sync: false,
+        combo_config: params.comboConfig ? params.comboConfig : null
       }
 
       const { error } = await supabase
