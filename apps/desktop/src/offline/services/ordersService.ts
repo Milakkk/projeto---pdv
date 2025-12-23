@@ -549,10 +549,32 @@ export async function listOrdersDetailed(limit = 100): Promise<Array<{ order: an
       })
     }
     if (supabase) {
-      let q = supabase.from('orders').select('id, status, total_cents, discount_percent, discount_cents, observations, pin, password, unit_id, created_at, updated_at, completed_at').order('updated_at', { ascending: false }).limit(limit)
-      if (unitId) q = q.eq('unit_id', unitId)
-      const { data: ords, error: ordErr } = await q
-      if (ordErr) throw ordErr
+      // Tenta buscar com todas as colunas novas primeiro
+      let ords: any[] = []
+      let ordErr: any = null
+
+      try {
+        let q = supabase.from('orders').select('id, status, total_cents, discount_percent, discount_cents, observations, pin, password, unit_id, created_at, updated_at, completed_at').order('updated_at', { ascending: false }).limit(limit)
+        if (unitId) q = q.eq('unit_id', unitId)
+        const res = await q
+        ords = res.data || []
+        ordErr = res.error
+      } catch (e) {
+        console.warn('Erro ao buscar pedidos com pin/password, tentando fallback...', e)
+      }
+
+      // Safeguard: Se deu erro (provavelmente coluna inexistente), tenta query básica
+      if (ordErr || !ords) {
+        // Se for erro de sintaxe ou coluna, ou se simplesmente deu erro, tentamos o fallback
+        if (ordErr?.code === 'PGRST204' || ordErr?.message?.includes('pin') || ordErr?.message?.includes('password') || ordErr) {
+          let q = supabase.from('orders').select('id, status, total_cents, discount_percent, discount_cents, observations, unit_id, created_at, updated_at, completed_at').order('updated_at', { ascending: false }).limit(limit)
+          if (unitId) q = q.eq('unit_id', unitId)
+          const res = await q
+          ords = res.data || []
+          if (res.error) throw res.error
+        }
+      }
+
       const ids = (ords || []).map((r: any) => String(r.id))
       if (!ids.length) return []
 
@@ -562,7 +584,13 @@ export async function listOrdersDetailed(limit = 100): Promise<Array<{ order: an
       const { data: paysData, error: paysErr } = await supabase.from('payments').select('order_id, method, amount_cents, change_cents').in('order_id', ids)
       if (paysErr) throw paysErr
 
-      const { data: timesData } = await supabase.from('kds_phase_times').select('*').in('order_id', ids)
+      let timesData: any[] = []
+      try {
+        const { data } = await supabase.from('kds_phase_times').select('*').in('order_id', ids)
+        timesData = data || []
+      } catch {
+        console.warn('Tabela kds_phase_times inacessível ou vazia')
+      }
 
       const prodIds = Array.from(new Set((itemsData || []).map((it: any) => String(it.product_id)).filter((id: any) => id && id !== 'null' && id !== 'undefined')))
       const { data: prods } = prodIds.length > 0 ? await supabase.from('products').select('id, category_id, name').in('id', prodIds) : { data: [] as any[] }
@@ -598,9 +626,11 @@ export async function listOrdersDetailed(limit = 100): Promise<Array<{ order: an
         const oid = String(r.id)
         const pt = timesByOrder[oid]
 
-        // Merge phase times and ensure pin/password are correctly typed
+        // Merge phase times into the order object for easier consumption by components like OrderTimeStatus
         const mergedOrder = {
           ...r,
+          pin: r.pin,
+          password: r.password,
           preparingStartedAt: pt?.preparingStart ? new Date(pt.preparingStart) : undefined,
           readyAt: pt?.readyAt ? new Date(pt.readyAt) : undefined,
           deliveredAt: pt?.deliveredAt ? new Date(pt.deliveredAt) : undefined,
@@ -611,10 +641,10 @@ export async function listOrdersDetailed(limit = 100): Promise<Array<{ order: an
 
         return {
           order: mergedOrder,
-          items: itemsByOrder[oid] || [],
-          payments: paysByOrder[oid] || [],
-          details: { pin: (r as any).pin, password: (r as any).password },
-          phaseTimes: pt
+          items: itemsByOrder[oid] ?? [],
+          payments: paysByOrder[oid] ?? [],
+          details: { pin: r.pin, password: r.password },
+          phaseTimes: pt,
         }
       })
     }
