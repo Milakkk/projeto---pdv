@@ -215,17 +215,25 @@ function OrderCardComponent({
   const handleMainAction = (e: React.MouseEvent) => {
     e.stopPropagation();
     const nextStatus = getNextStatus(order.status);
-    if (!nextStatus) {
-      console.error(`[OrderCard] Próximo status inválido para pedido ${order.id}: ${order.status}`);
-      return;
-    }
+    if (!nextStatus) return;
 
-    if ((order.status === 'NEW') && nextStatus === 'PREPARING') {
-      console.log(`[OrderCard] Iniciando preparo do pedido ${order.id}`);
+    if (order.status === 'NEW' && nextStatus === 'PREPARING') {
+      if (operators.length === 0) {
+        setAlertModalMessage('Não há operadores cadastrados. Adicione um operador para iniciar o preparo.');
+        setShowAssignOperatorAlert(true);
+        return;
+      }
+      const allAssigned = order.items.every(item => 
+        (item.productionUnits || []).every(unit => !!unit.operatorName)
+      );
+      if (!allAssigned) {
+        setAlertModalMessage('É necessário atribuir um operador a todas as unidades antes de iniciar o preparo.');
+        setShowAssignOperatorAlert(true);
+        return;
+      }
     }
     if (order.status === 'PREPARING' && nextStatus === 'READY') {
       if (!isOrderReadyForNextStep) {
-        console.warn(`[OrderCard] Pedido ${order.id} não está pronto para avançar. Checklist incompleto ou unidades pendentes.`);
         setAlertModalMessage('Todas as unidades de produção devem ser marcadas como "Pronto" e todos os itens do checklist (opções obrigatórias e observações) devem ser checados.');
         setShowAssignOperatorAlert(true);
         return;
@@ -234,7 +242,7 @@ function OrderCardComponent({
     // Intercepta READY -> DELIVERED quando há entrega direta
     if (order.status === 'READY' && nextStatus === 'DELIVERED') {
       if (directItems.length > 0) {
-        console.log(`[OrderCard] Entrega direta detectada para pedido ${order.id}. Abrindo modal de conferência.`);
+        // Prepara checklist inicial (não marcado)
         const initialChecks: Record<string, boolean> = {};
         directItems.forEach(di => { initialChecks[di.id] = !!directDeliveryChecks[di.id]; });
         setDirectDeliveryChecks(initialChecks);
@@ -242,12 +250,7 @@ function OrderCardComponent({
         return;
       }
     }
-    try {
-      console.log(`[OrderCard] Atualizando status do pedido ${order.id}: ${order.status} -> ${nextStatus}`);
-      onUpdateStatus(order.id, nextStatus);
-    } catch (err) {
-      console.error(`[OrderCard] Falha ao atualizar status do pedido ${order.id}`, err);
-    }
+    onUpdateStatus(order.id, nextStatus);
   };
   
   const handleUnitReadyToggle = (e: React.MouseEvent, itemId: string, unitId: string, isReady: boolean) => {
@@ -503,9 +506,9 @@ function OrderCardComponent({
                   backgroundColor: order.status === 'PREPARING' ? '#22c55e' : '#3b82f6',
                   color: 'white',
                   fontWeight: 'bold',
-                  opacity: ((order.status === 'NEW' && (operators.length === 0)) || (order.status === 'PREPARING' && !isOrderReadyForNextStepStatus)) ? 0.4 : 1,
+                  opacity: ((order.status === 'NEW' && (operators.length === 0 || !allUnitsAssignedStatus)) || (order.status === 'PREPARING' && !isOrderReadyForNextStepStatus)) ? 0.4 : 1,
                 }}
-                disabled={(order.status === 'NEW' && (operators.length === 0)) || (order.status === 'PREPARING' && !isOrderReadyForNextStepStatus)} 
+                disabled={(order.status === 'NEW' && (operators.length === 0 || !allUnitsAssignedStatus)) || (order.status === 'PREPARING' && !isOrderReadyForNextStepStatus)} 
               >
                 ✓ Pronto
               </button>

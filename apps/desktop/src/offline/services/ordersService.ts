@@ -1,7 +1,5 @@
 import { supabase } from '../../utils/supabase'
 import { supabaseSync } from '../../utils/supabaseSync'
-import { setPhaseTime } from './kdsService'
-import { uuid } from '../../utils/uuid'
 
 const query = async (sql: string, params?: any[]) => {
   const fn = (window as any)?.api?.db?.query
@@ -20,7 +18,48 @@ const query = async (sql: string, params?: any[]) => {
 
 type UUID = string
 
-// local uuid removed, now using shared utility
+const uuid = () =>
+  typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+async function setDeliveredPhaseTime(orderId: UUID, deliveredAtIso: string) {
+  const now = new Date().toISOString()
+
+  try {
+    await query(
+      'INSERT INTO kds_phase_times (order_id, new_start, preparing_start, ready_at, delivered_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(order_id) DO UPDATE SET delivered_at=COALESCE(delivered_at, excluded.delivered_at), updated_at=excluded.updated_at',
+      [orderId, null, null, null, deliveredAtIso, now],
+    )
+    return
+  } catch {}
+
+  if (supabase) {
+    try {
+      const { data: existing } = await supabaseSync.select('kds_phase_times', (q) =>
+        q.select('id, delivered_at').eq('order_id', orderId).maybeSingle(),
+        { silent: true }
+      )
+
+      const payload: any = { order_id: orderId, updated_at: now }
+      if (!existing?.delivered_at) payload.delivered_at = deliveredAtIso
+      if (existing?.id) {
+        await supabaseSync.update('kds_phase_times', payload, { id: existing.id })
+      } else {
+        await supabaseSync.insert('kds_phase_times', { ...payload, delivered_at: deliveredAtIso })
+      }
+      return
+    } catch {}
+  }
+
+  try {
+    const raw = localStorage.getItem('kdsPhaseTimes')
+    const obj = raw ? JSON.parse(raw) : {}
+    const cur = obj[String(orderId)] || {}
+    obj[String(orderId)] = { ...cur, deliveredAt: cur.deliveredAt ?? deliveredAtIso, updatedAt: now }
+    localStorage.setItem('kdsPhaseTimes', JSON.stringify(obj))
+  } catch {}
+}
 
 async function scheduleTicketReceiptCheck(params: { orderId: UUID; ticketId: UUID; sentAtIso: string; kitchenId: string | null }) {
   if (!supabase) return
@@ -34,19 +73,18 @@ async function scheduleTicketReceiptCheck(params: { orderId: UUID; ticketId: UUI
           { silent: true }
         )
         if (!data) return
-        const row = data as any
-        const createdAtMs = row.created_at ? new Date(String(row.created_at)).getTime() : sentAtMs
-        const updatedAtMs = row.updated_at ? new Date(String(row.updated_at)).getTime() : NaN
-        const acked = row.created_at && row.updated_at && String(row.created_at) !== String(row.updated_at)
+        const createdAtMs = data.created_at ? new Date(String(data.created_at)).getTime() : sentAtMs
+        const updatedAtMs = data.updated_at ? new Date(String(data.updated_at)).getTime() : NaN
+        const acked = data.created_at && data.updated_at && String(data.created_at) !== String(data.updated_at)
         const transferMs = Number.isFinite(updatedAtMs) ? Math.max(0, updatedAtMs - createdAtMs) : null
         if (acked) {
-          try { console.log('[PDV->KDS] Confirmação de recebimento', { orderId: params.orderId, ticketId: params.ticketId, kitchenId: row.kitchen_id ?? params.kitchenId, status: row.status, transferMs }) } catch { }
+          try { console.log('[PDV->KDS] Confirmação de recebimento', { orderId: params.orderId, ticketId: params.ticketId, kitchenId: data.kitchen_id ?? params.kitchenId, status: data.status, transferMs }) } catch {}
         } else {
-          try { console.warn('[PDV->KDS] Sem confirmação de recebimento (ainda)', { orderId: params.orderId, ticketId: params.ticketId, kitchenId: row.kitchen_id ?? params.kitchenId, status: row.status }) } catch { }
+          try { console.warn('[PDV->KDS] Sem confirmação de recebimento (ainda)', { orderId: params.orderId, ticketId: params.ticketId, kitchenId: data.kitchen_id ?? params.kitchenId, status: data.status }) } catch {}
         }
-      } catch { }
+      } catch {}
     }, 1500)
-  } catch { }
+  } catch {}
 }
 
 export async function createOrder(payload?: {
@@ -55,8 +93,6 @@ export async function createOrder(payload?: {
   notes?: string | null
   openedAt?: string | null
   operationalSessionId?: string | null
-  pin?: string | number | null
-  password?: string | null
 }) {
   const id = payload?.id ?? uuid()
   const now = new Date().toISOString()
@@ -67,10 +103,10 @@ export async function createOrder(payload?: {
     try {
       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
       const validUnitId = unitId && uuidRegex.test(unitId) ? unitId : null
-
+      
       const rand = () => Math.max(1000, Math.floor(Math.random() * 9999))
-      const pin = payload?.pin ?? rand()
-      const password = payload?.password ?? rand()
+      const pin = rand()
+      const password = rand()
       const { error } = await supabaseSync.insert('orders', {
         id,
         unit_id: validUnitId,
@@ -83,19 +119,16 @@ export async function createOrder(payload?: {
         updated_at: now,
         pin,
         password,
-        operational_session_id: payload?.operationalSessionId ?? null,
         version: 1,
         pending_sync: false,
       })
       if (error) throw error
-      // Initialize phase time for Supabase orders
-      setPhaseTime(id, { newStart: payload?.openedAt ?? now }).catch(console.error)
       persisted = true
     } catch (err) {
       console.warn('[ordersService] Falha ao criar pedido no Supabase, tentando local:', err)
     }
-  }
-
+  } 
+  
   if (!persisted) {
     try {
       await query(
@@ -114,18 +147,11 @@ export async function createOrder(payload?: {
           1,
         ],
       )
-      if (payload?.pin || payload?.password) {
-        await setOrderDetails(id, { pin: String(payload.pin), password: payload.password ?? undefined })
-      }
-      // Persist phase time (new_start)
-      setPhaseTime(id, { newStart: payload?.openedAt ?? now }).catch(console.error)
     } catch {
       const raw = localStorage.getItem('orders')
       const arr = raw ? JSON.parse(raw) : []
       arr.push({ id, status: 'open', total_cents: 0, opened_at: payload?.openedAt ?? now, device_id: payload?.deviceId ?? null, unit_id: unitId ?? null, operational_session_id: payload?.operationalSessionId ?? null, notes: payload?.notes ?? null, updated_at: now, version: 1, pending_sync: 1 })
       localStorage.setItem('orders', JSON.stringify(arr))
-      // Persist phase time for localStorage fallback
-      setPhaseTime(id, { newStart: payload?.openedAt ?? now }).catch(console.error)
     }
   }
   return id
@@ -149,17 +175,16 @@ export async function addItem(params: {
       let productName: string | null = null
       let categoryId: string | null = null
       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
+      
       if (params.productId && uuidRegex.test(params.productId)) {
         const { data: p } = await supabaseSync.select('products', (q) =>
           q.select('name, category_id').eq('id', params.productId).maybeSingle(),
           { silent: true }
         )
-        const prow = p as any
-        productName = prow?.name ?? null
-        categoryId = prow?.category_id ?? null
+        productName = p?.name ?? null
+        categoryId = p?.category_id ?? null
       }
-
+      
       const { error: errItem } = await supabaseSync.insert('order_items', {
         id,
         order_id: params.orderId,
@@ -175,15 +200,14 @@ export async function addItem(params: {
         pending_sync: false,
       })
       if (errItem) throw errItem
-
+      
       const { data: ordRow, error: ordSelErr } = await supabaseSync.select('orders', (q) =>
         q.select('total_cents').eq('id', params.orderId).maybeSingle(),
         { silent: true }
       )
       if (!ordSelErr) {
-        const orow = ordRow as any
-        const current = Number(orow?.total_cents ?? 0)
-        await supabaseSync.update('orders',
+        const current = Number(ordRow?.total_cents ?? 0)
+        await supabaseSync.update('orders', 
           { total_cents: current + subtotal, updated_at: now },
           { id: params.orderId }
         )
@@ -196,7 +220,7 @@ export async function addItem(params: {
           q.select('kitchen_id').eq('category_id', categoryId),
           { silent: true }
         )
-        kitchenIds = ((cats as any) || []).map((r: any) => String(r.kitchen_id)).filter(Boolean)
+        kitchenIds = (cats || []).map((r: any) => String(r.kitchen_id)).filter(Boolean)
       }
       const baseTicket = { order_id: params.orderId, status: 'NEW', updated_at: now, version: 1, pending_sync: false } as any
       const inserted: { ticketId: UUID; kitchenId: string | null }[] = []
@@ -206,7 +230,7 @@ export async function addItem(params: {
           q.select('id,kitchen_id').eq('order_id', params.orderId).in('kitchen_id', kitchenIds),
           { silent: true }
         )
-        const existingSet = new Set(((existing as any) || []).map((r: any) => String(r.kitchen_id)))
+        const existingSet = new Set((existing || []).map((r: any) => String(r.kitchen_id)))
         const missing = kitchenIds.filter((kid) => !existingSet.has(String(kid)))
         if (missing.length > 0) {
           const rows = missing.map((kid) => {
@@ -221,7 +245,7 @@ export async function addItem(params: {
           q.select('id').eq('order_id', params.orderId).is('kitchen_id', null).limit(1),
           { silent: true }
         )
-        if (((existingNull as any) || []).length === 0) {
+        if ((existingNull || []).length === 0) {
           const ticketId = uuid()
           inserted.push({ ticketId, kitchenId: null })
           await supabaseSync.insert('kds_tickets', { id: ticketId, ...baseTicket, kitchen_id: null })
@@ -234,19 +258,19 @@ export async function addItem(params: {
         if (inserted.length > 0) {
           console.log('[PDV->KDS] Tickets criados', { orderId: params.orderId, count: inserted.length, transferMs: Math.round(ms) })
         }
-      } catch { }
+      } catch {}
 
       try {
         for (const it of inserted) {
           scheduleTicketReceiptCheck({ orderId: params.orderId, ticketId: it.ticketId, kitchenId: it.kitchenId, sentAtIso: now })
         }
-      } catch { }
+      } catch {}
       persisted = true
     } catch (err) {
       console.warn('[ordersService] Falha ao adicionar item no Supabase, tentando local:', err)
     }
-  }
-
+  } 
+  
   if (!persisted) {
     try {
       await query(
@@ -267,7 +291,7 @@ export async function addItem(params: {
         'UPDATE orders SET total_cents = COALESCE(total_cents, 0) + ?, updated_at = ?, pending_sync = 1 WHERE id = ?',
         [subtotal, now, params.orderId],
       )
-
+      
       const unitId = await getCurrentUnitId()
       const ticketId = uuid()
       await query(
@@ -279,12 +303,12 @@ export async function addItem(params: {
       const arrItems = rawItems ? JSON.parse(rawItems) : []
       arrItems.push({ id, order_id: params.orderId, product_id: params.productId, qty: params.qty, unit_price_cents: params.unitPriceCents, notes: params.notes ?? null, updated_at: now, version: 1, pending_sync: 1 })
       localStorage.setItem('order_items', JSON.stringify(arrItems))
-
+      
       const rawOrders = localStorage.getItem('orders')
       const arrOrders = rawOrders ? JSON.parse(rawOrders) : []
-      const nextOrders = arrOrders.map((o: any) => String(o.id) === String(params.orderId) ? { ...o, total_cents: Math.max(0, Number(o.total_cents || 0) + subtotal), updated_at: now } : o)
+      const nextOrders = arrOrders.map((o:any)=> String(o.id)===String(params.orderId) ? { ...o, total_cents: Math.max(0, Number(o.total_cents||0) + subtotal), updated_at: now } : o)
       localStorage.setItem('orders', JSON.stringify(nextOrders))
-
+      
       const rawTk = localStorage.getItem('kdsTickets')
       const arrTk = rawTk ? JSON.parse(rawTk) : []
       arrTk.push({ id: uuid(), order_id: params.orderId, status: 'queued', updated_at: now })
@@ -310,9 +334,9 @@ export async function removeItem(itemId: UUID) {
   } catch {
     const rawItems = localStorage.getItem('order_items')
     const items = rawItems ? JSON.parse(rawItems) : []
-    const it = items.find((x: any) => String(x.id) === String(itemId))
+    const it = items.find((x:any)=> String(x.id)===String(itemId))
     if (!it) return false
-    const nextItems = items.filter((x: any) => String(x.id) !== String(itemId))
+    const nextItems = items.filter((x:any)=> String(x.id)!==String(itemId))
     localStorage.setItem('order_items', JSON.stringify(nextItems))
     return true
   }
@@ -326,9 +350,8 @@ export async function closeOrder(orderId: UUID) {
         q.select('completed_at').eq('id', orderId).maybeSingle(),
         { silent: true }
       )
-      const row = (existing as any)
-      const completedAt = row?.completed_at ?? now
-      await supabaseSync.update('orders',
+      const completedAt = existing?.completed_at ?? now
+      await supabaseSync.update('orders', 
         { status: 'DELIVERED', completed_at: completedAt, updated_at: now },
         { id: orderId }
       )
@@ -344,14 +367,14 @@ export async function closeOrder(orderId: UUID) {
     ])
   }
 
-  await setPhaseTime(orderId, { deliveredAt: now })
+  await setDeliveredPhaseTime(orderId, now)
 }
 
 export async function cancelOrder(orderId: UUID) {
   const now = new Date().toISOString()
   if (supabase) {
     try {
-      await supabaseSync.update('orders',
+      await supabaseSync.update('orders', 
         { status: 'CANCELLED', updated_at: now },
         { id: orderId }
       )
@@ -385,11 +408,11 @@ export async function clearLocalOrders() {
       for (const sql of statements) {
         try {
           await query(sql)
-        } catch { }
+        } catch {}
       }
       return
     }
-  } catch { }
+  } catch {}
 
   try {
     localStorage.removeItem('orders')
@@ -399,7 +422,7 @@ export async function clearLocalOrders() {
     localStorage.removeItem('kdsTickets')
     localStorage.removeItem('kdsPhaseTimes')
     localStorage.removeItem('kdsUnitState')
-  } catch { }
+  } catch {}
 }
 
 export async function listAllLocalOrders() {
@@ -490,23 +513,6 @@ export async function listOrdersDetailed(limit = 100): Promise<Array<{ order: an
         }
       }
 
-      // [FIX] Fallback to LocalStorage for phase times if missing in SQLite
-      try {
-        const localRaw = localStorage.getItem('kdsPhaseTimes')
-        const localObj = localRaw ? JSON.parse(localRaw) : {}
-        for (const oid of ids) {
-          if (!timesByOrder[oid] && localObj[oid]) {
-            const t = localObj[oid]
-            timesByOrder[oid] = {
-              newStart: t.newStart ?? t.new_start,
-              preparingStart: t.preparingStart ?? t.preparing_start,
-              readyAt: t.readyAt ?? t.ready_at,
-              deliveredAt: t.deliveredAt ?? t.delivered_at,
-            }
-          }
-        }
-      } catch { }
-
       const unitStatesByOrder: Record<string, any> = {}
       for (const u of (unitStatesRes?.rows ?? [])) {
         const oid = String((u as any).order_id ?? (u as any).orderId ?? '')
@@ -526,127 +532,73 @@ export async function listOrdersDetailed(limit = 100): Promise<Array<{ order: an
       return orders.map((r: any) => {
         const oid = String(r.id)
         const d = detByOrder[oid]
-        const pt = timesByOrder[oid]
-
-        // Merge phase times into the order object for easier consumption by components like OrderTimeStatus
-        const mergedOrder = {
-          ...r,
-          pin: d?.pin ?? r.pin,
-          password: d?.password ?? r.password,
-          preparingStartedAt: pt?.preparingStart ? new Date(pt.preparingStart) : undefined,
-          readyAt: pt?.readyAt ? new Date(pt.readyAt) : undefined,
-          deliveredAt: pt?.deliveredAt ? new Date(pt.deliveredAt) : undefined,
-        }
-
         return {
-          order: mergedOrder,
+          order: r,
           items: itemsByOrder[oid] ?? [],
           payments: paysByOrder[oid] ?? [],
           details: d ? { pin: d.pin ? String(d.pin) : undefined, password: d.password ? String(d.password) : undefined } : undefined,
-          phaseTimes: pt,
+          phaseTimes: timesByOrder[oid],
           unitStates: unitStatesByOrder[oid],
         }
       })
     }
     if (supabase) {
-      // Tenta buscar com todas as colunas novas primeiro
-      let ords: any[] = []
-      let ordErr: any = null
-
-      try {
-        let q = supabase.from('orders').select('id, status, total_cents, discount_percent, discount_cents, observations, pin, password, unit_id, created_at, updated_at, completed_at').order('updated_at', { ascending: false }).limit(limit)
-        if (unitId) q = q.eq('unit_id', unitId)
-        const res = await q
-        ords = res.data || []
-        ordErr = res.error
-      } catch (e) {
-        console.warn('Erro ao buscar pedidos com pin/password, tentando fallback...', e)
-      }
-
-      // Safeguard: Se deu erro (provavelmente coluna inexistente), tenta query básica
-      if (ordErr || !ords) {
-        // Se for erro de sintaxe ou coluna, ou se simplesmente deu erro, tentamos o fallback
-        if (ordErr?.code === 'PGRST204' || ordErr?.message?.includes('pin') || ordErr?.message?.includes('password') || ordErr) {
-          let q = supabase.from('orders').select('id, status, total_cents, discount_percent, discount_cents, observations, unit_id, created_at, updated_at, completed_at').order('updated_at', { ascending: false }).limit(limit)
-          if (unitId) q = q.eq('unit_id', unitId)
-          const res = await q
-          ords = res.data || []
-          if (res.error) throw res.error
-        }
-      }
-
-      const ids = (ords || []).map((r: any) => String(r.id))
+      let q = supabase
+        .from('orders')
+        .select('*')
+        .order('updated_at', { ascending: false })
+        .limit(limit)
+      if (unitId) q = q.eq('unit_id', unitId)
+      const { data: ords, error: ordErr } = await q
+      if (ordErr) throw ordErr
+      const ids = (ords || []).map(r => String(r.id))
       if (!ids.length) return []
-
+      
       const { data: itemsData, error: itemsErr } = await supabase.from('order_items').select('id, order_id, product_id, product_name, quantity, unit_price_cents, total_cents').in('order_id', ids)
       if (itemsErr) throw itemsErr
-
+      
       const { data: paysData, error: paysErr } = await supabase.from('payments').select('order_id, method, amount_cents, change_cents').in('order_id', ids)
       if (paysErr) throw paysErr
-
-      let timesData: any[] = []
-      try {
-        const { data } = await supabase.from('kds_phase_times').select('*').in('order_id', ids)
-        timesData = data || []
-      } catch {
-        console.warn('Tabela kds_phase_times inacessível ou vazia')
-      }
-
-      const prodIds = Array.from(new Set((itemsData || []).map((it: any) => String(it.product_id)).filter((id: any) => id && id !== 'null' && id !== 'undefined')))
+      
+      const { data: timesData } = await supabase.from('kds_phase_times').select('*').in('order_id', ids)
+      
+      const prodIds = Array.from(new Set((itemsData || []).map(it => String(it.product_id)).filter(id => id && id !== 'null' && id !== 'undefined')))
       const { data: prods } = prodIds.length > 0 ? await supabase.from('products').select('id, category_id, name').in('id', prodIds) : { data: [] as any[] }
       const catByProd: Record<string, string | null> = {}
       for (const p of (prods || [])) catByProd[String(p.id)] = (p as any).category_id ?? null
-
+      
       const itemsByOrder: Record<string, any[]> = {}
       for (const it of (itemsData || [])) {
         const oid = String(it.order_id)
         itemsByOrder[oid] = itemsByOrder[oid] || []
         itemsByOrder[oid].push({ ...it, category_id: catByProd[String(it.product_id)] ?? null })
       }
-
+      
       const paysByOrder: Record<string, any[]> = {}
       for (const p of (paysData || [])) {
         const oid = String(p.order_id)
         paysByOrder[oid] = paysByOrder[oid] || []
         paysByOrder[oid].push(p)
       }
-
+      
       const timesByOrder: Record<string, any> = {}
       for (const t of (timesData || [])) {
         const oid = String(t.order_id)
         timesByOrder[oid] = {
-          newStart: t.new_start,
-          preparingStart: t.preparing_start,
-          readyAt: t.ready_at,
-          deliveredAt: t.delivered_at
+            newStart: t.new_start,
+            preparingStart: t.preparing_start,
+            readyAt: t.ready_at,
+            deliveredAt: t.delivered_at
         }
       }
-
-      return (ords || []).map((r: any) => {
-        const oid = String(r.id)
-        const pt = timesByOrder[oid]
-
-        // Merge phase times into the order object for easier consumption by components like OrderTimeStatus
-        const mergedOrder = {
-          ...r,
-          pin: r.pin,
-          password: r.password,
-          preparingStartedAt: pt?.preparingStart ? new Date(pt.preparingStart) : undefined,
-          readyAt: pt?.readyAt ? new Date(pt.readyAt) : undefined,
-          deliveredAt: pt?.deliveredAt ? new Date(pt.deliveredAt) : undefined,
-          createdAt: r.created_at ? new Date(r.created_at) : undefined,
-          updatedAt: r.updated_at ? new Date(r.updated_at) : undefined,
-          completedAt: r.completed_at ? new Date(r.completed_at) : undefined,
-        }
-
-        return {
-          order: mergedOrder,
-          items: itemsByOrder[oid] ?? [],
-          payments: paysByOrder[oid] ?? [],
-          details: { pin: r.pin, password: r.password },
-          phaseTimes: pt,
-        }
-      })
+      
+      return (ords || []).map(r => ({ 
+        order: r, 
+        items: itemsByOrder[String(r.id)] || [], 
+        payments: paysByOrder[String(r.id)] || [], 
+        details: { pin: (r as any).pin, password: (r as any).password },
+        phaseTimes: timesByOrder[String(r.id)]
+      }))
     }
     return []
   } catch { return [] }
@@ -715,7 +667,7 @@ export async function setOrderDetails(orderId: UUID, details: { pin?: string; pa
       const next = { ...cur, ...details }
       obj[String(orderId)] = next
       localStorage.setItem('kdsOrderDetails', JSON.stringify(obj))
-    } catch { }
+    } catch {}
   }
 }
 import { getCurrentUnitId } from './deviceProfileService'

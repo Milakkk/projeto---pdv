@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import OrderBoard from './components/OrderBoard';
 import OperatorManagementModal from './components/OperatorManagementModal';
 import KitchenSelectModal from './components/KitchenSelectModal';
+import AlertModal from '../../components/base/AlertModal';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import type { Order, KitchenOperator, Category, ProductionUnit, OperationalSession } from '../../types';
 import { useOffline } from '../../hooks/useOffline';
@@ -10,12 +11,14 @@ import Button from '../../components/base/Button';
 import { mockCategories } from '../../mocks/data';
 import { showSuccess } from '../../utils/toast';
 import ReadyOrderTable from './components/ReadyOrderTable';
+import { useAuth } from '../../context/AuthContext';
 import Modal from '../../components/base/Modal';
 import DeliveredOrderList from './components/DeliveredOrderList';
 import Icon from '../../ui/Icon';
 // Serviços offline (leitura do SQLite)
 import * as productsService from "../../offline/services/productsService";
 import * as kdsService from "../../offline/services/kdsService";
+import * as cashService from "../../offline/services/cashService";
 import { ensureDeviceProfile } from '@/offline/services/deviceProfileService'
 
 import OperationModeBadge from '@/components/OperationModeBadge'
@@ -36,6 +39,7 @@ const createProductionUnits = (quantity: number): ProductionUnit[] => {
 
 export default function CozinhaPage() {
   const { isOnline } = useOffline();
+  const { user, store } = useAuth();
   const navigate = useNavigate();
 
   // Seleção de cozinha e operador
@@ -53,6 +57,7 @@ export default function CozinhaPage() {
   const [categories, setCategories] = useLocalStorage<Category[]>('categories', mockCategories);
 
   const [operationalSession] = useLocalStorage<OperationalSession | null>('currentOperationalSession', null);
+  const [cashSession, setCashSession] = useLocalStorage<any>('currentCashSession', null);
 
   const [showOperatorModal, setShowOperatorModal] = useState(false);
   const [showOperatorViewModal, setShowOperatorViewModal] = useState(false);
@@ -63,6 +68,9 @@ export default function CozinhaPage() {
   const [showReadyModal, setShowReadyModal] = useState(false);
   const [showDeliveredModal, setShowDeliveredModal] = useState(false);
   const [showCanceledModal, setShowCanceledModal] = useState(false);
+
+  const [showAlertModal, setShowAlertModal] = useState(false);
+  const [alertModalMessage, setAlertModalMessage] = useState({ title: '', message: '', variant: 'error' as 'error' | 'info' | 'success' });
 
   const [showDeliveryConfirmation, setShowDeliveryConfirmation] = useState(false);
   const [orderToDeliver, setOrderToDeliver] = useState<Order | null>(null);
@@ -84,7 +92,7 @@ export default function CozinhaPage() {
     try { const raw = localStorage.getItem('kdsOrderDetails'); const map = raw ? JSON.parse(raw) : {}; map[id] = { ...(map[id] || {}), ...patch }; localStorage.setItem('kdsOrderDetails', JSON.stringify(map)) } catch { }
   }
 
-
+  const isOperationalSessionOpen = useMemo(() => !!operationalSession && operationalSession.status === 'OPEN', [operationalSession]);
 
   const statusRank = (s: Order['status']) => {
     if (s === 'DELIVERED' || s === 'CANCELLED') return 3
@@ -122,15 +130,14 @@ export default function CozinhaPage() {
 
       const createdAt = pickMinDate(prev?.createdAt, next.createdAt) ?? next.createdAt
       const updatedAt = pickMinDate(prev?.updatedAt, next.updatedAt)
-      const preparingStartedAt = pickMinDate(prev?.preparingStartedAt, next.preparingStartedAt)
       const readyAt = pickMinDate(prev?.readyAt, next.readyAt)
       const deliveredAt = pickMinDate(prev?.deliveredAt, next.deliveredAt)
 
       const pin = (next.pin && String(next.pin).trim()) ? next.pin : (prev?.pin ?? '')
       const password = (next.password && String(next.password).trim()) ? next.password : (prev?.password ?? '')
 
-      const nextItems = Array.isArray(next.items) ? next.items : []
       const prevItems = Array.isArray(prev?.items) ? prev!.items : []
+      const nextItems = Array.isArray(next.items) ? next.items : []
       const baseItems = nextItems.length ? nextItems : prevItems
 
       const prevItemById: Record<string, any> = {}
@@ -146,19 +153,13 @@ export default function CozinhaPage() {
         const mergedUnits = it.productionUnits.map((u: any) => {
           const pu = prevUnitsById[String(u.unitId)]
           if (!pu) return u
-
-          // Se o novo explicitamente diz READY, é READY.
-          // Se o novo não diz nada (undefined), mas o anterior era READY, mantém READY.
-          // Caso contrário (incluindo explicitamente PENDING), fica PENDING.
-          const unitStatus = (String(u.unitStatus).toUpperCase() === 'READY') ? 'READY' :
-            (String(pu.unitStatus).toUpperCase() === 'READY' && !u.unitStatus ? 'READY' : 'PENDING');
-
+          const unitStatus = (String(pu.unitStatus).toUpperCase() === 'READY' || String(u.unitStatus).toUpperCase() === 'READY') ? 'READY' : 'PENDING'
           return {
             ...u,
             operatorName: u.operatorName ?? pu.operatorName,
             unitStatus,
             completedObservations: Array.isArray(u.completedObservations) ? u.completedObservations : pu.completedObservations,
-            completedAt: unitStatus === 'READY' ? (u.completedAt ?? pu.completedAt) : undefined,
+            completedAt: u.completedAt ?? pu.completedAt,
             deliveredAt: u.deliveredAt ?? pu.deliveredAt,
           }
         })
@@ -166,11 +167,13 @@ export default function CozinhaPage() {
         return { ...it, productionUnits: mergedUnits }
       })
 
-      return { ...next, status, createdAt, updatedAt, preparingStartedAt, readyAt, deliveredAt, pin, password, items: mergedItems }
+      return { ...next, status, createdAt, updatedAt, readyAt, deliveredAt, pin, password, items: mergedItems }
     })
   }
 
-
+  const activeProductionOrders = useMemo(() => {
+    return orders.filter(order => ['NEW', 'PREPARING', 'READY'].includes(order.status));
+  }, [orders]);
 
   useEffect(() => {
     let mounted = true
@@ -241,7 +244,7 @@ export default function CozinhaPage() {
               if (tickets.length) {
                 const mapToOrderStatus = (s: string) => {
                   const normalized = String(s).toUpperCase();
-                  if (normalized === 'NEW') return 'NEW';
+                  if (normalized === 'QUEUED' || normalized === 'NEW') return 'NEW';
                   if (normalized === 'PREP' || normalized === 'PREPARING') return 'PREPARING';
                   if (normalized === 'READY') return 'READY';
                   if (normalized === 'DONE' || normalized === 'DELIVERED') return 'DELIVERED';
@@ -282,7 +285,7 @@ export default function CozinhaPage() {
                   }
                   if (ackEvents.length) {
                     const headers: Record<string, string> = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${secret}` }
-                    fetch(`${hubUrl.replace(/\/$/, '')}/push`, { method: 'POST', headers, body: JSON.stringify({ events: ackEvents }) }).catch(() => { })
+                    fetch(`${hubUrl.replace(/\/$/, '')}/push`, { method: 'POST', headers, body: JSON.stringify({ events: ackEvents }) }).catch(() => {})
                   }
                 } catch { }
                 startTransition(() => {
@@ -387,24 +390,7 @@ export default function CozinhaPage() {
               if (!ordId) continue
 
               const times = await kdsService.getPhaseTimes(ordId)
-
-              // Fetch order details (opened_at, etc)
-              let orderData: any = null;
               const api = (window as any)?.api
-
-              if (api?.db) {
-                const res = await api.db.query('SELECT * FROM orders WHERE id = ?', [ordId]);
-                orderData = res?.rows?.[0];
-              } else if (isOnline) {
-                try {
-                  const { supabase } = await import('../../utils/supabase');
-                  if (supabase) {
-                    const { data } = await supabase.from('orders').select('*').eq('id', ordId).maybeSingle();
-                    orderData = data;
-                  }
-                } catch { }
-              }
-
               const resItems = api?.db ? await api.db.query(
                 'SELECT oi.*, p.name as product_name, p.category_id as category_id FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id WHERE oi.order_id = ?',
                 [ordId]
@@ -440,7 +426,7 @@ export default function CozinhaPage() {
                     // This matches the format we used when saving if we passed unitId correctly
                     const key = `${ordId}:${String(it.id)}:${u.unitId}`
                     const s = unitMap[key] || {}
-
+                    
                     return {
                       ...u,
                       operatorName: s.operatorName || u.operatorName,
@@ -469,12 +455,12 @@ export default function CozinhaPage() {
                   items: mergedItems,
                   total: 0,
                   status: statusMap[String(t.status)] || 'NEW',
-                  createdAt: times?.newStart ? new Date(times.newStart) : (orderData?.opened_at ? new Date(orderData.opened_at) : (t.created_at ? new Date(t.created_at) : new Date())),
+                  createdAt: times?.newStart ? new Date(times.newStart) : new Date(),
                   readyAt: times?.readyAt ? new Date(times.readyAt) : undefined,
                   deliveredAt: times?.deliveredAt ? new Date(times.deliveredAt) : undefined,
                   slaMinutes: 30,
                   createdBy: 'Sistema',
-                  updatedAt: times?.preparingStart ? new Date(times.preparingStart) : (orderData?.updated_at ? new Date(orderData.updated_at) : undefined),
+                  updatedAt: times?.preparingStart ? new Date(times.preparingStart) : undefined,
                 } as unknown as Order)
               } catch {
                 // Fallback sem unit states
@@ -488,7 +474,7 @@ export default function CozinhaPage() {
                 }
                 const times = t.phase_times || t.phaseTimes || {}
                 // Fallback para createdAt se não tiver newStart
-                const createdAt = times?.newStart ? new Date(times.newStart) : (orderData?.opened_at ? new Date(orderData.opened_at) : (t.created_at ? new Date(t.created_at) : new Date()))
+                const createdAt = times?.newStart ? new Date(times.newStart) : (t.created_at ? new Date(t.created_at) : new Date())
                 out.push({
                   id: ordId,
                   ticketId: String(t.id),
@@ -502,7 +488,7 @@ export default function CozinhaPage() {
                   deliveredAt: times?.deliveredAt ? new Date(times.deliveredAt) : undefined,
                   slaMinutes: 30,
                   createdBy: 'Sistema',
-                  updatedAt: times?.preparingStart ? new Date(times.preparingStart) : (orderData?.updated_at ? new Date(orderData.updated_at) : undefined),
+                  updatedAt: times?.preparingStart ? new Date(times.preparingStart) : undefined,
                 } as unknown as Order)
               }
             }
@@ -600,6 +586,8 @@ export default function CozinhaPage() {
           currentItem = {
             ...currentItem,
             productionUnits: newUnits,
+            operatorName: undefined,
+            itemStatus: undefined,
           };
         }
 
@@ -653,9 +641,10 @@ export default function CozinhaPage() {
       try {
         try { await ensureDeviceProfile({ role: 'kds' }) } catch (e) { }
         await productsService.migrateLocalStorageCatalog()
-        const [ops, cats] = await Promise.all([
+        const [ops, cats, sess] = await Promise.all([
           kdsService.listOperators(),
           productsService.listCategories(),
+          cashService.getCurrentSession(),
         ]);
 
         if (!mounted) return;
@@ -669,7 +658,9 @@ export default function CozinhaPage() {
           startTransition(() => setCategories(mapped));
         }
 
-
+        if (sess) {
+          startTransition(() => setCashSession(sess));
+        }
       } catch (error) {
         console.warn('cozinha: carregamento inicial', error);
       }
@@ -677,14 +668,14 @@ export default function CozinhaPage() {
     return () => {
       mounted = false;
     };
-  }, [setOperators, setCategories]);
+  }, [setOperators, setCategories, setCashSession]);
 
   // Carregar tickets por status e atualizar orders (mantendo estrutura da UI)
   useEffect(() => {
     let mounted = true;
     const mapStatus = (s: string): Order['status'] => {
       const normalized = String(s).toUpperCase();
-      if (normalized === 'NEW') return 'NEW';
+      if (normalized === 'QUEUED' || normalized === 'NEW') return 'NEW';
       if (normalized === 'PREP' || normalized === 'PREPARING') return 'PREPARING';
       if (normalized === 'READY') return 'READY';
       if (normalized === 'DONE' || normalized === 'DELIVERED') return 'DELIVERED';
@@ -697,8 +688,8 @@ export default function CozinhaPage() {
     }
     const fetchTickets = async () => {
       if (!mounted) return;
+      const startTime = performance.now();
       try {
-        let gotTickets = false;
         const kitchenFilter = selectedKitchenId || undefined
         const { supabase } = await import('../../utils/supabase')
         const canQuerySupabase =
@@ -715,7 +706,6 @@ export default function CozinhaPage() {
           const { data, error } = await q
           if (error) useSupabase = false
           tk = Array.isArray(data) ? data : []
-          gotTickets = true
 
           try {
             const nowIso = new Date().toISOString()
@@ -737,7 +727,7 @@ export default function CozinhaPage() {
                 transferMsList.length > 0 ? Math.round(transferMsList.reduce((a, b) => a + b, 0) / transferMsList.length) : null
               console.log('[PDV->KDS] Confirmação de recebimento (KDS)', { count: toAck.length, kitchenId: kitchenFilter ?? null, avgTransferMs })
             }
-          } catch { }
+          } catch {}
         }
 
         if (!useSupabase) {
@@ -748,25 +738,23 @@ export default function CozinhaPage() {
             kdsService.listTicketsByStatus('done', kitchenFilter),
           ])
           tk = ([] as any[]).concat(tkQueued || [], tkPrep || [], tkReady || [], tkDone || [])
-          gotTickets = true
         }
         if (!mounted || !Array.isArray(tk)) return;
 
         // [FIX] Fetch order timestamps from 'orders' table to prevent reset on reload
         const orderIds = tk.map((t: any) => String(t.order_id ?? t.orderId ?? '')).filter(id => id);
         let ordersMap: Record<string, any> = {};
-
+        
         if (useSupabase && orderIds.length > 0) {
-          try {
-            // Fix: remove 'opened_at' if it doesn't exist on orders table
-            const { data } = await supabase
-              .from('orders')
-              .select('id, created_at, pin, password')
-              .in('id', orderIds);
-            if (data) {
-              ordersMap = data.reduce((acc: any, o: any) => ({ ...acc, [o.id]: o }), {});
-            }
-          } catch { }
+           try {
+             const { data } = await supabase
+               .from('orders')
+               .select('id, opened_at, created_at')
+               .in('id', orderIds);
+             if (data) {
+               ordersMap = data.reduce((acc: any, o: any) => ({ ...acc, [o.id]: o }), {});
+             }
+           } catch {}
         }
 
         const timesByOrder: Record<string, any> = {}
@@ -782,7 +770,7 @@ export default function CozinhaPage() {
                 deliveredAt: t.delivered_at ?? t.deliveredAt,
               }
             }
-          } catch { }
+          } catch {}
         }
 
         const unitMapByOrder: Record<string, Record<string, any>> = {}
@@ -808,7 +796,7 @@ export default function CozinhaPage() {
                   deliveredAt: r.delivered_at || undefined,
                 }
               }
-            } catch { }
+            } catch {}
           } else {
             for (const oid of orderIds) {
               try {
@@ -826,13 +814,12 @@ export default function CozinhaPage() {
           try {
             const { data, error } = await supabase
               .from('order_items')
-              .select('id, order_id, quantity, unit_price_cents, product_id, product_name, product:products(category_id)')
+              .select('id, order_id, quantity, unit_price_cents, product_id, product_name')
               .in('order_id', orderIds)
             if (!error) {
               for (const it of (data || []) as any[]) {
                 const oid = String(it.order_id)
                 if (!itemsByOrder[oid]) itemsByOrder[oid] = []
-                const categoryId = String(it?.product?.category_id ?? '')
                 itemsByOrder[oid].push({
                   id: String(it.id),
                   quantity: Number(it.quantity ?? 1),
@@ -842,7 +829,7 @@ export default function CozinhaPage() {
                     name: String(it.product_name ?? 'Item'),
                     unitDeliveryCount: 1,
                     sla: 15,
-                    categoryId,
+                    categoryId: '',
                   },
                   productionUnits: Array.from({ length: Math.max(1, Number(it.quantity ?? 1)) }, (_, idx) => ({
                     unitId: `${String(it.id)}-${idx + 1}`,
@@ -854,31 +841,13 @@ export default function CozinhaPage() {
                 })
               }
             }
-          } catch { }
+          } catch {}
         }
-
-        const localPhaseTimes = (() => {
-          try {
-            return JSON.parse(localStorage.getItem('kdsPhaseTimes') || '{}')
-          } catch { return {} }
-        })();
 
         const mappedOrders: Order[] = [];
         for (const t of tk as any[]) {
           const oid = String(t.order_id ?? t.orderId ?? '')
-          const times = timesByOrder[oid] || localPhaseTimes[oid] || {}
-
-          // Fallback para tempos enriquecidos pelo kdsService (offline/local mode) ou propriedades do ticket
-          const fallbackTimes = {
-            newStart: t.createdAt || t.created_at,
-            preparingStart: t.updatedAt || t.updated_at,
-            readyAt: t.readyAt || t.ready_at,
-            deliveredAt: t.deliveredAt || t.delivered_at
-          }
-
-          const ordPin = t.pin || t.order_pin || ordersMap[oid]?.pin || ''
-          const ordPassword = t.password || t.order_password || ordersMap[oid]?.password || ''
-
+          const times = timesByOrder[oid] || {}
           let items: any[] = (itemsByOrder[oid] && itemsByOrder[oid].length > 0) ? itemsByOrder[oid] : (Array.isArray(t.items) ? t.items : [])
           const unitMap: Record<string, any> = unitMapByOrder[oid] || {}
 
@@ -897,18 +866,18 @@ export default function CozinhaPage() {
 
             // Merge with persisted state
             const mergedUnits = currentUnits.map((u: any) => {
-              // Use consistent key format: orderId:itemId:unitId
-              const key = `${oid}:${String(item.id)}:${u.unitId}`
-              const s = unitMap[key] || {}
-              return {
-                ...u,
-                unitId: u.unitId ?? `${String(item.id)}-1`, // Ensure unitId exists
-                operatorName: s.operatorName || u.operatorName,
-                unitStatus: (s.unitStatus || u.unitStatus || 'PENDING'),
-                completedObservations: Array.isArray(s.completedObservations) ? s.completedObservations : (u.completedObservations || []),
-                completedAt: s.completedAt ? new Date(s.completedAt) : (u.completedAt ? new Date(u.completedAt) : undefined),
-                deliveredAt: s.deliveredAt ? new Date(s.deliveredAt) : (u.deliveredAt ? new Date(u.deliveredAt) : undefined),
-              }
+               // Use consistent key format: orderId:itemId:unitId
+               const key = `${oid}:${String(item.id)}:${u.unitId}`
+               const s = unitMap[key] || {}
+               return {
+                 ...u,
+                 unitId: u.unitId ?? `${String(item.id)}-1`, // Ensure unitId exists
+                 operatorName: s.operatorName || u.operatorName,
+                 unitStatus: (s.unitStatus || u.unitStatus || 'PENDING'),
+                 completedObservations: Array.isArray(s.completedObservations) ? s.completedObservations : (u.completedObservations || []),
+                 completedAt: s.completedAt ? new Date(s.completedAt) : (u.completedAt ? new Date(u.completedAt) : undefined),
+                 deliveredAt: s.deliveredAt ? new Date(s.deliveredAt) : (u.deliveredAt ? new Date(u.deliveredAt) : undefined),
+               }
             })
 
             return {
@@ -926,27 +895,24 @@ export default function CozinhaPage() {
             }
           })
           const slaMinutes = Math.max(1, items.reduce((sum: number, it: any) => sum + (normalizeSla(it.menuItem?.sla ?? 15) * Math.max(1, Number(it.quantity ?? 1))), 0))
-          // Removido getOrderDetails não confiável aqui, usando ordPin/ordPassword extraídos acima
+          const details = getOrderDetails(String(t.order_id ?? t.orderId ?? t.id ?? ''))
           const ord: Order = {
             id: String(t.order_id ?? t.orderId ?? ''),
-            pin: String(ordPin),
-            password: String(ordPassword),
-            status: mapStatus(String(t.status ?? 'NEW')),
+            pin: String(t.pin ?? t.orderPin ?? details.pin ?? ''),
+            password: String(t.password ?? details.password ?? ''),
+            status: mapStatus(String(t.status ?? 'queued')),
             createdAt: t.createdAt
               ? new Date(t.createdAt)
               : (times.newStart
                 ? new Date(times.newStart)
-                : (fallbackTimes.newStart
-                  ? new Date(fallbackTimes.newStart)
-                  : (ordersMap[oid]?.opened_at
-                    ? new Date(ordersMap[oid].opened_at)
-                    : (ordersMap[oid]?.created_at
-                      ? new Date(ordersMap[oid].created_at)
-                      : (t.created_at ? new Date(t.created_at) : new Date()))))),
-            updatedAt: times.preparingStart ? new Date(times.preparingStart) : (fallbackTimes.preparingStart ? new Date(fallbackTimes.preparingStart) : (t.updated_at ? new Date(t.updated_at) : (t.updatedAt ? new Date(t.updatedAt) : undefined))),
-            readyAt: times.readyAt ? new Date(times.readyAt) : (fallbackTimes.readyAt ? new Date(fallbackTimes.readyAt) : (t.readyAt ? new Date(t.readyAt) : undefined)),
-            preparingStartedAt: times.preparingStart ? new Date(times.preparingStart) : (fallbackTimes.preparingStart ? new Date(fallbackTimes.preparingStart) : (t.updated_at ? new Date(t.updated_at) : (t.updatedAt ? new Date(t.updatedAt) : undefined))),
-            deliveredAt: times.deliveredAt ? new Date(times.deliveredAt) : (fallbackTimes.deliveredAt ? new Date(fallbackTimes.deliveredAt) : (t.deliveredAt ? new Date(t.deliveredAt) : undefined)),
+                : (ordersMap[oid]?.opened_at
+                  ? new Date(ordersMap[oid].opened_at)
+                  : (ordersMap[oid]?.created_at
+                    ? new Date(ordersMap[oid].created_at)
+                    : (t.created_at ? new Date(t.created_at) : new Date())))),
+            updatedAt: t.updatedAt ? new Date(t.updatedAt) : (times.preparingStart ? new Date(times.preparingStart) : (t.updated_at ? new Date(t.updated_at) : undefined)),
+            readyAt: t.readyAt ? new Date(t.readyAt) : (times.readyAt ? new Date(times.readyAt) : undefined),
+            deliveredAt: t.deliveredAt ? new Date(t.deliveredAt) : (times.deliveredAt ? new Date(times.deliveredAt) : undefined),
             items,
             slaMinutes,
             total: 0,
@@ -968,31 +934,9 @@ export default function CozinhaPage() {
         }
         const final = Object.values(byId)
         startTransition(() => {
-          setOrders(prev => {
-            if (!gotTickets) return prev
-            const next = mergeOrdersList(prev, final)
-            try {
-              if (final.length > 0) {
-                localStorage.setItem('kdsOrdersSnapshot', JSON.stringify(final))
-                localStorage.setItem('kdsOrdersSnapshotAt', new Date().toISOString())
-              }
-            } catch { }
-            return next
-          })
+          setOrders(prev => mergeOrdersList(prev, final))
         });
       } catch (error) {
-        console.error('[Cozinha] Erro ao carregar tickets/pedidos:', error)
-        try {
-          const raw = localStorage.getItem('kdsOrdersSnapshot')
-          if (raw && mounted) {
-            const snap = JSON.parse(raw)
-            if (Array.isArray(snap) && snap.length > 0) {
-              startTransition(() => {
-                setOrders(prev => (prev.length > 0 ? prev : snap))
-              })
-            }
-          }
-        } catch { }
       }
     };
     fetchTickets();
@@ -1037,7 +981,10 @@ export default function CozinhaPage() {
     previousOrdersRef.current = orders;
   }, [orders]); // Dependência apenas de orders para este efeito
 
-
+  const displayAlert = (title: string, message: string, variant: 'error' | 'info' | 'success' = 'error') => {
+    setAlertModalMessage({ title, message, variant });
+    setShowAlertModal(true);
+  };
 
   // Pré-marcar unidades já entregues (entrega direta) ao abrir confirmação
   useEffect(() => {
@@ -1070,14 +1017,20 @@ export default function CozinhaPage() {
       return;
     }
 
+    // Optimistic Update: Atualiza UI imediatamente
+    setOrders(prev => prev.map(o => {
+      if (o.id === orderId) {
+        return { ...o, status: status, updatedAt: new Date() };
+      }
+      return o;
+    }));
 
-
-    pendingStatusRef.current[String(orderId)] = { status, until: Date.now() + 8000 };
+    pendingStatusRef.current[String(orderId)] = { status, until: Date.now() + 8000 }
 
     // Atualiza status via serviço KDS PRIMEIRO, aguarda confirmação, depois atualiza UI
     (async () => {
       try {
-        // Correção CRÍTICA: NEW → new, PREPARING → prep, READY → ready, DELIVERED → done
+        // Correção CRÍTICA: NEW → queued, PREPARING → prep, READY → ready, DELIVERED → done
         const mapToKds = (s: Order['status']) => {
           if (s === 'NEW') return 'queued';
           if (s === 'PREPARING') return 'prep';
@@ -1087,55 +1040,64 @@ export default function CozinhaPage() {
         };
         const ord = orders.find(o => o.id === orderId)
         const tId = (ord as any)?.ticketId || orderId
-
+        
         // Tenta usar Supabase diretamente se disponível (Web Mode)
         if (isOnline) {
-          const { supabase } = await import('../../utils/supabase');
-          if (supabase) {
-            // Fix: Supabase expects 'PREPARING', 'NEW', 'READY', 'DELIVERED' in kds_tickets
-            // But mapToKds returns 'prep', 'queued', etc.
-            // We should use the uppercase status for the DB value to match kdsService expectations.
-            const dbStatus = status;
-            const { error } = await supabase
-              .from('kds_tickets')
-              .update({ status: dbStatus, updated_at: new Date().toISOString() })
-              .eq('id', tId);
-
-            if (error) {
-              console.error('[Cozinha] Erro ao atualizar Supabase:', error);
-              // Fallback para kdsService se falhar (pode ser ticket não encontrado ou outra tabela)
-            } else {
-              // Persistir timestamps de fase via kdsService (que trata SQLite, Supabase e LocalStorage)
-              try {
-                const nowIso = new Date().toISOString();
-                const patch: any = {};
-                if ((status as string) === 'NEW') patch.newStart = nowIso;
-                if ((status as string) === 'PREPARING') patch.preparingStart = nowIso;
-                if ((status as string) === 'READY') patch.readyAt = nowIso;
-                if ((status as string) === 'DELIVERED') patch.deliveredAt = nowIso;
-
-                await kdsService.setPhaseTime(orderId, patch);
-
-                // Atualizar tabela de orders também (incluindo status e timestamps relevantes)
-                const orderUpdate: any = { status: status, updated_at: nowIso };
-                // Opcional: Se quiser salvar timestamps na tabela orders também (embora kds_phase_times seja a fonte da verdade para métricas)
-                // if (status === 'READY') orderUpdate.ready_at = nowIso; 
-
+            const { supabase } = await import('../../utils/supabase');
+            if (supabase) {
+              // Fix: Supabase expects 'PREPARING', 'NEW', 'READY', 'DELIVERED' in kds_tickets
+              // But mapToKds returns 'prep', 'queued', etc.
+              // We should use the uppercase status for the DB value to match kdsService expectations.
+              const dbStatus = status; 
+              const { error } = await supabase
+                .from('kds_tickets')
+                .update({ status: dbStatus, updated_at: new Date().toISOString() })
+                .eq('id', tId);
+                
+              if (error) {
+                console.error('[Cozinha] Erro ao atualizar Supabase:', error);
+                // Fallback para kdsService se falhar (pode ser ticket não encontrado ou outra tabela)
+              } else {
+                // Persistir timestamps de fase
+                try {
+                  const nowIso = new Date().toISOString();
+                  const patch: any = { order_id: orderId };
+                  if (status === 'NEW') patch.new_start = nowIso;
+                  if (status === 'PREPARING') patch.preparing_start = nowIso;
+                  if (status === 'READY') patch.ready_at = nowIso;
+                  if (status === 'DELIVERED') patch.delivered_at = nowIso;
+                  
+                  // Fix: Use SELECT -> UPDATE/INSERT instead of UPSERT to avoid 400 Bad Request if unique constraint is missing
+                  const { data: existingPhases } = await supabase
+                    .from('kds_phase_times')
+                    .select('id')
+                    .eq('order_id', orderId)
+                    .limit(1);
+                    
+                  if (existingPhases && existingPhases.length > 0) {
+                    await supabase.from('kds_phase_times').update(patch).eq('order_id', orderId);
+                  } else {
+                    const { error: insertErr } = await supabase.from('kds_phase_times').insert(patch);
+                    // Fallback for race condition or if row appeared
+                    if (insertErr) {
+                       await supabase.from('kds_phase_times').update(patch).eq('order_id', orderId);
+                    }
+                  }
+                } catch {}
+                
+                // Também atualiza orders para garantir consistência
                 await supabase
                   .from('orders')
-                  .update(orderUpdate)
+                  .update({ status: status, updated_at: new Date().toISOString() })
                   .eq('id', orderId);
 
                 try {
                   await kdsService.setTicketStatus(String(tId), mapToKds(status));
-                } catch { }
+                } catch {}
 
                 return;
-              } catch (e) {
-                console.error('[Cozinha] Erro ao persistir fase:', e);
               }
             }
-          }
         }
 
         await kdsService.setTicketStatus(String(tId), mapToKds(status));
@@ -1148,47 +1110,51 @@ export default function CozinhaPage() {
     setOrders(prevOrders => prevOrders.map(order => {
       if (String(order.id) === String(orderId)) {
         const now = new Date();
-        let readyAt = order.readyAt;
+          let readyAt = order.readyAt;
+          let updatedAt = order.updatedAt;
 
-        if (status === 'PREPARING' && (order.status === 'NEW')) {
-          const updatedItems = (order.items || []).map(item => ({
-            ...item,
-            productionUnits: (item.productionUnits || []).map(unit => ({
-              ...unit,
-              unitStatus: unit.unitStatus || 'PENDING',
-              completedAt: undefined,
-            }))
-          }));
-          return { ...order, status, items: updatedItems, preparingStartedAt: now, readyAt: undefined };
-        }
+          if (status === 'PREPARING' && order.status === 'NEW') {
+            const updatedItems = (order.items || []).map(item => ({
+              ...item,
+              productionUnits: (item.productionUnits || []).map(unit => ({
+                ...unit,
+                unitStatus: unit.unitStatus || 'PENDING',
+                completedAt: undefined,
+              }))
+            }));
+            updatedAt = now;
+            return { ...order, status, items: updatedItems, updatedAt, readyAt: undefined };
+          }
 
-        if (status === 'READY' && order.status === 'PREPARING') {
-          readyAt = now;
-          const updatedItems = (order.items || []).map(item => ({
-            ...item,
-            productionUnits: (item.productionUnits || []).map(unit => ({
-              ...unit,
-              unitStatus: 'READY' as ProductionUnit['unitStatus'],
-              completedAt: unit.unitStatus === 'READY' ? unit.completedAt : now,
-            }))
-          }));
-          return { ...order, status, items: updatedItems, readyAt };
-        }
+          if (status === 'READY' && order.status === 'PREPARING') {
+            readyAt = now;
+            const updatedItems = (order.items || []).map(item => ({
+              ...item,
+              productionUnits: (item.productionUnits || []).map(unit => ({
+                ...unit,
+                unitStatus: 'READY' as ProductionUnit['unitStatus'],
+                completedAt: unit.unitStatus === 'READY' ? unit.completedAt : now,
+              }))
+            }));
+            return { ...order, status, items: updatedItems, updatedAt: order.updatedAt, readyAt };
+          }
 
-        if ((status as string) === 'DELIVERED' && order.status === 'READY') {
-          return { ...order, status: 'DELIVERED', deliveredAt: now };
-        }
+          if (status === 'DELIVERED' && order.status === 'READY') {
+            // Não sobrescreva updatedAt (início do preparo); registre o tempo de entrega em deliveredAt
+            return { ...order, status, deliveredAt: now, updatedAt: order.updatedAt, readyAt };
+          }
 
-        if (status === 'PREPARING' && order.status === 'READY') {
-          return { ...order, status, readyAt: undefined };
-        }
-        if (status === 'NEW' && order.status === 'PREPARING') {
-          return { ...order, status, preparingStartedAt: undefined, readyAt: undefined };
-        }
+          if (status === 'PREPARING' && order.status === 'READY') {
+            readyAt = undefined;
+            return { ...order, status, updatedAt: order.updatedAt, readyAt: undefined };
+          }
+          if (status === 'NEW' && order.status === 'PREPARING') {
+            return { ...order, status, updatedAt: undefined, readyAt: undefined };
+          }
 
-        return { ...order, status, updatedAt: now, readyAt };
-      }
-      return order;
+          return { ...order, status, updatedAt: now, readyAt };
+        }
+        return order;
     }));
   };
 
@@ -1234,7 +1200,8 @@ export default function CozinhaPage() {
     startTransition(() => {
       setOrders(prevOrders => prevOrders.map(order => {
         if (order.id === orderToDeliver.id) {
-          return { ...order, status: 'DELIVERED', deliveredAt: new Date() };
+          // Preserve updatedAt como início do preparo; registre entrega em deliveredAt
+          return { ...order, status: 'DELIVERED', deliveredAt: new Date(), updatedAt: order.updatedAt };
         }
         return order;
       }));
@@ -1254,7 +1221,7 @@ export default function CozinhaPage() {
     startTransition(() => {
       setOrders(prevOrders => prevOrders.map(order => {
         if (order.id === orderId) {
-          return { ...order, status: 'DELIVERED', deliveredAt: new Date() };
+          return { ...order, status: 'DELIVERED', deliveredAt: new Date(), updatedAt: order.updatedAt };
         }
         return order;
       }));
@@ -1274,6 +1241,7 @@ export default function CozinhaPage() {
           const now = new Date();
           let newOrderStatus = order.status;
           let readyAt = order.readyAt;
+          let orderUpdated = false;
 
           const updatedItems = order.items.map(item => {
             if (item.id === itemId) {
@@ -1288,6 +1256,7 @@ export default function CozinhaPage() {
                   if (completedObservations !== undefined) {
                     updatedUnit.completedObservations = completedObservations;
                   }
+                  orderUpdated = true;
                   return updatedUnit;
                 }
                 return unit;
@@ -1301,29 +1270,28 @@ export default function CozinhaPage() {
             item.productionUnits.every(unit => unit.unitStatus === 'READY')
           );
 
-          if (allUnitsReady) {
-            newOrderStatus = 'READY';
-            readyAt = now;
-          } else if (order.status === 'READY' && unitStatus === 'PENDING' && !allUnitsReady) {
+          if (order.status === 'NEW' && unitStatus === 'READY') {
             newOrderStatus = 'PREPARING';
-            readyAt = undefined;
-          } else if (order.status === 'NEW' && unitStatus === 'READY') {
-            newOrderStatus = 'PREPARING';
+            orderUpdated = true;
           }
 
-          let finalPreparingStartedAt = order.preparingStartedAt;
-          if ((newOrderStatus === 'PREPARING' || newOrderStatus === 'READY') && (order.status === 'NEW')) {
-            finalPreparingStartedAt = now;
-            // Persistir tempo de início do preparo via kdsService
-            kdsService.setPhaseTime(orderId, { preparingStart: now.toISOString() }).catch(() => { });
+          if (order.status === 'READY' && unitStatus === 'PENDING' && !allUnitsReady) {
+            newOrderStatus = 'PREPARING';
+            readyAt = undefined;
+            orderUpdated = true;
+          }
+
+          let finalUpdatedAt = order.updatedAt;
+          if (newOrderStatus === 'PREPARING' && order.status === 'NEW') {
+            finalUpdatedAt = now;
           }
 
           return {
             ...order,
             items: updatedItems,
             status: newOrderStatus,
-            preparingStartedAt: finalPreparingStartedAt,
-            readyAt,
+            updatedAt: order.status === 'NEW' && newOrderStatus === 'PREPARING' ? finalUpdatedAt : order.updatedAt,
+            readyAt: readyAt
           };
         }
         return order;
@@ -1387,50 +1355,18 @@ export default function CozinhaPage() {
   };
 
   const cancelOrder = (orderId: string, reason: string) => {
-    console.log(`[Cozinha] Cancelando pedido ${orderId} por motivo: ${reason}`);
-    // Persist to Supabase first
-    (async () => {
-      try {
-        const { supabase } = await import('../../utils/supabase');
-        if (supabase) {
-          const nowIso = new Date().toISOString();
-
-          // Update kds_tickets status to CANCELLED
-          const { error: ticketError } = await supabase
-            .from('kds_tickets')
-            .update({ status: 'CANCELLED', updated_at: nowIso })
-            .eq('order_id', orderId);
-
-          if (ticketError) {
-            console.error('[Cozinha] Erro ao cancelar ticket no Supabase:', ticketError);
-          }
-
-          // Update orders table
-          const { error: orderError } = await supabase
-            .from('orders')
-            .update({ status: 'CANCELLED', updated_at: nowIso, cancel_reason: reason })
-            .eq('id', orderId);
-
-          if (orderError) {
-            console.error('[Cozinha] Erro ao cancelar pedido no Supabase:', orderError);
-          }
-
-          console.log('[Cozinha] Pedido cancelado com sucesso no Supabase:', orderId);
-        }
-      } catch (e) {
-        console.error('[Cozinha] Erro fatal ao cancelar no Supabase:', e);
-      }
-    })();
-
-    // Update local state immediately for UI feedback
     startTransition(() => {
-      setOrders(prev => prev.map(order =>
-        String(order.id) === String(orderId)
-          ? { ...order, status: 'CANCELLED', cancelReason: reason }
+      setOrders(orders.map(order =>
+        order.id === orderId
+          ? { ...order, status: 'CANCELLED', cancelReason: reason, updatedAt: new Date() }
           : order
       ));
     });
   };
+
+  const productionOrders = useMemo(() => {
+    return orders.filter(order => ['NEW', 'PREPARING'].includes(order.status));
+  }, [orders]);
 
   // Handler para seleção de cozinha
   const handleKitchenSelect = (kitchenId: string | null, kitchenName: string, operatorName: string) => {
@@ -1631,7 +1567,13 @@ export default function CozinhaPage() {
 
 
 
-
+        <AlertModal
+          isOpen={showAlertModal}
+          onClose={() => setShowAlertModal(false)}
+          title={alertModalMessage.title}
+          message={alertModalMessage.message}
+          variant={alertModalMessage.variant}
+        />
 
         {orderToDeliver && (
           <Modal

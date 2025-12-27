@@ -22,7 +22,6 @@ interface OrderBoardProps {
 const statusColumns = [
   { status: 'NEW' as const, title: 'Novos', color: 'bg-blue-50 border-blue-200' },
   { status: 'PREPARING' as const, title: 'Preparando', color: 'bg-yellow-50 border-yellow-200' },
-  { status: 'READY' as const, title: 'Pronto', color: 'bg-green-50 border-green-200' },
 ];
 
 const formatDuration = (seconds: number) => {
@@ -63,7 +62,7 @@ export default function OrderBoard({
   };
   
   // Filtra todos os pedidos, incluindo os prontos, para os modais
-  const productionOrders = orders.filter(order => ['NEW', 'PREPARING', 'READY'].includes(order.status));
+  const productionOrders = orders.filter(order => ['NEW', 'PREPARING'].includes(order.status));
   const readyOrders = orders.filter(order => order.status === 'READY');
   const canceledOrders = orders.filter(order => order.status === 'CANCELLED');
   const deliveredOrders = orders.filter(order => order.status === 'DELIVERED');
@@ -71,7 +70,7 @@ export default function OrderBoard({
   // Estilos CSS inline rígidos para garantir one-page
   const containerStyle: React.CSSProperties = {
     display: 'grid',
-    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+    gridTemplateColumns: 'calc(50% - 2px) calc(50% - 2px)',
     gap: '4px',
     height: '100%',
     width: '100%',

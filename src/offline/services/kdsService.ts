@@ -375,16 +375,16 @@ export async function applyHubEvents(events: any[]) {
       if (!id) continue
       const orderId = row.order_id ?? row.orderId ?? null
       const unitId = row.unit_id ?? row.unitId ?? null
-      const rawStatus = String(row.status ?? 'new')
+      const rawStatus = String(row.status ?? 'queued')
       const normalizedStatus = (() => {
         const up = rawStatus.toUpperCase()
-        if (up === 'NEW') return 'new'
+        if (up === 'NEW') return 'queued'
         if (up === 'PREPARING') return 'prep'
         if (up === 'READY') return 'ready'
         if (up === 'DELIVERED') return 'done'
         const low = rawStatus.toLowerCase()
-        if (low === 'new' || low === 'prep' || low === 'ready' || low === 'done') return low
-        return 'new'
+        if (low === 'queued' || low === 'prep' || low === 'ready' || low === 'done') return low
+        return 'queued'
       })()
       const station = row.station ?? null
       const updatedAt = row.updated_at ?? row.updatedAt ?? now

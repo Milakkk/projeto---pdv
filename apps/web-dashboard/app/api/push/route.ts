@@ -33,7 +33,7 @@ export async function POST(req: Request) {
         for (const r of rows) {
           const s = String(r.status || '').toLowerCase()
           let orderStatus: 'NEW' | 'PREPARING' | 'READY' | 'DELIVERED' | undefined
-          if (s === 'queued' || s === 'new') orderStatus = 'NEW'
+          if (s === 'queued') orderStatus = 'NEW'
           else if (s === 'prep') orderStatus = 'PREPARING'
           else if (s === 'ready') orderStatus = 'READY'
           else if (s === 'done') orderStatus = 'DELIVERED'

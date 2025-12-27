@@ -59,14 +59,14 @@ export default async function RelatoriosPage() {
 
     const { data: orders, error: ordersErr } = await supa
       .from('orders')
-      .select('id,pin,status,created_at,updated_at,completed_at')
+      .select('*')
       .order('updated_at', { ascending: false })
       .limit(80)
     if (ordersErr) throw ordersErr
 
     const orderIds = (orders || []).map((o: any) => String(o.id)).filter(Boolean)
 
-    const [{ data: phases, error: phasesErr }, { data: tickets, error: ticketsErr }] = await Promise.all([
+    const [{ data: phasesRaw, error: phasesErr }, { data: ticketsRaw, error: ticketsErr }] = await Promise.all([
       orderIds.length
         ? supa
             .from('kds_phase_times')
@@ -80,8 +80,8 @@ export default async function RelatoriosPage() {
         .limit(120),
     ])
 
-    if (phasesErr) throw phasesErr
-    if (ticketsErr) throw ticketsErr
+    const phases = phasesErr ? ([] as any[]) : (phasesRaw || [])
+    const tickets = ticketsErr ? ([] as any[]) : (ticketsRaw || [])
 
     const phaseByOrderId: Record<string, PhaseRow> = {}
     for (const p of (phases || []) as any[]) phaseByOrderId[String(p.order_id)] = p as PhaseRow
@@ -114,10 +114,19 @@ export default async function RelatoriosPage() {
 
     sample = ordersNorm.slice(0, 15).map((o) => {
       const ph = phaseByOrderId[String(o.id)]
-      const createdAtMs = toMs(ph?.new_start) ?? toMs(o.created_at) ?? toMs(o.updated_at) ?? null
+      const createdAtMs =
+        toMs(ph?.new_start) ??
+        toMs((o as any).opened_at) ??
+        toMs((o as any).created_at) ??
+        toMs(o.updated_at) ??
+        null
       const preparingStartMs = toMs(ph?.preparing_start) ?? null
       const readyAtMs = toMs(ph?.ready_at) ?? null
-      const deliveredAtMs = toMs(ph?.delivered_at) ?? toMs(o.completed_at) ?? null
+      const deliveredAtMs =
+        toMs(ph?.delivered_at) ??
+        toMs((o as any).closed_at) ??
+        toMs((o as any).completed_at) ??
+        null
 
       const waitMs =
         createdAtMs != null

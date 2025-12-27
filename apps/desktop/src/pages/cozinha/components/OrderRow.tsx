@@ -144,7 +144,7 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
 
   const getStatusAction = (status: Order['status']) => {
     const s = String(status).toUpperCase();
-    if (s === 'NEW') return 'Iniciar Preparo';
+    if (s === 'NEW' || s === 'QUEUED') return 'Iniciar Preparo';
     if (s === 'PREPARING' || s === 'PREP') return 'Marcar como Pronto';
     if (s === 'READY') return 'Entregue';
     return null;
@@ -199,7 +199,7 @@ function OrderRowComponent({ order, operators, categoryMap, onUpdateStatus, onAs
     if (!nextStatus) return;
 
     // Validação de atribuição de operador para NEW -> PREPARING (RELAXADA: Apenas alerta se não houver operadores)
-    if ((order.status === 'NEW') && nextStatus === 'PREPARING') {
+    if (order.status === 'NEW' && nextStatus === 'PREPARING') {
       console.log('Iniciando preparo (sem validação estrita de operadores)');
     }
     
