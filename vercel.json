@@ -1,0 +1,20 @@
+{
+  "buildCommand": "pnpm install && pnpm build",
+  "outputDirectory": "apps/desktop/out",
+  "framework": "vite",
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/$1"
+    },
+    {
+      "source": "/assets/(.*)",
+      "destination": "/apps/desktop/out/assets/$1"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/apps/desktop/out/index.html"
+    }
+  ],
+  "cleanUrls": true
+}
