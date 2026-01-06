@@ -220,7 +220,7 @@ export default function RelatoriosPage() {
             const { data } = await supabase
               .from('orders')
               .select('*, order_items(*), payments(*)')
-              .order('opened_at', { ascending: false })
+              .order('created_at', { ascending: false })
               .limit(200);
 
             if (data) {
