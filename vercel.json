@@ -8,12 +8,8 @@
       "destination": "/api/$1"
     },
     {
-      "source": "/assets/(.*)",
-      "destination": "/apps/desktop/out/assets/$1"
-    },
-    {
       "source": "/(.*)",
-      "destination": "/apps/desktop/out/index.html"
+      "destination": "/index.html"
     }
   ],
   "cleanUrls": true
