@@ -1,6 +1,6 @@
 {
-  "buildCommand": "pnpm install && pnpm build",
-  "outputDirectory": "apps/desktop/out",
+  "buildCommand": "pnpm build",
+  "outputDirectory": "out",
   "framework": "vite",
   "rewrites": [
     {
