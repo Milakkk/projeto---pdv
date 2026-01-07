@@ -246,19 +246,11 @@ export default function RelatoriosPage() {
 
         const out: Order[] = [];
         for (const r of (rows || [])) {
-          let items: any[] = r.items || [];
-          let payments: any[] = r.payments || [];
+          // listOrders agora retorna as linhas com items e payments já anexados
+          const itemsRaw = r.order_items || r.items || [];
+          const paymentsRaw = r.payments || [];
 
-          // Se não tiver itens (ex: carregado do SQLite sem join), buscar detalhes
-          if (items.length === 0) {
-            try {
-              const det = await ordersService.getOrderById(String(r.id));
-              items = det?.items || [];
-              payments = det?.payments || [];
-            } catch { }
-          }
-
-          const orderItems = (items || []).map((it: any) => {
+          const orderItems = (itemsRaw || []).map((it: any) => {
             const pid = it.product_id ?? it.productId;
             const mi = pid ? (productMap as any)[String(pid)] : undefined;
             const menuItem: MenuItem = mi || {
@@ -278,21 +270,24 @@ export default function RelatoriosPage() {
               productionUnits: [],
             } as any;
           });
-          const paid = (payments || []).reduce((s: number, p: any) => s + Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100), 0);
-          const breakdown = (payments || []).length > 1 ? Object.fromEntries((payments || []).map((p: any) => [String(p.method).toUpperCase(), Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100)])) : undefined;
-          const method = (payments || []).length > 1 ? 'MÚLTIPLO' : ((payments || [])[0]?.method ? String((payments || [])[0].method).toUpperCase() : '');
+
+          const payments = (paymentsRaw || []);
+          const paid = payments.reduce((s: number, p: any) => s + Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100), 0);
+          const breakdown = payments.length > 1 ? Object.fromEntries(payments.map((p: any) => [String(p.method).toUpperCase(), Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100)])) : undefined;
+          const method = payments.length > 1 ? 'MÚLTIPLO' : (payments[0]?.method ? String(payments[0].method).toUpperCase() : '');
+
           const ord: Order = {
             id: String(r.id),
             pin: String(r.pin || r.id),
             password: String(r.password || ''),
-            customerWhatsApp: r.customer_phone || '', // Mapear para customerWhatsApp usado no tipo Order
-            customerName: r.customer_name || '',
+            customerWhatsApp: r.customer_phone || r.customerPhone || '',
+            customerName: r.customer_name || r.customerName || '',
             items: orderItems,
             total: paid > 0 ? paid : Math.max(0, Number(r.total_cents ?? 0) / 100),
             paymentMethod: breakdown ? 'MÚLTIPLO' : (method || 'Não informado'),
             paymentBreakdown: breakdown,
             status:
-              r.closed_at || r.delivered_at
+              r.closed_at || r.delivered_at || r.completed_at
                 ? 'DELIVERED'
                 : String(r.status).toLowerCase() === 'closed' || String(r.status).toUpperCase() === 'DELIVERED'
                   ? 'DELIVERED'
@@ -300,7 +295,7 @@ export default function RelatoriosPage() {
                     ? 'CANCELLED'
                     : 'NEW',
             createdAt: r.new_start ? new Date(r.new_start) : (r.created_at ? new Date(r.created_at) : new Date()),
-            preparingStartedAt: r.preparing_start ? new Date(r.preparing_start) : undefined, // CORRIGIDO: de preparingAt para preparingStartedAt
+            preparingStartedAt: r.preparing_start ? new Date(r.preparing_start) : undefined,
             updatedAt: r.updated_at ? new Date(r.updated_at) : undefined,
             readyAt: r.ready_at ? new Date(r.ready_at) : undefined,
             deliveredAt: r.delivered_at ? new Date(r.delivered_at) : (r.closed_at ? new Date(r.closed_at) : undefined),

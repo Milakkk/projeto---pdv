@@ -131,6 +131,20 @@ export async function createOrder(payload?: {
         pending_sync: false,
       })
       if (error) throw error
+
+      // Inicializar kds_phase_times
+      try {
+        await supabaseSync.insert('kds_phase_times', {
+          order_id: id,
+          new_start: payload?.openedAt ?? now,
+          updated_at: now,
+          version: 1,
+          pending_sync: false
+        })
+      } catch (err) {
+        console.warn('[ordersService] Falha ao criar phase_times no Supabase:', err)
+      }
+
       persisted = true
     } catch (err) {
       console.warn('[ordersService] Falha ao criar pedido no Supabase, tentando local:', err)
@@ -159,6 +173,15 @@ export async function createOrder(payload?: {
           payload?.customerName ?? null
         ],
       )
+
+      // Inicializar kds_phase_times local
+      try {
+        await query(
+          'INSERT INTO kds_phase_times (order_id, new_start, updated_at, version, pending_sync) VALUES (?, ?, ?, ?, ?)',
+          [id, payload?.openedAt ?? now, now, 1, 1]
+        )
+      } catch { }
+
     } catch {
       const raw = localStorage.getItem('orders')
       const arr = raw ? JSON.parse(raw) : []
@@ -180,6 +203,12 @@ export async function createOrder(payload?: {
         customer_name: payload?.customerName ?? null
       })
       localStorage.setItem('orders', JSON.stringify(arr))
+
+      // LocalStorage fallback for times
+      const rawTimes = localStorage.getItem('kds_phase_times')
+      const arrTimes = rawTimes ? JSON.parse(rawTimes) : []
+      arrTimes.push({ order_id: id, new_start: payload?.openedAt ?? now, updated_at: now })
+      localStorage.setItem('kds_phase_times', JSON.stringify(arrTimes))
     }
   }
   return id
@@ -609,27 +638,87 @@ export async function listOrdersDetailed(limit = 100): Promise<Array<{ order: an
         paysByOrder[oid].push(p)
       }
 
-      const timesByOrder: Record<string, any> = {}
+      const timesDataByOrder: Record<string, any> = {}
       for (const t of (timesData || [])) {
-        const oid = String(t.order_id)
-        timesByOrder[oid] = {
-          newStart: t.new_start,
-          preparingStart: t.preparing_start,
-          readyAt: t.ready_at,
-          deliveredAt: t.delivered_at
-        }
+        timesDataByOrder[String(t.order_id)] = t
       }
 
-      return (ords || []).map(r => ({
-        order: r,
-        items: itemsByOrder[String(r.id)] || [],
-        payments: paysByOrder[String(r.id)] || [],
-        details: { pin: (r as any).pin, password: (r as any).password },
-        phaseTimes: timesByOrder[String(r.id)]
-      }))
+      return (ords || []).map(r => {
+        const oid = String(r.id)
+        const phaseTimes = timesDataByOrder[oid]
+        return {
+          ...r,
+          items: itemsByOrder[oid] || [],
+          payments: paysByOrder[oid] || [],
+          // Injetar campos de tempo no objeto da linha para compatibilidade com page.tsx
+          new_start: phaseTimes?.new_start,
+          preparing_start: phaseTimes?.preparing_start,
+          ready_at: phaseTimes?.ready_at,
+          delivered_at: phaseTimes?.delivered_at,
+          completed_at: phaseTimes?.completed_at || r.completed_at,
+          // Manter wrapper se alguém usar (como RelatoriosPage loop antigo)
+          order: r,
+          phaseTimes: phaseTimes
+        }
+      })
     }
+    // SQLite Fallback
+    const res = await query('SELECT * FROM orders ORDER BY datetime(updated_at) DESC LIMIT ?', [limit])
+    const rows = res?.rows || []
+    if (!rows.length) return []
+
+    // Buscar items e payments em lote (otimização similar ao Supabase)
+    const rowIds = rows.map((r: any) => String(r.id))
+    const placeholders = rowIds.map(() => '?').join(',')
+
+    const itemsRes = await query(`SELECT * FROM order_items WHERE order_id IN (${placeholders})`, rowIds)
+    const items = itemsRes?.rows || []
+
+    const paysRes = await query(`SELECT * FROM payments WHERE order_id IN (${placeholders})`, rowIds)
+    const payments = paysRes?.rows || []
+
+    const timesRes = await query(`SELECT * FROM kds_phase_times WHERE order_id IN (${placeholders})`, rowIds)
+    const times = timesRes?.rows || []
+
+    const itemsMap: Record<string, any[]> = {}
+    items.forEach((it: any) => {
+      const oid = String(it.order_id)
+      itemsMap[oid] = itemsMap[oid] || []
+      itemsMap[oid].push(it)
+    })
+
+    const paysMap: Record<string, any[]> = {}
+    payments.forEach((p: any) => {
+      const oid = String(p.order_id)
+      paysMap[oid] = paysMap[oid] || []
+      paysMap[oid].push(p)
+    })
+
+    const timesMap: Record<string, any> = {}
+    times.forEach((t: any) => {
+      timesMap[String(t.order_id)] = t
+    })
+
+    return rows.map((r: any) => {
+      const oid = String(r.id)
+      const phaseTimes = timesMap[oid]
+      return {
+        ...r,
+        items: itemsMap[oid] || [],
+        payments: paysMap[oid] || [],
+        new_start: phaseTimes?.new_start,
+        preparing_start: phaseTimes?.preparing_start,
+        ready_at: phaseTimes?.ready_at,
+        delivered_at: phaseTimes?.delivered_at,
+        completed_at: phaseTimes?.completed_at || r.completed_at,
+        order: r,
+        phaseTimes
+      }
+    })
+  } catch (err) {
+    console.error('[ordersService] Erro em listOrders:', err)
     return []
-  } catch { return [] }
+  }
 }
 
 export async function getOrderById(id: UUID) {
