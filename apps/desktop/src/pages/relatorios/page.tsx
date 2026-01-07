@@ -219,16 +219,25 @@ export default function RelatoriosPage() {
           try {
             const { data } = await supabase
               .from('orders')
-              .select('*, order_items(*), payments(*)')
+              .select('*, order_items(*), payments(*), kds_phase_times(*)')
               .order('created_at', { ascending: false })
               .limit(200);
 
             if (data) {
-              rows = data.map((r: any) => ({
-                ...r,
-                items: r.order_items,
-                payments: r.payments
-              }));
+              rows = data.map((r: any) => {
+                const phaseTimes = r.kds_phase_times?.[0] || {};
+                return {
+                  ...r,
+                  items: r.order_items,
+                  payments: r.payments,
+                  // Mapear campos de tempo do kds_phase_times
+                  new_start: phaseTimes.new_start,
+                  preparing_start: phaseTimes.preparing_start,
+                  ready_at: phaseTimes.ready_at,
+                  delivered_at: phaseTimes.delivered_at,
+                  completed_at: phaseTimes.completed_at || r.completed_at,
+                };
+              });
             }
           } catch (err) {
             console.error('Erro ao buscar do Supabase:', err);
@@ -276,18 +285,20 @@ export default function RelatoriosPage() {
             paymentMethod: breakdown ? 'MÚLTIPLO' : (method || 'Não informado'),
             paymentBreakdown: breakdown,
             status:
-              r.closed_at
+              r.closed_at || r.delivered_at
                 ? 'DELIVERED'
                 : String(r.status).toLowerCase() === 'closed' || String(r.status).toUpperCase() === 'DELIVERED'
                   ? 'DELIVERED'
                   : String(r.status).toLowerCase() === 'cancelled' || String(r.status).toUpperCase() === 'CANCELLED'
                     ? 'CANCELLED'
                     : 'NEW',
-            createdAt: r.opened_at ? new Date(r.opened_at) : new Date(),
+            // Usar campos de kds_phase_times quando disponíveis
+            createdAt: r.new_start ? new Date(r.new_start) : (r.created_at ? new Date(r.created_at) : new Date()),
+            preparingAt: r.preparing_start ? new Date(r.preparing_start) : undefined,
             updatedAt: r.updated_at ? new Date(r.updated_at) : undefined,
             readyAt: r.ready_at ? new Date(r.ready_at) : undefined,
-            deliveredAt: r.closed_at ? new Date(r.closed_at) : undefined,
-            slaMinutes: 0,
+            deliveredAt: r.delivered_at ? new Date(r.delivered_at) : (r.closed_at ? new Date(r.closed_at) : undefined),
+            slaMinutes: 15, // Default SLA
             createdBy: '',
           } as any;
           out.push(ord);
