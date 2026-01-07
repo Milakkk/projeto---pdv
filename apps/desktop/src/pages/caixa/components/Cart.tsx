@@ -583,7 +583,9 @@ export default function Cart({ items, onUpdateItem, onRemoveItem, onClearCart, o
         operationalSessionId: operationalSession?.id || null,
         notes: `CREATED_BY=${user?.name || 'Caixa'}`,
         pin: orderPin,
-        password: orderPassword.trim()
+        password: orderPassword.trim(),
+        customerPhone: customerWhatsApp || null,
+        customerName: null // Poderia ser expandido se houvesse campo de nome
       })
       // try { await setOrderDetails(orderId, { pin: orderPin, password: orderPassword.trim() }) } catch {} 
       // Comentado pois createOrder já trata pin/password agora

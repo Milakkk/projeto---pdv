@@ -246,13 +246,18 @@ export default function RelatoriosPage() {
 
         const out: Order[] = [];
         for (const r of (rows || [])) {
-          let items: any[] = [];
-          let payments: any[] = [];
-          try {
-            const det = await ordersService.getOrderById(String(r.id));
-            items = det?.items || [];
-            payments = det?.payments || [];
-          } catch { }
+          let items: any[] = r.items || [];
+          let payments: any[] = r.payments || [];
+
+          // Se não tiver itens (ex: carregado do SQLite sem join), buscar detalhes
+          if (items.length === 0) {
+            try {
+              const det = await ordersService.getOrderById(String(r.id));
+              items = det?.items || [];
+              payments = det?.payments || [];
+            } catch { }
+          }
+
           const orderItems = (items || []).map((it: any) => {
             const pid = it.product_id ?? it.productId;
             const mi = pid ? (productMap as any)[String(pid)] : undefined;
@@ -278,8 +283,10 @@ export default function RelatoriosPage() {
           const method = (payments || []).length > 1 ? 'MÚLTIPLO' : ((payments || [])[0]?.method ? String((payments || [])[0].method).toUpperCase() : '');
           const ord: Order = {
             id: String(r.id),
-            pin: String(r.id),
-            password: '',
+            pin: String(r.pin || r.id),
+            password: String(r.password || ''),
+            customerWhatsApp: r.customer_phone || '', // Mapear para customerWhatsApp usado no tipo Order
+            customerName: r.customer_name || '',
             items: orderItems,
             total: paid > 0 ? paid : Math.max(0, Number(r.total_cents ?? 0) / 100),
             paymentMethod: breakdown ? 'MÚLTIPLO' : (method || 'Não informado'),
@@ -292,13 +299,12 @@ export default function RelatoriosPage() {
                   : String(r.status).toLowerCase() === 'cancelled' || String(r.status).toUpperCase() === 'CANCELLED'
                     ? 'CANCELLED'
                     : 'NEW',
-            // Usar campos de kds_phase_times quando disponíveis
             createdAt: r.new_start ? new Date(r.new_start) : (r.created_at ? new Date(r.created_at) : new Date()),
-            preparingAt: r.preparing_start ? new Date(r.preparing_start) : undefined,
+            preparingStartedAt: r.preparing_start ? new Date(r.preparing_start) : undefined, // CORRIGIDO: de preparingAt para preparingStartedAt
             updatedAt: r.updated_at ? new Date(r.updated_at) : undefined,
             readyAt: r.ready_at ? new Date(r.ready_at) : undefined,
             deliveredAt: r.delivered_at ? new Date(r.delivered_at) : (r.closed_at ? new Date(r.closed_at) : undefined),
-            slaMinutes: 15, // Default SLA
+            slaMinutes: 15,
             createdBy: '',
           } as any;
           out.push(ord);
