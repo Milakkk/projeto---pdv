@@ -5,7 +5,13 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
-import { app } from 'electron';
+let app;
+try {
+  const electron = await import('electron');
+  app = electron.app;
+} catch {
+  // Not in electron environment
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

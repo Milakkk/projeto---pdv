@@ -39,7 +39,7 @@ const createProductionUnits = (quantity: number): ProductionUnit[] => {
 
 export default function CozinhaPage() {
   const { isOnline } = useOffline();
-  const { user, store } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
 
   // Seleção de cozinha e operador
@@ -57,7 +57,7 @@ export default function CozinhaPage() {
   const [categories, setCategories] = useLocalStorage<Category[]>('categories', mockCategories);
 
   const [operationalSession] = useLocalStorage<OperationalSession | null>('currentOperationalSession', null);
-  const [cashSession, setCashSession] = useLocalStorage<any>('currentCashSession', null);
+  const [, setCashSession] = useLocalStorage<any>('currentCashSession', null);
 
   const [showOperatorModal, setShowOperatorModal] = useState(false);
   const [showOperatorViewModal, setShowOperatorViewModal] = useState(false);
@@ -92,7 +92,6 @@ export default function CozinhaPage() {
     try { const raw = localStorage.getItem('kdsOrderDetails'); const map = raw ? JSON.parse(raw) : {}; map[id] = { ...(map[id] || {}), ...patch }; localStorage.setItem('kdsOrderDetails', JSON.stringify(map)) } catch { }
   }
 
-  const isOperationalSessionOpen = useMemo(() => !!operationalSession && operationalSession.status === 'OPEN', [operationalSession]);
 
   const statusRank = (s: Order['status']) => {
     if (s === 'DELIVERED' || s === 'CANCELLED') return 3
@@ -285,7 +284,7 @@ export default function CozinhaPage() {
                   }
                   if (ackEvents.length) {
                     const headers: Record<string, string> = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${secret}` }
-                    fetch(`${hubUrl.replace(/\/$/, '')}/push`, { method: 'POST', headers, body: JSON.stringify({ events: ackEvents }) }).catch(() => {})
+                    fetch(`${hubUrl.replace(/\/$/, '')}/push`, { method: 'POST', headers, body: JSON.stringify({ events: ackEvents }) }).catch(() => { })
                   }
                 } catch { }
                 startTransition(() => {
@@ -426,7 +425,7 @@ export default function CozinhaPage() {
                     // This matches the format we used when saving if we passed unitId correctly
                     const key = `${ordId}:${String(it.id)}:${u.unitId}`
                     const s = unitMap[key] || {}
-                    
+
                     return {
                       ...u,
                       operatorName: s.operatorName || u.operatorName,
@@ -528,27 +527,6 @@ export default function CozinhaPage() {
     return Object.values(groups).sort((a, b) => a.name.localeCompare(b.name));
   }, [orders]);
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      startTransition(() => {
-        setOrders(prev => prev.map(o => {
-          try {
-            const raw = localStorage.getItem('kdsPhaseTimes')
-            const obj = raw ? JSON.parse(raw) : {}
-            const patch = obj[String(o.id)] || {}
-            return {
-              ...o,
-              createdAt: patch.newStart ? new Date(patch.newStart) : o.createdAt,
-              updatedAt: patch.preparingStart ? new Date(patch.preparingStart) : o.updatedAt,
-              readyAt: patch.readyAt ? new Date(patch.readyAt) : o.readyAt,
-              deliveredAt: patch.deliveredAt ? new Date(patch.deliveredAt) : o.deliveredAt,
-            }
-          } catch { return o }
-        }))
-      })
-    }, 1000)
-    return () => clearInterval(interval)
-  }, [])
 
   // NOVO useEffect para a lógica de migração, executado apenas uma vez na montagem
   useEffect(() => {
@@ -579,16 +557,10 @@ export default function CozinhaPage() {
           const oldStatus = (currentItem as any).itemStatus;
           const newUnits = createProductionUnits(currentItem.quantity);
 
-          if (oldStatus === 'READY') {
-            newUnits.forEach(unit => unit.unitStatus = 'READY');
+          if ((currentItem as any).itemStatus) {
+            currentItem = { ...currentItem };
+            delete (currentItem as any).itemStatus;
           }
-
-          currentItem = {
-            ...currentItem,
-            productionUnits: newUnits,
-            operatorName: undefined,
-            itemStatus: undefined,
-          };
         }
 
         const unitsWithObsMigration = currentItem.productionUnits.map(unit => {
@@ -727,7 +699,7 @@ export default function CozinhaPage() {
                 transferMsList.length > 0 ? Math.round(transferMsList.reduce((a, b) => a + b, 0) / transferMsList.length) : null
               console.log('[PDV->KDS] Confirmação de recebimento (KDS)', { count: toAck.length, kitchenId: kitchenFilter ?? null, avgTransferMs })
             }
-          } catch {}
+          } catch { }
         }
 
         if (!useSupabase) {
@@ -744,17 +716,17 @@ export default function CozinhaPage() {
         // [FIX] Fetch order timestamps from 'orders' table to prevent reset on reload
         const orderIds = tk.map((t: any) => String(t.order_id ?? t.orderId ?? '')).filter(id => id);
         let ordersMap: Record<string, any> = {};
-        
+
         if (useSupabase && orderIds.length > 0) {
-           try {
-             const { data } = await supabase
-               .from('orders')
-               .select('id, opened_at, created_at')
-               .in('id', orderIds);
-             if (data) {
-               ordersMap = data.reduce((acc: any, o: any) => ({ ...acc, [o.id]: o }), {});
-             }
-           } catch {}
+          try {
+            const { data } = await supabase
+              .from('orders')
+              .select('id, opened_at, created_at')
+              .in('id', orderIds);
+            if (data) {
+              ordersMap = data.reduce((acc: any, o: any) => ({ ...acc, [o.id]: o }), {});
+            }
+          } catch { }
         }
 
         const timesByOrder: Record<string, any> = {}
@@ -770,7 +742,7 @@ export default function CozinhaPage() {
                 deliveredAt: t.delivered_at ?? t.deliveredAt,
               }
             }
-          } catch {}
+          } catch { }
         }
 
         const unitMapByOrder: Record<string, Record<string, any>> = {}
@@ -796,7 +768,7 @@ export default function CozinhaPage() {
                   deliveredAt: r.delivered_at || undefined,
                 }
               }
-            } catch {}
+            } catch { }
           } else {
             for (const oid of orderIds) {
               try {
@@ -841,7 +813,7 @@ export default function CozinhaPage() {
                 })
               }
             }
-          } catch {}
+          } catch { }
         }
 
         const mappedOrders: Order[] = [];
@@ -866,18 +838,18 @@ export default function CozinhaPage() {
 
             // Merge with persisted state
             const mergedUnits = currentUnits.map((u: any) => {
-               // Use consistent key format: orderId:itemId:unitId
-               const key = `${oid}:${String(item.id)}:${u.unitId}`
-               const s = unitMap[key] || {}
-               return {
-                 ...u,
-                 unitId: u.unitId ?? `${String(item.id)}-1`, // Ensure unitId exists
-                 operatorName: s.operatorName || u.operatorName,
-                 unitStatus: (s.unitStatus || u.unitStatus || 'PENDING'),
-                 completedObservations: Array.isArray(s.completedObservations) ? s.completedObservations : (u.completedObservations || []),
-                 completedAt: s.completedAt ? new Date(s.completedAt) : (u.completedAt ? new Date(u.completedAt) : undefined),
-                 deliveredAt: s.deliveredAt ? new Date(s.deliveredAt) : (u.deliveredAt ? new Date(u.deliveredAt) : undefined),
-               }
+              // Use consistent key format: orderId:itemId:unitId
+              const key = `${oid}:${String(item.id)}:${u.unitId}`
+              const s = unitMap[key] || {}
+              return {
+                ...u,
+                unitId: u.unitId ?? `${String(item.id)}-1`, // Ensure unitId exists
+                operatorName: s.operatorName || u.operatorName,
+                unitStatus: (s.unitStatus || u.unitStatus || 'PENDING'),
+                completedObservations: Array.isArray(s.completedObservations) ? s.completedObservations : (u.completedObservations || []),
+                completedAt: s.completedAt ? new Date(s.completedAt) : (u.completedAt ? new Date(u.completedAt) : undefined),
+                deliveredAt: s.deliveredAt ? new Date(s.deliveredAt) : (u.deliveredAt ? new Date(u.deliveredAt) : undefined),
+              }
             })
 
             return {
@@ -1027,134 +999,77 @@ export default function CozinhaPage() {
 
     pendingStatusRef.current[String(orderId)] = { status, until: Date.now() + 8000 }
 
-    // Atualiza status via serviço KDS PRIMEIRO, aguarda confirmação, depois atualiza UI
-    (async () => {
-      try {
-        // Correção CRÍTICA: NEW → queued, PREPARING → prep, READY → ready, DELIVERED → done
-        const mapToKds = (s: Order['status']) => {
-          if (s === 'NEW') return 'queued';
-          if (s === 'PREPARING') return 'prep';
-          if (s === 'READY') return 'ready';
-          if (s === 'DELIVERED') return 'done';
-          return 'queued';
-        };
-        const ord = orders.find(o => o.id === orderId)
-        const tId = (ord as any)?.ticketId || orderId
-        
-        // Tenta usar Supabase diretamente se disponível (Web Mode)
-        if (isOnline) {
-            const { supabase } = await import('../../utils/supabase');
-            if (supabase) {
-              // Fix: Supabase expects 'PREPARING', 'NEW', 'READY', 'DELIVERED' in kds_tickets
-              // But mapToKds returns 'prep', 'queued', etc.
-              // We should use the uppercase status for the DB value to match kdsService expectations.
-              const dbStatus = status; 
-              const { error } = await supabase
-                .from('kds_tickets')
-                .update({ status: dbStatus, updated_at: new Date().toISOString() })
-                .eq('id', tId);
-                
-              if (error) {
-                console.error('[Cozinha] Erro ao atualizar Supabase:', error);
-                // Fallback para kdsService se falhar (pode ser ticket não encontrado ou outra tabela)
-              } else {
-                // Persistir timestamps de fase
-                try {
-                  const nowIso = new Date().toISOString();
-                  const patch: any = { order_id: orderId };
-                  if (status === 'NEW') patch.new_start = nowIso;
-                  if (status === 'PREPARING') patch.preparing_start = nowIso;
-                  if (status === 'READY') patch.ready_at = nowIso;
-                  if (status === 'DELIVERED') patch.delivered_at = nowIso;
-                  
-                  // Fix: Use SELECT -> UPDATE/INSERT instead of UPSERT to avoid 400 Bad Request if unique constraint is missing
-                  const { data: existingPhases } = await supabase
-                    .from('kds_phase_times')
-                    .select('id')
-                    .eq('order_id', orderId)
-                    .limit(1);
-                    
-                  if (existingPhases && existingPhases.length > 0) {
-                    await supabase.from('kds_phase_times').update(patch).eq('order_id', orderId);
-                  } else {
-                    const { error: insertErr } = await supabase.from('kds_phase_times').insert(patch);
-                    // Fallback for race condition or if row appeared
-                    if (insertErr) {
-                       await supabase.from('kds_phase_times').update(patch).eq('order_id', orderId);
-                    }
-                  }
-                } catch {}
-                
-                // Também atualiza orders para garantir consistência
-                await supabase
-                  .from('orders')
-                  .update({ status: status, updated_at: new Date().toISOString() })
-                  .eq('id', orderId);
+      // Atualiza status via serviço KDS PRIMEIRO, aguarda confirmação, depois atualiza UI
+      (async () => {
+        try {
+          const mapToKds = (s: Order['status']) => {
+            if (s === 'NEW') return 'queued';
+            if (s === 'PREPARING') return 'prep';
+            if (s === 'READY') return 'ready';
+            if (s === 'DELIVERED') return 'done';
+            return 'queued';
+          };
+          const ord = orders.find(o => o.id === orderId)
+          const tId = (ord as any)?.ticketId || orderId
 
-                try {
-                  await kdsService.setTicketStatus(String(tId), mapToKds(status));
-                } catch {}
-
-                return;
-              }
-            }
+          // Centraliza a persistência no kdsService para evitar condições de corrida (Race Conditions)
+          await kdsService.setTicketStatus(String(tId), mapToKds(status));
+        } catch (error) {
+          console.error('[Cozinha] ERRO ao atualizar status:', error);
         }
+      })();
 
-        await kdsService.setTicketStatus(String(tId), mapToKds(status));
-      } catch (error) {
-        console.error('[Cozinha] ERRO ao atualizar status:', error);
-      }
-    })();
+    (pendingStatusRef.current as any)[String(orderId)] = { status, until: Date.now() + 8000 };
 
     // Atualização local imediata para feedback instantâneo
     setOrders(prevOrders => prevOrders.map(order => {
       if (String(order.id) === String(orderId)) {
         const now = new Date();
-          let readyAt = order.readyAt;
-          let updatedAt = order.updatedAt;
+        let readyAt = order.readyAt;
+        let updatedAt = order.updatedAt;
 
-          if (status === 'PREPARING' && order.status === 'NEW') {
-            const updatedItems = (order.items || []).map(item => ({
-              ...item,
-              productionUnits: (item.productionUnits || []).map(unit => ({
-                ...unit,
-                unitStatus: unit.unitStatus || 'PENDING',
-                completedAt: undefined,
-              }))
-            }));
-            updatedAt = now;
-            return { ...order, status, items: updatedItems, updatedAt, readyAt: undefined };
-          }
-
-          if (status === 'READY' && order.status === 'PREPARING') {
-            readyAt = now;
-            const updatedItems = (order.items || []).map(item => ({
-              ...item,
-              productionUnits: (item.productionUnits || []).map(unit => ({
-                ...unit,
-                unitStatus: 'READY' as ProductionUnit['unitStatus'],
-                completedAt: unit.unitStatus === 'READY' ? unit.completedAt : now,
-              }))
-            }));
-            return { ...order, status, items: updatedItems, updatedAt: order.updatedAt, readyAt };
-          }
-
-          if (status === 'DELIVERED' && order.status === 'READY') {
-            // Não sobrescreva updatedAt (início do preparo); registre o tempo de entrega em deliveredAt
-            return { ...order, status, deliveredAt: now, updatedAt: order.updatedAt, readyAt };
-          }
-
-          if (status === 'PREPARING' && order.status === 'READY') {
-            readyAt = undefined;
-            return { ...order, status, updatedAt: order.updatedAt, readyAt: undefined };
-          }
-          if (status === 'NEW' && order.status === 'PREPARING') {
-            return { ...order, status, updatedAt: undefined, readyAt: undefined };
-          }
-
-          return { ...order, status, updatedAt: now, readyAt };
+        if (status === 'PREPARING' && order.status === 'NEW') {
+          const updatedItems = (order.items || []).map(item => ({
+            ...item,
+            productionUnits: (item.productionUnits || []).map(unit => ({
+              ...unit,
+              unitStatus: unit.unitStatus || 'PENDING',
+              completedAt: undefined,
+            }))
+          }));
+          updatedAt = now;
+          return { ...order, status, items: updatedItems, updatedAt, readyAt: undefined };
         }
-        return order;
+
+        if (status === 'READY' && order.status === 'PREPARING') {
+          readyAt = now;
+          const updatedItems = (order.items || []).map(item => ({
+            ...item,
+            productionUnits: (item.productionUnits || []).map(unit => ({
+              ...unit,
+              unitStatus: 'READY' as ProductionUnit['unitStatus'],
+              completedAt: unit.unitStatus === 'READY' ? unit.completedAt : now,
+            }))
+          }));
+          return { ...order, status, items: updatedItems, updatedAt: order.updatedAt, readyAt };
+        }
+
+        if (status === 'DELIVERED' && order.status === 'READY') {
+          // Não sobrescreva updatedAt (início do preparo); registre o tempo de entrega em deliveredAt
+          return { ...order, status, deliveredAt: now, updatedAt: order.updatedAt, readyAt };
+        }
+
+        if (status === 'PREPARING' && order.status === 'READY') {
+          readyAt = undefined;
+          return { ...order, status, updatedAt: order.updatedAt, readyAt: undefined };
+        }
+        if (status === 'NEW' && order.status === 'PREPARING') {
+          return { ...order, status, updatedAt: undefined, readyAt: undefined };
+        }
+
+        return { ...order, status, updatedAt: now, readyAt };
+      }
+      return order;
     }));
   };
 
@@ -1469,6 +1384,27 @@ export default function CozinhaPage() {
             <Button onClick={() => setShowOperatorViewModal(true)} size="sm" className="flex-shrink-0">
               <Icon name="ListChecks" className="mr-2" />
               Por Operador
+            </Button>
+
+            <Button
+              variant="secondary"
+              onClick={async () => {
+                const confirmed = window.confirm("⚠️ ATENÇÃO: Isso irá apagar TODOS os pedidos do sistema (Local e Supabase).\n\nDeseja continuar?");
+                if (confirmed) {
+                  try {
+                    const ordersService = await import("../../offline/services/ordersService");
+                    await ordersService.wipeAllOrders();
+                    window.location.reload();
+                  } catch (err: any) {
+                    alert("Erro ao zerar pedidos: " + err.message);
+                  }
+                }
+              }}
+              size="sm"
+              className="bg-red-600 text-white hover:bg-red-700 hover:text-white flex-shrink-0 ml-auto"
+            >
+              <span className="material-symbols-outlined mr-1">delete_forever</span>
+              Zerar Pedidos
             </Button>
           </div>
         </div>

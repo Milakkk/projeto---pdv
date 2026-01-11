@@ -52,7 +52,7 @@ export async function revenueByPeriod(params: { startIso: string; endIso: string
         return { totalCents: 0, byMethod: {} }
       }
 
-      const orderIds = (orders || []).map(o => o.id)
+      const orderIds = (orders || []).map((o: any) => o.id)
       console.log('[REPORTS-DEBUG] revenueByPeriod found orders:', orderIds.length)
 
       if (orderIds.length === 0) {
@@ -131,7 +131,7 @@ export async function topSellingItems(params: { startIso?: string; endIso?: stri
           .in('status', ['closed', 'DELIVERED'])
           .gte('completed_at', params.startIso)
           .lte('completed_at', params.endIso + 'T23:59:59.999Z')
-        orderIds = (orders || []).map(o => o.id)
+        orderIds = (orders || []).map((o: any) => o.id)
       }
 
       // Get order items
@@ -172,6 +172,230 @@ export async function topSellingItems(params: { startIso?: string; endIso?: stri
 
   console.warn('[REPORTS-DEBUG] topSellingItems: No data source available')
   return []
+}
+
+// Função unificada para buscar pedidos COMPLETOS para o relatório
+export async function getOrdersForReport(params: { startIso: string; endIso: string }) {
+  console.log('[REPORTS-DEBUG] getOrdersForReport called', params)
+
+  // 1. Tentar SQLite (Desktop / Electron)
+  if (isElectron()) {
+    try {
+      console.log('[REPORTS-DEBUG] Buscando pedidos no SQLite...')
+
+      // Buscar Pedidos
+      const ordersRes = await query(
+        `SELECT 
+          o.*, 
+          od.pin, od.password, 
+          kpt.new_start, kpt.preparing_start, kpt.ready_at, kpt.delivered_at 
+         FROM orders o 
+         LEFT JOIN orders_details od ON o.id = od.order_id 
+         LEFT JOIN kds_phase_times kpt ON o.id = kpt.order_id 
+         WHERE datetime(o.created_at) >= datetime(?) AND datetime(o.created_at) <= datetime(?)
+         ORDER BY o.created_at DESC`,
+        [params.startIso, params.endIso]
+      )
+
+      const orders = ordersRes?.rows || []
+      console.log(`[REPORTS-DEBUG] ${orders.length} pedidos encontrados no SQLite`)
+
+      if (orders.length === 0) return []
+
+      const orderIds = orders.map((o: any) => o.id)
+      const placeholders = orderIds.map(() => '?').join(',')
+
+      // Buscar Itens
+      const itemsRes = await query(
+        `SELECT oi.*, p.name as product_name, p.category_id, p.code as product_code, p.unit_delivery_count, p.skip_kitchen, p.sla_minutes 
+         FROM order_items oi 
+         LEFT JOIN products p ON oi.product_id = p.id 
+         WHERE oi.order_id IN (${placeholders})`,
+        orderIds
+      )
+      const allItems = itemsRes?.rows || []
+
+      // Buscar Unidades de Produção (kds_unit_states)
+      const unitsRes = await query(
+        `SELECT * FROM kds_unit_states WHERE order_id IN (${placeholders})`,
+        orderIds
+      )
+      const allUnits = unitsRes?.rows || []
+
+      // Buscar Pagamentos
+      const paymentsRes = await query(
+        `SELECT * FROM payments WHERE order_id IN (${placeholders})`,
+        orderIds
+      )
+      const allPayments = paymentsRes?.rows || []
+
+      // Montar Objetos Completos
+      const result = orders.map((o: any) => {
+        const orderItems = allItems
+          .filter((i: any) => i.order_id === o.id)
+          .map((i: any) => {
+            // Anexar unidades de produção ao item correspondente
+            const itemUnits = allUnits.filter((u: any) => u.order_item_id === i.id);
+            return {
+              ...i,
+              production_units: itemUnits
+            }
+          });
+
+        const orderPayments = allPayments.filter((p: any) => p.order_id === o.id)
+
+        // Mapear para o formato Order esperado pelo frontend
+        return mapToOrderInterface({
+          ...o,
+          items: orderItems,
+          payments: orderPayments
+        })
+      })
+
+      return result
+
+    } catch (err) {
+      console.warn('[REPORTS-DEBUG] getOrdersForReport SQLite error:', err)
+      // Fallback para Supabase se falhar o SQLite
+    }
+  }
+
+  // 2. Fallback: Supabase (Web)
+  if (supabase) {
+    try {
+      console.log('[REPORTS-DEBUG] Buscando pedidos no Supabase...')
+
+      const { data, error } = await supabase
+        .from('orders')
+        .select(`
+          *,
+          orders_details (pin, password),
+          kds_phase_times (*),
+          order_items (
+            *,
+            products (name, category_id, code, unit_delivery_count, skip_kitchen, sla_minutes),
+            kds_unit_states (*)
+          ),
+          payments (*)
+        `)
+        .gte('created_at', params.startIso)
+        .lte('created_at', params.endIso + 'T23:59:59.999Z')
+        .order('created_at', { ascending: false })
+
+      if (error) {
+        console.error('[REPORTS-DEBUG] getOrdersForReport Supabase error:', error)
+        return []
+      }
+
+      console.log(`[REPORTS-DEBUG] ${data?.length || 0} pedidos encontrados no Supabase`)
+
+      return (data || []).map((o: any) => mapToOrderInterface(o))
+
+    } catch (err) {
+      console.error('[REPORTS-DEBUG] getOrdersForReport Supabase exception:', err)
+    }
+  }
+
+  return []
+}
+
+// Função Helper para normalizar dados para a interface Order
+function mapToOrderInterface(data: any): any {
+  // Ajustes de campos do Supabase/SQLite para o CamelCase do frontend
+
+  // 1. Extrair detalhes (pin, password)
+  const details = Array.isArray(data.orders_details) ? data.orders_details[0] : (data.orders_details || {})
+  const pin = details.pin || data.pin || data.id.substring(0, 4)
+  const password = details.password || data.password || ''
+
+  // 2. Extrair tempos das fases
+  const phaseTimes = Array.isArray(data.kds_phase_times) ? data.kds_phase_times[0] : (data.kds_phase_times || {})
+  // Fallback: se não tiver na tabela kds_phase_times, tenta pegar da tabela orders (legado) ou do próprio objeto se veio do SQLite flat
+  const newStart = phaseTimes.new_start || data.new_start || data.created_at
+  const preparingStart = phaseTimes.preparing_start || data.preparing_start || data.preparing_started_at
+  const readyAt = phaseTimes.ready_at || data.ready_at
+  const deliveredAt = phaseTimes.delivered_at || data.delivered_at || data.completed_at || data.closed_at
+
+  // 3. Processar Itens
+  // No Supabase vem como 'order_items', no SQLite query manual montamos 'items' ou filtramos fora
+  const rawItems = data.order_items || data.items || []
+  const items = rawItems.map((item: any) => {
+    // Resolver produto (Supabase aninha em 'products', SQLite join traz colunas 'product_name' etc)
+    const product = Array.isArray(item.products) ? item.products[0] : (item.products || {})
+
+    // Fallback para campos flat do SQLite
+    const productName = product.name || item.product_name || item.name || 'Item sem nome'
+    const categoryId = product.category_id || item.category_id
+    const productCode = product.code || item.product_code
+    const skipKitchen = product.skip_kitchen ?? item.skip_kitchen ?? false
+    const unitDeliveryCount = product.unit_delivery_count ?? item.unit_delivery_count ?? 1
+    const sla = product.sla_minutes ?? item.sla_minutes ?? 0
+
+    return {
+      id: item.id,
+      quantity: Number(item.qty ?? item.quantity ?? 1),
+      unitPrice: Number(item.unit_price_cents ?? item.unitPriceCents ?? 0) / 100,
+      observations: item.notes || item.observations || '',
+      menuItem: {
+        id: item.product_id || 'unknown',
+        name: productName,
+        categoryId: categoryId,
+        code: productCode,
+        skipKitchen,
+        unitDeliveryCount,
+        sla
+      },
+      productionUnits: item.production_units || item.kds_unit_states || [], // Unidades de produção
+      skipKitchen,
+      directDeliveredUnitCount: item.direct_delivered_unit_count || 0
+    }
+  })
+
+  // 4. Processar Pagamentos e Totais
+  const rawPayments = data.payments || []
+  const payments = rawPayments.map((p: any) => ({
+    method: p.method,
+    amount: Number(p.amount_cents ?? 0) / 100
+  }))
+
+  const paidAmount = payments.reduce((sum: number, p: any) => sum + p.amount, 0)
+  const totalAmount = Number(data.total_cents ?? 0) / 100
+
+  // Identificar método principal ou MÚLTIPLO
+  let paymentMethod = 'Não informado'
+  let paymentBreakdown: any = undefined
+
+  if (payments.length === 1) {
+    paymentMethod = String(payments[0].method).toUpperCase()
+  } else if (payments.length > 1) {
+    paymentMethod = 'MÚLTIPLO'
+    paymentBreakdown = {}
+    payments.forEach((p: any) => {
+      const method = String(p.method).toUpperCase()
+      paymentBreakdown[method] = (paymentBreakdown[method] || 0) + p.amount
+    })
+  }
+
+  return {
+    id: data.id,
+    pin: String(pin),
+    password: String(password),
+    status: (data.status || 'NEW').toUpperCase(),
+    total: totalAmount > 0 ? totalAmount : paidAmount, // Fallback se total_cents vier 0
+    items: items,
+    paymentMethod,
+    paymentBreakdown,
+    amountPaid: paidAmount, // Total pago
+    changeAmount: 0, // Calcular troco se necessário na UI
+    createdAt: new Date(newStart || new Date()), // Use new_start as creation time base
+    preparingStartedAt: preparingStart ? new Date(preparingStart) : undefined,
+    readyAt: readyAt ? new Date(readyAt) : undefined,
+    deliveredAt: deliveredAt ? new Date(deliveredAt) : undefined,
+    updatedAt: data.updated_at ? new Date(data.updated_at) : undefined,
+    customerWhatsApp: data.customer_phone || '',
+    customerName: data.customer_name || '',
+    slaMinutes: Number(data.sla_minutes || 15)
+  }
 }
 
 export async function ticketsByStatus() {

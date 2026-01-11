@@ -1,15 +1,13 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Input from '../../components/base/Input';
-import type { Order, Category, MenuItem } from '../../types';
+import type { Order, Category } from '../../types';
 import Button from '../../components/base/Button';
 import HourlySalesChart from '../../components/feature/HourlySalesChart';
-import OperatorPerformanceChart from '../../components/feature/OperatorPerformanceChart';
-import { mockCategories, mockMenuItems } from '../../mocks/data'; // Importando mocks para fallback
+import { mockCategories } from '../../mocks/data'; // Importando mocks para fallback
 import OrderListTab from '../caixa/components/OrderListTab';
-import * as ordersService from '../../offline/services/ordersService';
 import * as productsService from '../../offline/services/productsService';
-import { supabase } from '../../utils/supabase';
+import * as reportsService from '../../offline/services/reportsService';
 
 type ReportTab = 'sales' | 'orders' | 'performance' | 'items_categories' | 'analysis';
 
@@ -45,95 +43,61 @@ const createLocalEndOfDay = (dateString: string) => {
 // Função para calcular o tempo de entrega e status
 const calculateDeliveryMetrics = (order: Order) => {
   const createdAt = new Date(order.createdAt).getTime();
-  const isFinalStatus = order.status === 'DELIVERED' || order.status === 'CANCELLED';
   const now = Date.now();
 
-  // 1. Tempo Final (Entrega ou Cancelamento)
-  let finalTime = now;
-  if (isFinalStatus && order.updatedAt) {
-    finalTime = new Date(order.updatedAt).getTime();
-  }
+  // 1. Tempo de Início do Preparo (Fim da fase NEW)
+  // Usar preparingStartedAt se disponível, senão fallback (se não estiver NEW, assume createdAt)
+  const preparingStartTime = order.preparingStartedAt
+    ? new Date(order.preparingStartedAt).getTime()
+    : (order.status !== 'NEW' ? createdAt : now);
 
-  // 2. Tempo de Início do Preparo (Fim da fase NEW)
-  // Se o pedido está em status final, usamos o updatedAt fixo. Caso contrário, usamos o updatedAt se existir, ou createdAt.
-  const preparingStartTime = (isFinalStatus && order.updatedAt) || order.status !== 'NEW'
-    ? new Date(order.updatedAt || order.createdAt).getTime()
-    : createdAt;
-
-  // 3. Tempo Final de Produção (Fim da fase PREPARING / Início da fase READY)
+  // 2. Tempo Final de Produção (Fim da fase PREPARING / Início da fase READY)
   let productionEndTime: number;
-
   if (order.readyAt) {
     productionEndTime = new Date(order.readyAt).getTime();
-  } else if (order.status === 'READY' && order.updatedAt) {
-    productionEndTime = new Date(order.updatedAt).getTime();
-  } else if (isFinalStatus) {
-    // Se está em status final (DELIVERED/CANCELLED) sem readyAt, usamos o tempo de início do preparo
-    productionEndTime = preparingStartTime;
+  } else if (order.status === 'READY' || order.status === 'DELIVERED') {
+    // Se está READY/DELIVERED mas não tem readyAt, assume o tempo de início do preparo como fallback 
+    // ou o updatedAt se estiver em READY
+    productionEndTime = order.status === 'READY' && order.updatedAt
+      ? new Date(order.updatedAt).getTime()
+      : preparingStartTime;
   } else {
-    // Se está NEW ou PREPARING, o fim da produção é o tempo atual (para cálculo em tempo real)
+    // Se está NEW ou PREPARING, o fim da produção é o tempo atual para cálculos em tempo real
     productionEndTime = now;
   }
 
-  // --- CÁLCULOS ---
-
-  // Se o status for final, usamos os valores fixos:
-  if (isFinalStatus) {
-    const totalKitchenTimeMs = productionEndTime - createdAt;
-    const totalKitchenTimeMinutes = totalKitchenTimeMs / 60000;
-
-    return {
-      totalKitchenTimeMinutes: Math.max(0, totalKitchenTimeMinutes),
-      newTimeMinutes: Math.max(0, (preparingStartTime - createdAt) / 60000),
-      preparingTimeMinutes: Math.max(0, (productionEndTime - preparingStartTime) / 60000),
-      readyTimeMinutes: Math.max(0, (finalTime - productionEndTime) / 60000),
-      isOverdue: totalKitchenTimeMinutes > order.slaMinutes,
-      displayTime: `${Math.round(totalKitchenTimeMinutes)} min`
-    };
+  // 3. Tempo Final de Entrega
+  let deliveredTime: number;
+  if (order.deliveredAt) {
+    deliveredTime = new Date(order.deliveredAt).getTime();
+  } else if (order.status === 'DELIVERED') {
+    deliveredTime = productionEndTime; // Fallback
+  } else {
+    deliveredTime = now;
   }
 
-  // Se o status for ativo, usamos o tempo atual (now) para calcular o tempo decorrido até agora
+  // --- CÁLCULOS (em minutos) ---
 
-  // Tempo de Espera (NEW): Se ainda estiver em NEW, usa 'now' como fim da espera
-  const currentPreparingStartTime = order.status === 'NEW' ? now : preparingStartTime;
-  const newTimeMinutes = (currentPreparingStartTime - createdAt) / 60000;
+  // Total que o pedido passou no fluxo da "cozinha" (da criação até ficar pronto)
+  const totalKitchenTimeMinutes = Math.max(0, (productionEndTime - createdAt) / 60000);
 
-  // Tempo de Preparo (PREPARING): Se ainda estiver em PREPARING, usa 'now' como fim do preparo
-  const currentProductionEndTime = order.status === 'PREPARING' ? now : productionEndTime;
-  const preparingTimeMinutes = (currentProductionEndTime - preparingStartTime) / 60000;
-
-  // Tempo Cozinha (Total)
-  const totalKitchenTimeMinutes = (currentProductionEndTime - createdAt) / 60000;
-
-  // Tempo Entrega (READY): Se ainda estiver em READY, usa 'now' como tempo final
-  const currentFinalTime = order.status === 'READY' ? now : finalTime;
-  const readyTimeMinutes = (currentFinalTime - productionEndTime) / 60000;
+  // Tempos por fase
+  const newTimeMinutes = Math.max(0, (preparingStartTime - createdAt) / 60000);
+  const preparingTimeMinutes = Math.max(0, (productionEndTime - preparingStartTime) / 60000);
+  const readyTimeMinutes = Math.max(0, (deliveredTime - productionEndTime) / 60000);
 
   return {
     totalKitchenTimeMinutes: Math.max(0, totalKitchenTimeMinutes),
     newTimeMinutes: Math.max(0, newTimeMinutes),
     preparingTimeMinutes: Math.max(0, preparingTimeMinutes),
     readyTimeMinutes: Math.max(0, readyTimeMinutes),
-    isOverdue: totalKitchenTimeMinutes > order.slaMinutes,
-    displayTime: order.status === 'READY' ? `${Math.round(totalKitchenTimeMinutes)} min` : '-'
+    isOverdue: totalKitchenTimeMinutes > (order.slaMinutes || 15),
+    displayTime: order.status === 'READY' || order.status === 'DELIVERED'
+      ? `${Math.round(totalKitchenTimeMinutes)} min`
+      : '-'
   };
 };
 
-// Função para consolidar pagamentos múltiplos (necessário para a tabela)
-const consolidatePayments = (order: Order) => {
-  const consolidated: { [method: string]: number } = {};
-
-  if (order.paymentMethod === 'MÚLTIPLO' && order.paymentBreakdown) {
-    Object.entries(order.paymentBreakdown).forEach(([method, amount]) => {
-      const baseMethod = method.replace(/\s\(\d+\)$/, '');
-      consolidated[baseMethod] = (consolidated[baseMethod] || 0) + amount;
-    });
-  } else {
-    consolidated[order.paymentMethod || 'Não informado'] = order.total;
-  }
-
-  return Object.entries(consolidated).map(([method, amount]) => ({ method, amount }));
-};
 
 
 export default function RelatoriosPage() {
@@ -161,7 +125,6 @@ export default function RelatoriosPage() {
   const [activeTab, setActiveTab] = useState<ReportTab>('sales');
   const [orders, setOrders] = useState<Order[]>([]);
   const [categories, setCategories] = useState<Category[]>(mockCategories);
-  const [menuItems, setMenuItems] = useState<MenuItem[]>(mockMenuItems);
   const [dateFrom, setDateFrom] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() - 7); // Default para os últimos 7 dias
@@ -171,7 +134,7 @@ export default function RelatoriosPage() {
     return `${year}-${month}-${day}`;
   });
   const [dateTo, setDateTo] = useState(getTodayDateString());
-  const [searchPin, setSearchPin] = useState(''); // Novo estado para busca por PIN
+  const [searchPin] = useState(''); // Novo estado para busca por PIN
   const [itemsFilter, setItemsFilter] = useState(''); // Filtro da tabela de Itens vendidos
   const [itemsSortBy, setItemsSortBy] = useState<'name' | 'category' | 'quantity' | 'revenue'>('quantity');
   const [itemsSortDir, setItemsSortDir] = useState<'asc' | 'desc'>('desc');
@@ -183,12 +146,17 @@ export default function RelatoriosPage() {
   };
 
   useEffect(() => {
+    if (!isAuthenticated) {
+      setLoading(false);
+      return;
+    }
+
     let stopped = false;
     const fetchData = async () => {
+      console.log('[Relatorios] Iniciando fetchData...');
       try {
         setLoading(true);
         const cats = await productsService.listCategories();
-        const prods = await productsService.listProducts();
         const categoriesOut: Category[] = (cats || []).map((c: any) => ({
           id: String(c.id),
           name: String(c.name || ''),
@@ -196,115 +164,26 @@ export default function RelatoriosPage() {
           order: 0,
           active: Boolean(c.isActive ?? true),
         }));
-        const menuItemsOut: MenuItem[] = (prods || []).map((p: any) => ({
-          id: String(p.id),
-          name: String(p.name || ''),
-          price: Math.max(0, Number(p.priceCents ?? 0) / 100),
-          sla: 0,
-          categoryId: p.categoryId ? String(p.categoryId) : '',
-          observations: [],
-          active: Boolean(p.isActive ?? true),
-        }));
-        const productMap: Record<string, MenuItem> = {};
-        menuItemsOut.forEach(mi => { productMap[mi.id] = mi; });
         if (!stopped) {
           if (categoriesOut.length) setCategories(categoriesOut);
-          if (menuItemsOut.length) setMenuItems(menuItemsOut);
         }
 
-        let rows = await ordersService.listOrders();
+        // --- NEW UNIFIED FETCH ---
+        // Calculating date range for the query
+        const from = createLocalStartOfDay(dateFrom);
+        const to = createLocalEndOfDay(dateTo);
+        const startIso = from ? from.toISOString() : new Date().toISOString();
+        // Adjust endIso to ensure full day coverage if needed, but the service handles it
+        const endIso = to ? to.toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
 
-        // Fallback para Supabase se estiver no navegador e sem window.api (SQLite)
-        if ((!rows || rows.length === 0) && supabase) {
-          try {
-            const { data } = await supabase
-              .from('orders')
-              .select('*, order_items(*), payments(*), kds_phase_times(*)')
-              .order('created_at', { ascending: false })
-              .limit(200);
+        const reportOrders = await reportsService.getOrdersForReport({
+          startIso,
+          endIso
+        });
 
-            if (data) {
-              rows = data.map((r: any) => {
-                const phaseTimes = r.kds_phase_times?.[0] || {};
-                return {
-                  ...r,
-                  items: r.order_items,
-                  payments: r.payments,
-                  // Mapear campos de tempo do kds_phase_times
-                  new_start: phaseTimes.new_start,
-                  preparing_start: phaseTimes.preparing_start,
-                  ready_at: phaseTimes.ready_at,
-                  delivered_at: phaseTimes.delivered_at,
-                  completed_at: phaseTimes.completed_at || r.completed_at,
-                };
-              });
-            }
-          } catch (err) {
-            console.error('Erro ao buscar do Supabase:', err);
-          }
-        }
+        console.log(`[Relatorios] ${reportOrders.length} pedidos carregados.`);
+        if (!stopped) setOrders(reportOrders);
 
-        const out: Order[] = [];
-        for (const r of (rows || [])) {
-          // listOrders agora retorna as linhas com items e payments já anexados
-          const itemsRaw = r.order_items || r.items || [];
-          const paymentsRaw = r.payments || [];
-
-          const orderItems = (itemsRaw || []).map((it: any) => {
-            const pid = it.product_id ?? it.productId;
-            const mi = pid ? (productMap as any)[String(pid)] : undefined;
-            const menuItem: MenuItem = mi || {
-              id: String(pid || String(it.id)),
-              name: String(it.product_name || (mi as any)?.name || 'Item'),
-              price: Math.max(0, Number(it.unit_price_cents ?? it.unitPriceCents ?? 0) / 100),
-              sla: 0,
-              categoryId: String(it.category_id || (mi as any)?.categoryId || ''),
-              observations: [],
-              active: true,
-            };
-            return {
-              id: String(it.id),
-              menuItem,
-              quantity: Number(it.qty ?? it.quantity ?? 1),
-              unitPrice: Math.max(0, Number(it.unit_price_cents ?? it.unitPriceCents ?? menuItem.price) / 100),
-              productionUnits: [],
-            } as any;
-          });
-
-          const payments = (paymentsRaw || []);
-          const paid = payments.reduce((s: number, p: any) => s + Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100), 0);
-          const breakdown = payments.length > 1 ? Object.fromEntries(payments.map((p: any) => [String(p.method).toUpperCase(), Math.max(0, Number(p.amount_cents ?? p.amountCents ?? 0) / 100)])) : undefined;
-          const method = payments.length > 1 ? 'MÚLTIPLO' : (payments[0]?.method ? String(payments[0].method).toUpperCase() : '');
-
-          const ord: Order = {
-            id: String(r.id),
-            pin: String(r.pin || r.id),
-            password: String(r.password || ''),
-            customerWhatsApp: r.customer_phone || r.customerPhone || '',
-            customerName: r.customer_name || r.customerName || '',
-            items: orderItems,
-            total: paid > 0 ? paid : Math.max(0, Number(r.total_cents ?? 0) / 100),
-            paymentMethod: breakdown ? 'MÚLTIPLO' : (method || 'Não informado'),
-            paymentBreakdown: breakdown,
-            status:
-              r.closed_at || r.delivered_at || r.completed_at
-                ? 'DELIVERED'
-                : String(r.status).toLowerCase() === 'closed' || String(r.status).toUpperCase() === 'DELIVERED'
-                  ? 'DELIVERED'
-                  : String(r.status).toLowerCase() === 'cancelled' || String(r.status).toUpperCase() === 'CANCELLED'
-                    ? 'CANCELLED'
-                    : 'NEW',
-            createdAt: r.new_start ? new Date(r.new_start) : (r.created_at ? new Date(r.created_at) : new Date()),
-            preparingStartedAt: r.preparing_start ? new Date(r.preparing_start) : undefined,
-            updatedAt: r.updated_at ? new Date(r.updated_at) : undefined,
-            readyAt: r.ready_at ? new Date(r.ready_at) : undefined,
-            deliveredAt: r.delivered_at ? new Date(r.delivered_at) : (r.closed_at ? new Date(r.closed_at) : undefined),
-            slaMinutes: 15,
-            createdBy: '',
-          } as any;
-          out.push(ord);
-        }
-        if (!stopped) setOrders(out);
       } catch (error) {
         console.error('Erro ao carregar relatórios:', error);
       } finally {
@@ -313,7 +192,7 @@ export default function RelatoriosPage() {
     };
     fetchData();
     return () => { stopped = true };
-  }, []);
+  }, [isAuthenticated, dateFrom, dateTo, setOrders, setCategories, setMenuItems]); // Adicionadas dependências faltantes
 
   if (!isAuthenticated) {
     return (
@@ -333,13 +212,6 @@ export default function RelatoriosPage() {
     );
   }
 
-  // Mapeamento de itens para facilitar a busca por categoria
-  const itemMap = useMemo(() => {
-    return menuItems.reduce((map, item) => {
-      map[item.id] = item;
-      return map;
-    }, {} as Record<string, MenuItem>);
-  }, [menuItems]);
 
   const categoryNameMap = useMemo(() => {
     return categories.reduce((map, cat) => {
@@ -648,8 +520,6 @@ export default function RelatoriosPage() {
         }
       }
 
-      // CÁLCULO DO TEMPO MÉDIO POR OPERADOR (Baseado no tempo total de preparo do pedido)
-      const preparingStartTimeMs = new Date(order.updatedAt || order.createdAt).getTime(); // Tempo que saiu de NEW
 
       // Encontrar todos os operadores que trabalharam neste pedido
       const operatorsInOrder = new Set<string>();

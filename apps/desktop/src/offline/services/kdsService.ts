@@ -556,137 +556,101 @@ export async function enqueueTicket(params: { orderId: UUID; station?: string | 
 export async function setTicketStatus(id: UUID, status: 'queued' | 'prep' | 'ready' | 'done') {
   const now = new Date().toISOString()
   console.log('[KDS-DEBUG] setTicketStatus called', { id, status, now })
+
+  // 1. Supabase (Web Mode)
   if ((await import('../../utils/supabase')).supabase) {
-    const { supabase } = await import('../../utils/supabase')
-    const map = { queued: 'NEW', prep: 'PREPARING', ready: 'READY', done: 'DELIVERED' } as Record<string, string>
-    console.log('[KDS-DEBUG] Updating supabase kds_tickets', { id, status: map[status] })
     try {
-      const { data: tk, error: tkErr } = await supabase
-        .from('kds_tickets')
-        .select('order_id')
-        .eq('id', id)
-        .maybeSingle()
+      const { supabase } = await import('../../utils/supabase')
+      const map = { queued: 'NEW', prep: 'PREPARING', ready: 'READY', done: 'DELIVERED' } as Record<string, string>
+      const dbStatus = map[status]
 
-      if (tkErr) console.error('[KDS-DEBUG] Error fetching ticket for update:', tkErr)
-
+      // Fetch order_id for this ticket
+      const { data: tk } = await supabase.from('kds_tickets').select('order_id').eq('id', id).maybeSingle()
       const orderId = tk?.order_id ? String(tk.order_id) : undefined
-      console.log('[KDS-DEBUG] Found orderId for ticket:', orderId)
 
-      // Update kds_tickets status AND set acknowledged_at to prevent re-processing
-      const { error: updateErr } = await supabase
-        .from('kds_tickets')
-        .update({ status: map[status], updated_at: now, acknowledged_at: now })
-        .eq('id', id)
+      // Update kds_tickets
+      await supabase.from('kds_tickets').update({ status: dbStatus, updated_at: now, acknowledged_at: now }).eq('id', id)
 
-      if (updateErr) {
-        console.error('[KDS-DEBUG] Error updating kds_tickets status:', updateErr)
-      } else {
-        console.log('[KDS-DEBUG] ✅ Successfully updated kds_tickets status to', map[status])
-      }
-
-      // FIXED: Update orders table for ALL statuses, not just 'done'
+      // Update orders
       if (orderId) {
-        console.log('[KDS-DEBUG] Updating associated order', { orderId, status: map[status] })
-        const orderUpdate: Record<string, any> = { status: map[status], updated_at: now }
-        if (status === 'ready') orderUpdate.ready_at = now // This doesn't exist in orders schema but keeping just in case
-        if (status === 'done') {
-          // orderUpdate.delivered_at = now // Removed: column does not exist
-          // orderUpdate.closed_at = now // Removed: column does not exist
-          orderUpdate.completed_at = now // Correct column name based on schema
-        }
-        const { error: orderErr } = await supabase
-          .from('orders')
-          .update(orderUpdate)
-          .eq('id', orderId)
+        const orderUpdate: any = { status: dbStatus, updated_at: now }
+        if (status === 'done') orderUpdate.completed_at = now
+        await supabase.from('orders').update(orderUpdate).eq('id', orderId)
 
-        if (orderErr) {
-          console.error('[KDS-DEBUG] Error updating order status:', orderErr)
-        } else {
-          console.log('[KDS-DEBUG] ✅ Successfully updated order status to', map[status])
-        }
-
-        // [FIX] Ensure phase times are updated in Supabase
+        // Update phase times
         const phasePatch: any = {}
         if (status === 'queued') phasePatch.newStart = now
         if (status === 'prep') phasePatch.preparingStart = now
         if (status === 'ready') phasePatch.readyAt = now
         if (status === 'done') phasePatch.deliveredAt = now
-        console.log('[KDS-DEBUG] Setting phase time:', phasePatch)
         await setPhaseTime(orderId, phasePatch)
       }
-    } catch (err: any) {
-      console.error('[KDS-DEBUG] Unexpected error in setTicketStatus supabase block:', err)
+    } catch (err) {
+      console.error('[KDS-DEBUG] Supabase update error:', err)
     }
-    // return - removido para garantir que o estado local também seja atualizado (optimistic/backup)
   }
 
-
+  // 2. Local/Offline (SQLite + LocalStorage)
   let orderId: string | undefined
   let targetTicketId: string | undefined
+
   try {
     const r = await query('SELECT order_id FROM kds_tickets WHERE id = ?', [id])
-    orderId = r?.rows && r.rows[0]?.order_id ? String(r.rows[0].order_id) : undefined
-    targetTicketId = orderId ? String(id) : undefined
+    if (r?.rows && r.rows[0]) {
+      orderId = String(r.rows[0].order_id)
+      targetTicketId = String(id)
+    }
   } catch { }
+
   if (!orderId) {
     try {
       const raw = localStorage.getItem('kdsTickets')
       const arr = raw ? JSON.parse(raw) : []
-      const tk = (Array.isArray(arr) ? arr : []).find((t: any) => String(t.id) === String(id))
+      const tk = (Array.isArray(arr) ? arr : []).find((t: any) => String(t.id) === String(id) || String(t.orderId) === String(id) || String(t.order_id) === String(id))
       orderId = tk?.order_id || tk?.orderId
       targetTicketId = tk?.id ? String(tk.id) : undefined
     } catch { }
   }
-  // Fallback: tratar 'id' como orderId e localizar o ticket correspondente
+
+  // Fallback to treat id as orderId
   if (!orderId) {
     try {
-      const r2 = await query('SELECT id, order_id FROM kds_tickets WHERE order_id = ? ORDER BY datetime(updated_at) DESC LIMIT 1', [id])
-      const row = r2?.rows && r2.rows[0]
-      if (row) {
-        orderId = String(row.order_id)
-        targetTicketId = String(row.id)
+      const r2 = await query('SELECT id FROM kds_tickets WHERE order_id = ? ORDER BY datetime(updated_at) DESC LIMIT 1', [id])
+      if (r2?.rows && r2.rows[0]) {
+        targetTicketId = String(r2.rows[0].id)
+        orderId = String(id)
       }
     } catch { }
   }
-  if (orderId) {
-    try {
-      if (status === 'queued') await setPhaseTime(orderId, { newStart: now })
-      if (status === 'prep') await setPhaseTime(orderId, { preparingStart: now })
-      if (status === 'ready') await setPhaseTime(orderId, { readyAt: now })
-      if (status === 'done') await setPhaseTime(orderId, { deliveredAt: now })
-    } catch { }
-  }
+
+  // Final fallbacks
+  orderId = orderId || String(id)
+  targetTicketId = targetTicketId || String(id)
+
+  const map = { queued: 'NEW', prep: 'PREPARING', ready: 'READY', done: 'DELIVERED' } as Record<string, string>
+  const dbStatus = map[status]
+
   try {
-    const ticketIdForUpdate = targetTicketId || id
-    await query('UPDATE kds_tickets SET status = ?, updated_at = ?, pending_sync = 1 WHERE id = ?', [status, now, ticketIdForUpdate])
-    if (status === 'done') {
-      try {
-        const res = await query('SELECT order_id FROM kds_tickets WHERE id = ?', [ticketIdForUpdate])
-        const oid = res?.rows && res.rows[0]?.order_id
-        if (oid) {
-          await query('UPDATE orders SET status = ?, completed_at = ?, updated_at = ?, pending_sync = 1 WHERE id = ?', ['closed', now, now, oid])
-        }
-      } catch { }
-    }
-  } catch {
-    try {
-      const raw = localStorage.getItem('kdsTickets')
-      const arr = raw ? JSON.parse(raw) : []
-      const updated = arr.map((t: any) => (String(t.id) === (targetTicketId || id)) ? { ...t, status, updated_at: now } : t)
-      localStorage.setItem('kdsTickets', JSON.stringify(updated))
-    } catch { }
+    // Update local DB
+    await query('UPDATE kds_tickets SET status = ?, updated_at = ?, acknowledged_at = ?, pending_sync = 1 WHERE id = ?', [status, now, now, targetTicketId])
+    await query('UPDATE orders SET status = ?, updated_at = ?, pending_sync = 1 WHERE id = ?', [dbStatus, now, orderId])
+
+    // Update phase times (localStorage + LAN)
+    const phasePatch: any = {}
+    if (status === 'queued') phasePatch.newStart = now
+    if (status === 'prep') phasePatch.preparingStart = now
+    if (status === 'ready') phasePatch.readyAt = now
+    if (status === 'done') phasePatch.deliveredAt = now
+    await setPhaseTime(orderId, phasePatch)
+
+    // LAN Sync
+    await pushLanEvents([
+      { table: 'kdsTickets', row: { id: targetTicketId, status, updated_at: now, acknowledged_at: now } },
+      { table: 'orders', row: { id: orderId, status: dbStatus, updated_at: now } }
+    ])
+  } catch (err) {
+    console.error('[KDS-DEBUG] Local update error:', err)
   }
-  try {
-    const events: any[] = [{ table: 'kdsTickets', row: { id: (targetTicketId || id), order_id: orderId, status, updated_at: now } }]
-    if (orderId) {
-      const mapToOrderStatus = (s: string) => s === 'done' ? 'DELIVERED' : s === 'ready' ? 'READY' : s === 'prep' ? 'PREPARING' : 'NEW'
-      const ordRow: any = { id: orderId, status: mapToOrderStatus(String(status)), updatedAt: now }
-      if (status === 'ready') ordRow.readyAt = now
-      if (status === 'done') ordRow.deliveredAt = now
-      events.push({ table: 'orders', row: ordRow })
-    }
-    await pushLanEvents(events)
-  } catch { }
 }
 
 export async function listTicketStatusRows(kitchenId?: string | null) {
