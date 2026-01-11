@@ -194,23 +194,6 @@ export default function RelatoriosPage() {
     return () => { stopped = true };
   }, [isAuthenticated, dateFrom, dateTo, setOrders, setCategories]); // Adicionadas dependências faltantes
 
-  if (!isAuthenticated) {
-    return (
-      <div className="fixed inset-0 flex items-center justify-center bg-black/40">
-        <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
-          <div className="mb-4">
-            <h3 className="text-lg font-medium text-gray-900">Acesso aos Relatórios</h3>
-            <p className="text-xs text-gray-500">Digite a senha para acessar</p>
-          </div>
-          <div className="space-y-3">
-            <Input value={authPass} onChange={e => setAuthPass((e.target as HTMLInputElement).value)} onKeyDown={e => { if ((e as any).key === 'Enter') tryAuth() }} placeholder="Senha" type="password" />
-            {authError ? <div className="text-red-600 text-sm">{authError}</div> : null}
-            <Button onClick={tryAuth}>Entrar</Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
 
   const categoryNameMap = useMemo(() => {
@@ -643,6 +626,24 @@ export default function RelatoriosPage() {
     { id: 'orders', name: 'Pedidos', icon: 'ri-list-check-line' },
     { id: 'performance', name: 'Performance', icon: 'ri-speed-up-line' }
   ];
+
+  if (!isAuthenticated) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center bg-black/40">
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+          <div className="mb-4">
+            <h3 className="text-lg font-medium text-gray-900">Acesso aos Relatórios</h3>
+            <p className="text-xs text-gray-500">Digite a senha para acessar</p>
+          </div>
+          <div className="space-y-3">
+            <Input value={authPass} onChange={e => setAuthPass((e.target as HTMLInputElement).value)} onKeyDown={e => { if ((e as any).key === 'Enter') tryAuth() }} placeholder="Senha" type="password" />
+            {authError ? <div className="text-red-600 text-sm">{authError}</div> : null}
+            <Button onClick={tryAuth}>Entrar</Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full flex-1 min-h-0 bg-gray-50">
