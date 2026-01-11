@@ -721,7 +721,7 @@ export default function CozinhaPage() {
           try {
             const { data } = await supabase
               .from('orders')
-              .select('id, opened_at, created_at, pin, password')
+              .select('id, created_at, pin, password')
               .in('id', orderIds);
             if (data) {
               ordersMap = data.reduce((acc: any, o: any) => ({ ...acc, [o.id]: o }), {});

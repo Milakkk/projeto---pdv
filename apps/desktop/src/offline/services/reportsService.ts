@@ -273,7 +273,7 @@ export async function getOrdersForReport(params: { startIso: string; endIso: str
           kds_phase_times (*),
           order_items (
             *,
-            products (name, category_id, code, unit_delivery_count, skip_kitchen, sla_minutes),
+            products (name, category_id),
             kds_unit_states (*)
           ),
           payments (*)
