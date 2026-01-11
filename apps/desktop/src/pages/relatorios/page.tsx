@@ -192,7 +192,7 @@ export default function RelatoriosPage() {
     };
     fetchData();
     return () => { stopped = true };
-  }, [isAuthenticated, dateFrom, dateTo, setOrders, setCategories, setMenuItems]); // Adicionadas dependências faltantes
+  }, [isAuthenticated, dateFrom, dateTo, setOrders, setCategories]); // Adicionadas dependências faltantes
 
   if (!isAuthenticated) {
     return (
