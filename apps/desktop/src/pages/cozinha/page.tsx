@@ -721,7 +721,7 @@ export default function CozinhaPage() {
           try {
             const { data } = await supabase
               .from('orders')
-              .select('id, opened_at, created_at')
+              .select('id, opened_at, created_at, pin, password')
               .in('id', orderIds);
             if (data) {
               ordersMap = data.reduce((acc: any, o: any) => ({ ...acc, [o.id]: o }), {});
@@ -870,8 +870,8 @@ export default function CozinhaPage() {
           const details = getOrderDetails(String(t.order_id ?? t.orderId ?? t.id ?? ''))
           const ord: Order = {
             id: String(t.order_id ?? t.orderId ?? ''),
-            pin: String(t.pin ?? t.orderPin ?? details.pin ?? ''),
-            password: String(t.password ?? details.password ?? ''),
+            pin: String(t.pin ?? t.orderPin ?? ordersMap[oid]?.pin ?? details.pin ?? ''),
+            password: String(t.password ?? ordersMap[oid]?.password ?? details.password ?? ''),
             status: mapStatus(String(t.status ?? 'queued')),
             createdAt: t.createdAt
               ? new Date(t.createdAt)
@@ -997,27 +997,27 @@ export default function CozinhaPage() {
       return o;
     }));
 
-    pendingStatusRef.current[String(orderId)] = { status, until: Date.now() + 8000 }
+    pendingStatusRef.current[String(orderId)] = { status, until: Date.now() + 8000 };
 
-      // Atualiza status via serviço KDS PRIMEIRO, aguarda confirmação, depois atualiza UI
-      (async () => {
-        try {
-          const mapToKds = (s: Order['status']) => {
-            if (s === 'NEW') return 'queued';
-            if (s === 'PREPARING') return 'prep';
-            if (s === 'READY') return 'ready';
-            if (s === 'DELIVERED') return 'done';
-            return 'queued';
-          };
-          const ord = orders.find(o => o.id === orderId)
-          const tId = (ord as any)?.ticketId || orderId
+    // Atualiza status via serviço KDS PRIMEIRO, aguarda confirmação, depois atualiza UI
+    (async () => {
+      try {
+        const mapToKds = (s: Order['status']) => {
+          if (s === 'NEW') return 'queued';
+          if (s === 'PREPARING') return 'prep';
+          if (s === 'READY') return 'ready';
+          if (s === 'DELIVERED') return 'done';
+          return 'queued';
+        };
+        const ord = orders.find(o => o.id === orderId)
+        const tId = (ord as any)?.ticketId || orderId
 
-          // Centraliza a persistência no kdsService para evitar condições de corrida (Race Conditions)
-          await kdsService.setTicketStatus(String(tId), mapToKds(status));
-        } catch (error) {
-          console.error('[Cozinha] ERRO ao atualizar status:', error);
-        }
-      })();
+        // Centraliza a persistência no kdsService para evitar condições de corrida (Race Conditions)
+        await kdsService.setTicketStatus(String(tId), mapToKds(status));
+      } catch (error) {
+        console.error('[Cozinha] ERRO ao atualizar status:', error);
+      }
+    })();
 
     (pendingStatusRef.current as any)[String(orderId)] = { status, until: Date.now() + 8000 };
 
@@ -1054,7 +1054,7 @@ export default function CozinhaPage() {
           return { ...order, status, items: updatedItems, updatedAt: order.updatedAt, readyAt };
         }
 
-        if (status === 'DELIVERED' && order.status === 'READY') {
+        if ((status as string) === 'DELIVERED' && order.status === 'READY') {
           // Não sobrescreva updatedAt (início do preparo); registre o tempo de entrega em deliveredAt
           return { ...order, status, deliveredAt: now, updatedAt: order.updatedAt, readyAt };
         }

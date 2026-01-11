@@ -177,6 +177,7 @@ export async function topSellingItems(params: { startIso?: string; endIso?: stri
 // Função unificada para buscar pedidos COMPLETOS para o relatório
 export async function getOrdersForReport(params: { startIso: string; endIso: string }) {
   console.log('[REPORTS-DEBUG] getOrdersForReport called', params)
+  const endTimestamp = params.endIso.includes('T') ? params.endIso : (params.endIso + 'T23:59:59.999Z')
 
   // 1. Tentar SQLite (Desktop / Electron)
   if (isElectron()) {
@@ -194,7 +195,7 @@ export async function getOrdersForReport(params: { startIso: string; endIso: str
          LEFT JOIN kds_phase_times kpt ON o.id = kpt.order_id 
          WHERE datetime(o.created_at) >= datetime(?) AND datetime(o.created_at) <= datetime(?)
          ORDER BY o.created_at DESC`,
-        [params.startIso, params.endIso]
+        [params.startIso, endTimestamp]
       )
 
       const orders = ordersRes?.rows || []
@@ -269,7 +270,6 @@ export async function getOrdersForReport(params: { startIso: string; endIso: str
         .from('orders')
         .select(`
           *,
-          orders_details (pin, password),
           kds_phase_times (*),
           order_items (
             *,
@@ -279,7 +279,7 @@ export async function getOrdersForReport(params: { startIso: string; endIso: str
           payments (*)
         `)
         .gte('created_at', params.startIso)
-        .lte('created_at', params.endIso + 'T23:59:59.999Z')
+        .lte('created_at', endTimestamp)
         .order('created_at', { ascending: false })
 
       if (error) {

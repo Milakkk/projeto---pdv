@@ -174,7 +174,7 @@ export default function RelatoriosPage() {
         const to = createLocalEndOfDay(dateTo);
         const startIso = from ? from.toISOString() : new Date().toISOString();
         // Adjust endIso to ensure full day coverage if needed, but the service handles it
-        const endIso = to ? to.toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+        const endIso = to ? to.toISOString() : new Date().toISOString();
 
         const reportOrders = await reportsService.getOrdersForReport({
           startIso,

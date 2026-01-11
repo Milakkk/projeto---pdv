@@ -830,7 +830,7 @@ export async function listTicketsByStatus(status: 'queued' | 'prep' | 'ready' | 
     // Tenta DB local (Electron)
     let localTickets: any[] = []
     try {
-      const res = await query('SELECT * FROM kds_tickets WHERE status = ?', [status])
+      const res = await query('SELECT t.*, d.pin, d.password FROM kds_tickets t LEFT JOIN orders_details d ON t.order_id = d.order_id WHERE t.status = ?', [status])
       if (Array.isArray(res?.rows)) localTickets = res.rows
     } catch { }
 
