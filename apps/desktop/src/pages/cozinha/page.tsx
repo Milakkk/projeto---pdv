@@ -8,10 +8,8 @@ import { useLocalStorage } from '../../hooks/useLocalStorage';
 import type { Order, KitchenOperator, Category, ProductionUnit, OperationalSession } from '../../types';
 import { useOffline } from '../../hooks/useOffline';
 import Button from '../../components/base/Button';
-import { mockCategories } from '../../mocks/data';
 import { showSuccess } from '../../utils/toast';
 import ReadyOrderTable from './components/ReadyOrderTable';
-import { useAuth } from '../../context/AuthContext';
 import Modal from '../../components/base/Modal';
 import DeliveredOrderList from './components/DeliveredOrderList';
 import Icon from '../../ui/Icon';
@@ -39,7 +37,6 @@ const createProductionUnits = (quantity: number): ProductionUnit[] => {
 
 export default function CozinhaPage() {
   const { isOnline } = useOffline();
-  const { user } = useAuth();
   const navigate = useNavigate();
 
   // Seleção de cozinha e operador
@@ -54,7 +51,7 @@ export default function CozinhaPage() {
   useEffect(() => {
     (async () => { try { await kdsService.broadcastOperators(operators) } catch { } })()
   }, [operators])
-  const [categories, setCategories] = useLocalStorage<Category[]>('categories', mockCategories);
+  const [categories, setCategories] = useLocalStorage<Category[]>('categories', []);
 
   const [operationalSession] = useLocalStorage<OperationalSession | null>('currentOperationalSession', null);
   const [, setCashSession] = useLocalStorage<any>('currentCashSession', null);
@@ -170,9 +167,6 @@ export default function CozinhaPage() {
     })
   }
 
-  const activeProductionOrders = useMemo(() => {
-    return orders.filter(order => ['NEW', 'PREPARING', 'READY'].includes(order.status));
-  }, [orders]);
 
   useEffect(() => {
     let mounted = true
@@ -1317,13 +1311,23 @@ export default function CozinhaPage() {
               <span>{currentOperatorName || 'Operador'}</span>
             </div>
           </div>
-          <button
-            onClick={() => setShowKitchenSelect(true)}
-            className="px-3 py-1 bg-white/20 hover:bg-white/30 rounded-lg text-sm transition-colors"
-          >
-            <i className="ri-refresh-line mr-1"></i>
-            Trocar
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { ticketsRefreshRef.current?.(); showSuccess("Sincronização iniciada"); }}
+              className="px-3 py-1 bg-white/20 hover:bg-white/30 rounded-lg text-sm transition-colors flex items-center gap-1"
+              title="Sincronizar agora"
+            >
+              <i className="ri-refresh-line"></i>
+              <span className="hidden sm:inline">Sincronizar</span>
+            </button>
+            <button
+              onClick={() => setShowKitchenSelect(true)}
+              className="px-3 py-1 bg-white/20 hover:bg-white/30 rounded-lg text-sm transition-colors"
+            >
+              <i className="ri-settings-4-line mr-1"></i>
+              Trocar
+            </button>
+          </div>
         </div>
 
         {!isOnline && (
@@ -1417,7 +1421,6 @@ export default function CozinhaPage() {
                   <OrderBoard
                     orders={orders}
                     operators={operators}
-                    categories={categories}
                     onUpdateStatus={updateOrderStatus}
                     onCancelOrder={cancelOrder}
                     onAssignOperator={assignOperatorToUnit}

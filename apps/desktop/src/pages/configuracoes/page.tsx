@@ -458,6 +458,8 @@ export default function ConfiguracoesPage() {
     discountPercent: '0',
     items: [] as { id: string, name: string, price: number, qty: number }[]
   });
+  const [comboFilterCategory, setComboFilterCategory] = useState('');
+  const [comboFilterSearch, setComboFilterSearch] = useState('');
 
   // Carregar cozinhas do banco de dados
   useEffect(() => {
@@ -3356,80 +3358,104 @@ export default function ConfiguracoesPage() {
           </div>
 
           <div className="space-y-2">
-            <div className="text-sm font-medium text-gray-700 flex justify-between items-center">
-              <span>Itens incluídos</span>
+            <div className="flex justify-between items-center">
+              <span className="text-sm font-medium text-gray-700">Itens incluídos</span>
               <span className="text-xs text-amber-600 font-bold">
                 Subtotal: R$ {comboForm.items.reduce((acc, it) => acc + (it.price * it.qty), 0).toFixed(2)}
               </span>
             </div>
+
+            <div className="flex flex-col md:flex-row gap-2">
+              <Input
+                placeholder="Pesquisar..."
+                value={comboFilterSearch}
+                onChange={(e) => setComboFilterSearch(e.target.value)}
+                className="!py-1"
+              />
+              <select
+                value={comboFilterCategory}
+                onChange={(e) => setComboFilterCategory(e.target.value)}
+                className="w-full md:w-40 h-[36px] px-2 py-1 border border-gray-300 rounded-lg text-xs bg-white"
+              >
+                <option value="">Todas</option>
+                {categories.map(cat => (
+                  <option key={cat.id} value={cat.id}>{cat.name}</option>
+                ))}
+              </select>
+            </div>
+
             <div className="max-h-60 overflow-y-auto border rounded-xl divide-y bg-gray-50">
-              {menuItems.filter(mi => mi.active && !mi.isPromo).map(mi => {
-                const current = comboForm.items.find(it => it.id === mi.id);
-                const qty = current?.qty || 0;
+              {menuItems
+                .filter(mi => mi.active && !mi.isPromo)
+                .filter(mi => !comboFilterCategory || mi.categoryId === comboFilterCategory)
+                .filter(mi => !comboFilterSearch || mi.name.toLowerCase().includes(comboFilterSearch.toLowerCase()))
+                .map(mi => {
+                  const current = comboForm.items.find(it => it.id === mi.id);
+                  const qty = current?.qty || 0;
 
-                return (
-                  <div key={mi.id} className="flex items-center justify-between px-4 py-3 bg-white hover:bg-amber-50 transition-colors">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-gray-900 truncate">{mi.name}</div>
-                      <div className="text-xs text-gray-500">R$ {mi.price.toFixed(2)} / un</div>
-                    </div>
+                  return (
+                    <div key={mi.id} className="flex items-center justify-between px-4 py-2.5 bg-white hover:bg-amber-50 transition-colors">
+                      <div className="flex-1 min-w-0 pr-4">
+                        <div className="text-sm font-bold text-gray-800 truncate">{mi.name}</div>
+                        <div className="text-[10px] text-gray-400 font-medium">Cat: {categories.find(c => c.id === mi.categoryId)?.name || 'Sem Categoria'}</div>
+                        <div className="text-xs text-amber-600 font-bold">R$ {mi.price.toFixed(2)}</div>
+                      </div>
 
-                    <div className="flex items-center gap-3">
-                      {qty > 0 && (
-                        <div className="flex items-center bg-gray-100 rounded-lg p-1 border">
+                      <div className="flex items-center gap-2">
+                        {qty > 0 && (
+                          <div className="flex items-center bg-gray-50 rounded-lg p-0.5 border border-gray-100">
+                            <button
+                              onClick={() => {
+                                const nextItems = qty === 1
+                                  ? comboForm.items.filter(it => it.id !== mi.id)
+                                  : comboForm.items.map(it => it.id === mi.id ? { ...it, qty: it.qty - 1 } : it);
+
+                                const subtotal = nextItems.reduce((acc, it) => acc + (it.price * it.qty), 0);
+                                const disc = parseFloat(comboForm.discountPercent) || 0;
+                                const newPrice = (subtotal * (1 - disc / 100)).toFixed(2);
+
+                                setComboForm({ ...comboForm, items: nextItems, price: newPrice });
+                              }}
+                              className="w-7 h-7 flex items-center justify-center text-amber-600 hover:bg-white rounded-md transition-colors"
+                            >
+                              <i className="ri-subtract-line"></i>
+                            </button>
+                            <span className="w-6 text-center text-sm font-black text-gray-700">{qty}</span>
+                            <button
+                              onClick={() => {
+                                const nextItems = comboForm.items.map(it => it.id === mi.id ? { ...it, qty: it.qty + 1 } : it);
+                                const subtotal = nextItems.reduce((acc, it) => acc + (it.price * it.qty), 0);
+                                const disc = parseFloat(comboForm.discountPercent) || 0;
+                                const newPrice = (subtotal * (1 - disc / 100)).toFixed(2);
+
+                                setComboForm({ ...comboForm, items: nextItems, price: newPrice });
+                              }}
+                              className="w-7 h-7 flex items-center justify-center text-amber-600 hover:bg-white rounded-md transition-colors"
+                            >
+                              <i className="ri-add-line"></i>
+                            </button>
+                          </div>
+                        )}
+
+                        {qty === 0 && (
                           <button
                             onClick={() => {
-                              const nextItems = qty === 1
-                                ? comboForm.items.filter(it => it.id !== mi.id)
-                                : comboForm.items.map(it => it.id === mi.id ? { ...it, qty: it.qty - 1 } : it);
-
+                              const nextItems = [...comboForm.items, { id: mi.id, name: mi.name, price: mi.price, qty: 1 }];
                               const subtotal = nextItems.reduce((acc, it) => acc + (it.price * it.qty), 0);
                               const disc = parseFloat(comboForm.discountPercent) || 0;
                               const newPrice = (subtotal * (1 - disc / 100)).toFixed(2);
 
                               setComboForm({ ...comboForm, items: nextItems, price: newPrice });
                             }}
-                            className="w-8 h-8 flex items-center justify-center text-amber-600 hover:bg-white rounded-md transition-colors"
+                            className="bg-amber-500 text-white text-[10px] font-black px-3 py-1.5 rounded-lg hover:bg-amber-600 shadow-sm active:scale-95 transition-all"
                           >
-                            <i className="ri-subtract-line"></i>
+                            ADICIONAR
                           </button>
-                          <span className="w-8 text-center font-bold text-gray-800">{qty}</span>
-                          <button
-                            onClick={() => {
-                              const nextItems = comboForm.items.map(it => it.id === mi.id ? { ...it, qty: it.qty + 1 } : it);
-                              const subtotal = nextItems.reduce((acc, it) => acc + (it.price * it.qty), 0);
-                              const disc = parseFloat(comboForm.discountPercent) || 0;
-                              const newPrice = (subtotal * (1 - disc / 100)).toFixed(2);
-
-                              setComboForm({ ...comboForm, items: nextItems, price: newPrice });
-                            }}
-                            className="w-8 h-8 flex items-center justify-center text-amber-600 hover:bg-white rounded-md transition-colors"
-                          >
-                            <i className="ri-add-line"></i>
-                          </button>
-                        </div>
-                      )}
-
-                      {qty === 0 && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => {
-                            const nextItems = [...comboForm.items, { id: mi.id, name: mi.name, price: mi.price, qty: 1 }];
-                            const subtotal = nextItems.reduce((acc, it) => acc + (it.price * it.qty), 0);
-                            const disc = parseFloat(comboForm.discountPercent) || 0;
-                            const newPrice = (subtotal * (1 - disc / 100)).toFixed(2);
-
-                            setComboForm({ ...comboForm, items: nextItems, price: newPrice });
-                          }}
-                        >
-                          Adicionar
-                        </Button>
-                      )}
+                        )}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
             </div>
           </div>
 
